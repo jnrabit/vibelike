@@ -1,7 +1,10 @@
 """Adapter to store tool information as ossifikat triples."""
 
 from typing import Optional
-from ossifikat.store import OssifikatStore
+try:
+    from ossifikat.store import OssifikatStore
+except ImportError:
+    OssifikatStore = None
 
 try:
     from logdb.db import LogDB

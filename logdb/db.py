@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 try:
     from vibelike.models.request import Request

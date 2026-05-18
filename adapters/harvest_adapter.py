@@ -1,7 +1,11 @@
 """Adapter to store harvested documents as ossifikat triples."""
 
 from typing import Optional
-from ossifikat.store import OssifikatStore
+
+try:
+    from ossifikat.store import OssifikatStore
+except ImportError:
+    OssifikatStore = None
 
 try:
     from logdb.db import LogDB
@@ -16,7 +20,7 @@ class HarvestAdapter:
     """Converts harvested documents into knowledge triples."""
 
     def __init__(self, ossifikat_db_path: str = "ossifikat/data/ossifikat.db", logdb_path: str = "logs/execution.db"):
-        self.store = OssifikatStore(ossifikat_db_path)
+        self.store = OssifikatStore(ossifikat_db_path) if OssifikatStore else None
         self.logdb = LogDB(logdb_path) if LogDB else None
 
     def store_document(self, doc: dict, source: str = "harvest", confirm: bool = False) -> Optional[int]:
@@ -32,6 +36,10 @@ class HarvestAdapter:
             Triple ID if stored successfully, None otherwise
         """
         if not doc or not doc.get("id"):
+            return None
+
+        # If ossifikat is not available, skip storage
+        if not self.store:
             return None
 
         doc_id = str(doc.get("id", ""))
@@ -66,6 +74,9 @@ class HarvestAdapter:
 
     def store_sector(self, sector: str, doc_count: int) -> Optional[int]:
         """Store information about a harvested sector."""
+        if not self.store:
+            return None
+
         triple_id = self.store.add_staging(
             subject=sector.lower(),
             predicate="harvested_documents",
@@ -90,4 +101,6 @@ class HarvestAdapter:
 
     def get_document_triples(self, doc_id: str, only_confirmed: bool = False) -> list:
         """Retrieve all triples related to a document."""
+        if not self.store:
+            return []
         return self.store.query(subject=doc_id, only_confirmed=only_confirmed)
