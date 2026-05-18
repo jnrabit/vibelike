@@ -56,7 +56,10 @@ class RequestQueue:
                     retries INTEGER DEFAULT 0,
                     next_attempt_at TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    started_at TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    exit_code INTEGER
                 );
 
                 CREATE TABLE IF NOT EXISTS reminders (

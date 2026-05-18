@@ -264,15 +264,51 @@ def main():
         default=None,
         help="Maximum requests to process (default: infinite)"
     )
+    parser.add_argument(
+        "--full-mode",
+        action="store_true",
+        help="Auto-schedule harvest jobs (Wikipedia, RFCs, PEPs, Tools)"
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Document limit per harvest operation (for --full-mode)"
+    )
 
     args = parser.parse_args()
 
-    # Initialize and run worker
+    # Initialize worker
     worker = HarvesterWorker(
         queue_db=args.queue_db,
         harvest_db=args.harvest_db,
         poll_interval=args.poll_interval
     )
+
+    # Full mode: auto-schedule all harvest operations
+    if args.full_mode:
+        print("\n" + "=" * 60)
+        print("FULL MODE: Auto-scheduling all harvest operations")
+        print("=" * 60)
+        from harvest_scheduler import HarvestScheduler
+        scheduler = HarvestScheduler(queue_db=args.queue_db)
+
+        ops = [
+            ("Wikipedia", lambda: scheduler.schedule_wikipedia_harvest(limit=args.limit, priority=1)),
+            ("RFCs", lambda: scheduler.schedule_rfc_harvest(limit=args.limit, priority=2)),
+            ("PEPs", lambda: scheduler.schedule_pep_harvest(limit=args.limit, priority=2)),
+            ("Tools", lambda: scheduler.schedule_tools_harvest(limit=args.limit, priority=3)),
+        ]
+
+        for name, sched_fn in ops:
+            req_id = sched_fn()
+            print(f"  ✓ {name:12} scheduled: {req_id[:12]}...")
+
+        status = scheduler.get_status()
+        print(f"\nQueue ready: {status['pending']} jobs pending")
+        print("-" * 60 + "\n")
+
+    # Run worker
     worker.run(max_iterations=args.max_requests)
 
 
