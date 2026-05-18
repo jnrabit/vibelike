@@ -3,12 +3,21 @@
 from typing import Optional
 from ossifikat.store import OssifikatStore
 
+try:
+    from logdb.db import LogDB
+except ImportError:
+    try:
+        from vibelike.logdb.db import LogDB
+    except ImportError:
+        LogDB = None
+
 
 class ToolsAdapter:
     """Stores tool metadata and documentation as knowledge triples."""
 
-    def __init__(self, ossifikat_db_path: str = "ossifikat/data/ossifikat.db"):
+    def __init__(self, ossifikat_db_path: str = "ossifikat/data/ossifikat.db", logdb_path: str = "logs/execution.db"):
         self.store = OssifikatStore(ossifikat_db_path)
+        self.logdb = LogDB(logdb_path) if LogDB else None
 
     def store_tool(self, tool: dict, source: str = "tools_harvester", confirm: bool = False) -> Optional[int]:
         """
@@ -35,6 +44,23 @@ class ToolsAdapter:
             object=sector,
             source=source
         )
+
+        # Log event
+        if triple_id and self.logdb:
+            self.logdb.add_adapter_event(
+                adapter="tools",
+                event_type="store_tool",
+                source=source,
+                triple_id=triple_id,
+                subject=tool_id,
+                predicate="belongs_to_sector",
+                object=sector,
+                metadata={
+                    "tool_id": tool_id,
+                    "sector": sector,
+                    "urls_count": len(tool.get("urls", []))
+                }
+            )
 
         if triple_id and confirm:
             self.store.confirm(triple_id)

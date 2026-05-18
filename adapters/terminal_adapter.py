@@ -3,12 +3,21 @@
 from typing import Optional
 from ossifikat.store import OssifikatStore
 
+try:
+    from logdb.db import LogDB
+except ImportError:
+    try:
+        from vibelike.logdb.db import LogDB
+    except ImportError:
+        LogDB = None
+
 
 class TerminalAdapter:
     """Stores terminal queries and responses as knowledge triples."""
 
-    def __init__(self, ossifikat_db_path: str = "ossifikat/data/ossifikat.db"):
+    def __init__(self, ossifikat_db_path: str = "ossifikat/data/ossifikat.db", logdb_path: str = "logs/execution.db"):
         self.store = OssifikatStore(ossifikat_db_path)
+        self.logdb = LogDB(logdb_path) if LogDB else None
 
     def store_query_response(
         self,
@@ -30,12 +39,32 @@ class TerminalAdapter:
             Triple ID if stored successfully
         """
         # Create triple: query_hash retrieved_answer response_hash
+        subject = f"query_{hash(query) % 10000}"
+        object_val = f"response_{hash(response) % 10000}"
+
         triple_id = self.store.add_staging(
-            subject=f"query_{hash(query) % 10000}",
+            subject=subject,
             predicate="retrieved_answer",
-            object=f"response_{hash(response) % 10000}",
+            object=object_val,
             source="terminal"
         )
+
+        # Log event to database
+        if triple_id and self.logdb:
+            self.logdb.add_adapter_event(
+                adapter="terminal",
+                event_type="store_query_response",
+                source="terminal",
+                triple_id=triple_id,
+                subject=subject,
+                predicate="retrieved_answer",
+                object=object_val,
+                metadata={
+                    "query": query[:200],  # Store first 200 chars
+                    "response": response[:200],
+                    "context_count": len(context_ids) if context_ids else 0
+                }
+            )
 
         if triple_id and confirm:
             self.store.confirm(triple_id)
@@ -49,12 +78,30 @@ class TerminalAdapter:
         label: str = "query_execution"
     ) -> Optional[int]:
         """Store hardware state information as a triple."""
-        return self.store.add_staging(
+        triple_id = self.store.add_staging(
             subject="hardware_state",
             predicate=label,
             object="lorenz_attractor",
             source="terminal_hardware"
         )
+
+        # Log event
+        if triple_id and self.logdb:
+            self.logdb.add_adapter_event(
+                adapter="terminal",
+                event_type="store_hardware_state",
+                source="terminal_hardware",
+                triple_id=triple_id,
+                subject="hardware_state",
+                predicate=label,
+                object="lorenz_attractor",
+                metadata={
+                    "lorenz": lorenz_params,
+                    "thermodynamics": thermodynamics
+                }
+            )
+
+        return triple_id
 
     def get_query_history(self, limit: int = 10) -> list:
         """Retrieve recent query-response triples."""

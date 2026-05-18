@@ -7,13 +7,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from vibelike.models.request import Request
+try:
+    from vibelike.models.request import Request
+except ImportError:
+    Request = None  # Allow import without vibelike installed
 
 
 class LogDB:
     """Verwaltet die Log-Datenbank für Requests."""
 
-    def __init__(self, db_path: str = "/vibelike/logs/execution.db"):
+    def __init__(self, db_path: str = "logs/execution.db"):
         """
         Initialisiert die Log-Datenbank.
 
@@ -21,6 +24,7 @@ class LogDB:
             db_path: Pfad zur SQLite-Datenbank
         """
         self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _init_db(self) -> None:
@@ -87,7 +91,99 @@ class LogDB:
                 CREATE INDEX IF NOT EXISTS idx_requests_created ON requests(created_at);
                 CREATE INDEX IF NOT EXISTS idx_inputs_req_id ON request_inputs(req_id);
                 CREATE INDEX IF NOT EXISTS idx_outputs_req_id ON request_outputs(req_id);
+
+                CREATE TABLE IF NOT EXISTS adapter_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    adapter TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    source TEXT,
+                    triple_id INTEGER,
+                    subject TEXT,
+                    predicate TEXT,
+                    object TEXT,
+                    metadata TEXT,
+                    user TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_adapter_events_timestamp ON adapter_events(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_adapter_events_adapter ON adapter_events(adapter);
+                CREATE INDEX IF NOT EXISTS idx_adapter_events_triple ON adapter_events(triple_id);
             """)
+
+    def add_adapter_event(
+        self,
+        adapter: str,
+        event_type: str,
+        source: str = None,
+        triple_id: int = None,
+        subject: str = None,
+        predicate: str = None,
+        object: str = None,
+        metadata: dict = None,
+        user: str = None
+    ) -> int:
+        """
+        Logs an adapter event (triple storage, query, response, etc).
+
+        Args:
+            adapter: Adapter name (harvest, terminal, tools)
+            event_type: Event type (store_document, store_query, store_tool, etc)
+            source: Data source
+            triple_id: Associated ossifikat triple ID
+            subject: Triple subject
+            predicate: Triple predicate
+            object: Triple object
+            metadata: Additional metadata as dict
+            user: User name if applicable
+
+        Returns:
+            Event ID
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO adapter_events
+                (adapter, event_type, source, triple_id, subject, predicate, object, metadata, user)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    adapter,
+                    event_type,
+                    source,
+                    triple_id,
+                    subject,
+                    predicate,
+                    object,
+                    json.dumps(metadata) if metadata else None,
+                    user
+                )
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_adapter_events(self, adapter: str = None, event_type: str = None, limit: int = 100) -> list:
+        """Retrieve adapter events with optional filtering."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            query = "SELECT * FROM adapter_events WHERE 1=1"
+            params = []
+
+            if adapter:
+                query += " AND adapter = ?"
+                params.append(adapter)
+            if event_type:
+                query += " AND event_type = ?"
+                params.append(event_type)
+
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
 
     def log_request(self, request: Request, sandbox_path: Path = None, host_results_path: Path = None) -> None:
         """
