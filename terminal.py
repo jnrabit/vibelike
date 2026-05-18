@@ -416,13 +416,21 @@ def start_workflow():
             "planning_detailed":  "2b. PLANNING-DETAIL     ",
             "execution":          "3.  EXECUTION           ",
             "verification":       "4.  VERIFICATION        ",
+            "failure_analysis":   "4b. FAILURE-ANALYSIS    ",
             "commit":             "5.  COMMIT              ",
         }
+        if workflow.get("iteration"):
+            print(f"Iteration: {workflow['iteration']} (parent: {workflow.get('parent_id')})")
         for phase_name, phase_data in workflow.get("phases", {}).items():
             if phase_data:
                 status = "✓" if phase_data.get("approved") or phase_data.get("tests_passed") or phase_data.get("committed") else "✗"
                 label = phase_labels.get(phase_name, phase_name.upper())
                 print(f"{status} {label} {phase_data.get('timestamp', 'N/A')}")
+        if workflow.get("phases", {}).get("commit", {}).get("steps"):
+            print("\nCommits:")
+            for s in workflow["phases"]["commit"]["steps"]:
+                if "hash" in s:
+                    print(f"  {s['hash']}  {s['title']}")
 
     except Exception as e:
         print(f"\n[ERR] Workflow fehlgeschlagen: {e}")

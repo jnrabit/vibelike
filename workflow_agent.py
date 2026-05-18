@@ -9,11 +9,13 @@ Orchestriert den kompletten Development Workflow:
 2b. PLANNING-DETAIL     - Konkrete Durchführung            (parallel validiert)
 3.  EXECUTION           - Code-Gen + Dry-Run-Diff          (parallel code-reviewt)
 4.  VERIFY              - Tests laufen automatisch
-5.  COMMIT              - Git-Commit wird erstellt
+4b. FAILURE-ANALYSIS    - Bei Test-Fail: Root-Cause →      Loop zurück zu Phase 1
+5.  COMMIT              - Per Teilschritt aus Detail-Plan  ein eigener Git-Commit
 
 Plan-Phasen (1, 2a, 2b) bekommen parallel einen kritischen Validator.
-Execution bekommt parallel einen Code-Reviewer + Dry-Run-Diff-Anzeige
-(Files werden erst nach User-Approval geschrieben).
+Execution bekommt parallel einen Code-Reviewer + Dry-Run-Diff-Anzeige.
+Test-Fail → Qwen formuliert Korrektur-Task → neue Iteration (max 3).
+Commit-Phase splittet Änderungen in logische Teilschritte (Per-Step-Commits).
 
 Start: python workflow_agent.py
 """
@@ -416,7 +418,8 @@ Generiere kompletten, lauffähigen Code."""
             "phase": "VERIFICATION",
             "timestamp": datetime.now().isoformat(),
             "tests_passed": False,
-            "output": ""
+            "output": "",
+            "stderr": "",
         }
 
         try:
@@ -430,6 +433,7 @@ Generiere kompletten, lauffähigen Code."""
             )
 
             result["output"] = proc.stdout
+            result["stderr"] = proc.stderr
             result["return_code"] = proc.returncode
 
             # Parse Ergebnis
@@ -438,11 +442,77 @@ Generiere kompletten, lauffähigen Code."""
                 print("\n✅ ALLE TESTS BESTANDEN (100%)\n")
             else:
                 print("\n⚠️ Tests mit Fehler:\n")
-                print(proc.stdout[-500:])
+                print(proc.stdout[-1500:])
+                if proc.stderr:
+                    print("\nSTDERR:")
+                    print(proc.stderr[-500:])
 
         except Exception as e:
             result["error"] = str(e)
             print(f"\n❌ Test-Fehler: {e}")
+
+        return result
+
+    def phase_failure_analysis(self, briefing: dict, execution: dict, verification: dict) -> dict:
+        """Phase 4b: Nach Test-Fail Root-Cause analysieren und neuen Task formulieren."""
+        print("\n" + "="*70)
+        print("PHASE 4B: FAILURE ANALYSIS")
+        print("="*70)
+
+        files_changed = execution.get("files_written", []) or [
+            c["path"] for c in execution.get("planned_changes", [])
+        ]
+
+        analysis_prompt = f"""Du bist ein Senior Debug-Engineer. Die Tests sind nach folgender Änderung gefehlschlagen.
+Analysiere den Root Cause und formuliere eine KORRIGIERENDE FOLGE-AUFGABE.
+
+URSPRÜNGLICHE AUFGABE:
+{briefing['task']}
+
+GEÄNDERTE DATEIEN:
+{json.dumps(files_changed, indent=2)}
+
+TEST-OUTPUT (letzte Zeilen):
+{verification.get('output', '')[-2000:]}
+
+STDERR:
+{verification.get('stderr', '')[-1000:]}
+
+Liefere:
+1. ROOT CAUSE        - Was ist die wahre Ursache? (nicht nur Symptom)
+2. WIDERSPRUCH       - War der ursprüngliche Plan falsch oder die Umsetzung?
+3. KORREKTUR-AUFGABE - 1-2 Sätze für die nächste Iteration. So formuliert,
+   dass sie als neue Workflow-Aufgabe gestartet werden kann.
+   Format: "Fix: <konkrete Anweisung>"
+4. AMPEL             - 🟢 trivial fixbar / 🟡 brauchen Re-Plan / 🔴 Konzept neu denken
+
+Sei knapp, kein Fließtext."""
+
+        print("[🤖 Qwen analysiert Test-Failure...]")
+        analysis = self.qwen.generate(analysis_prompt, temperature=0.3)
+
+        # Korrektur-Aufgabe extrahieren (suche nach "Fix:" Zeile)
+        followup_task = None
+        for line in analysis.splitlines():
+            stripped = line.strip().lstrip("0123456789.-) ")
+            if stripped.lower().startswith("fix:") or stripped.lower().startswith("korrektur:"):
+                followup_task = stripped.split(":", 1)[1].strip()
+                break
+
+        if not followup_task:
+            # Fallback: ganzen Analyse-Text als Task verwenden
+            followup_task = f"Fix Test-Failure aus vorheriger Iteration:\n{analysis[:500]}"
+
+        result = {
+            "phase": "FAILURE_ANALYSIS",
+            "analysis": analysis,
+            "followup_task": followup_task,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        print(f"\n{analysis}\n")
+        print("-"*70)
+        print(f"\n🔁 Vorgeschlagene Folge-Aufgabe:\n  {followup_task}\n")
 
         return result
 
@@ -451,77 +521,195 @@ Generiere kompletten, lauffähigen Code."""
     # =========================================================================
 
     def phase_commit(self, briefing: dict, execution: dict, verification: dict) -> dict:
-        """Phase 5: Automatischer Git-Commit."""
+        """Phase 5: Per-Teilschritt Git-Commits aus Detail-Plan."""
         print("\n" + "="*70)
-        print("PHASE 5: COMMIT")
+        print("PHASE 5: COMMIT (Per-Teilschritt)")
         print("="*70)
 
-        # Generiere Commit-Message mit Qwen
-        commit_prompt = f"""Generiere eine präzise Git-Commit-Message für diese Änderung:
+        files_changed = execution.get("files_written", [])
+        if not files_changed:
+            print("\n⚠️ Keine Files geändert, nichts zu committen.\n")
+            return {"phase": "COMMIT", "committed": False, "steps": []}
 
-AUFGABE:
+        # Detail-Plan aus aktuellem Workflow lesen
+        detail = (self.current_workflow or {}).get("phases", {}).get("planning_detailed", {})
+        plan_text = detail.get("plan", "")
+
+        # Qwen in Teilschritte aufteilen lassen
+        grouping_prompt = f"""Gruppe diese Datei-Änderungen in LOGISCHE TEILSCHRITTE für separate Git-Commits.
+
+ORIGINALAUFGABE:
 {briefing['task']}
 
-ÄNDERUNGEN:
-{json.dumps([f for f in execution.get('files_written', [])], indent=2)}
+DETAIL-PLAN (Soll-Sequenz):
+{plan_text[:3000]}
 
-Format:
-- Title (1 Zeile, max 70 Zeichen)
-- Leerzeile
-- Body (beschreib WHY, nicht WHAT)
-- Bullet points für Highlights
+TATSÄCHLICH GEÄNDERTE DATEIEN:
+{json.dumps(files_changed, indent=2)}
 
-Beispiel:
-Add GitHub README harvester for Code-Vault
+Antworte AUSSCHLIESSLICH mit gültigem JSON (kein Markdown-Block, kein Text drumherum):
+[
+  {{
+    "step":  "Kurzer Step-Name",
+    "files": ["absoluter/oder/relativer/pfad", ...],
+    "title": "Commit-Title (max 70 Zeichen, imperativ)",
+    "body":  "Warum diese Änderung. 1-3 Sätze."
+  }},
+  ...
+]
 
-- Collects README files from trending repos
-- Integrates with harvest_scheduler
-- Adds 500+ documents per harvest run
-- Handles API rate limits gracefully"""
+Regeln:
+- Mindestens 1, maximal 5 Commits
+- Jede Datei in GENAU einem Step
+- Reihenfolge = sinnvoller Abhängigkeits-Order
+- Tests gehören zum Step, der die Logik einführt (nicht eigener Commit)"""
 
-        print("[🤖 Qwen erstellt Commit-Message...]")
-        commit_msg = self.qwen.generate(commit_prompt, temperature=0.2)
+        print("[🤖 Qwen gruppiert Änderungen in Teilschritte...]")
+        grouping_raw = self.qwen.generate(grouping_prompt, temperature=0.1)
+        steps = self._parse_commit_groups(grouping_raw, files_changed)
 
-        # Erstelle Commit
+        print(f"\n📦 {len(steps)} Teilschritt(e) geplant:\n")
+        for i, s in enumerate(steps, 1):
+            print(f"  {i}. {s['title']}")
+            for f in s["files"]:
+                rel = Path(f).relative_to(self.root) if Path(f).is_relative_to(self.root) else f
+                print(f"       - {rel}")
+        print()
+
         result = {
             "phase": "COMMIT",
-            "message": commit_msg,
+            "steps": [],
             "timestamp": datetime.now().isoformat(),
-            "committed": False
+            "committed": False,
         }
 
-        print(f"\n📝 Commit-Message:\n\n{commit_msg}\n")
-        print("-"*70)
+        # Pro Step: User-Gate, dann committen
+        confirm = input("\n👤 Per-Step-Commits durchführen? (ja/nein/einer): ").strip().lower()
+        if confirm in ["nein", "no", "n"]:
+            print("\n⏭️ Commits übersprungen.\n")
+            return result
 
-        # User-Bestätigung
-        confirm = input("\n👤 Commit erstellen? (ja/nein): ").strip().lower()
-        if confirm in ["ja", "yes", "y"]:
+        # "einer" Fallback: alles als 1 Commit
+        if confirm == "einer":
+            steps = [{
+                "step": "Combined",
+                "files": files_changed,
+                "title": steps[0]["title"] if steps else briefing['task'][:60],
+                "body": "\n".join(f"- {s['title']}" for s in steps) if steps else "",
+            }]
+
+        # Reset staging area, dann pro Step add+commit
+        try:
+            subprocess.run(["git", "reset", "HEAD", "--"], cwd=self.root, capture_output=True, check=False)
+        except Exception:
+            pass
+
+        for i, step in enumerate(steps, 1):
+            print(f"\n[{i}/{len(steps)}] {step['title']}")
+            message = f"{step['title']}\n\n{step['body']}".strip()
+
             try:
-                # Git add all modified/new files
-                subprocess.run(
-                    ["git", "add", "-A"],
+                # Stage NUR die Files dieses Steps
+                for f in step["files"]:
+                    subprocess.run(["git", "add", "--", f], cwd=self.root, capture_output=True, check=True)
+
+                # Commit
+                proc = subprocess.run(
+                    ["git", "commit", "-m", message],
                     cwd=self.root,
                     capture_output=True,
-                    check=True
+                    text=True,
+                    check=False,
                 )
-
-                # Git commit
-                subprocess.run(
-                    ["git", "commit", "-m", commit_msg],
-                    cwd=self.root,
-                    capture_output=True,
-                    check=True
-                )
-
-                result["committed"] = True
-                print("\n✅ Commit erstellt!\n")
+                if proc.returncode == 0:
+                    # Hash holen
+                    hash_proc = subprocess.run(
+                        ["git", "rev-parse", "--short", "HEAD"],
+                        cwd=self.root, capture_output=True, text=True, check=False,
+                    )
+                    commit_hash = hash_proc.stdout.strip()
+                    print(f"   ✓ {commit_hash} — {step['title']}")
+                    result["steps"].append({
+                        "step": step["step"],
+                        "title": step["title"],
+                        "hash": commit_hash,
+                        "files": step["files"],
+                    })
+                else:
+                    print(f"   ⚠️ Commit übersprungen: {proc.stderr.strip() or 'nichts zu committen'}")
+                    result["steps"].append({
+                        "step": step["step"],
+                        "title": step["title"],
+                        "skipped": True,
+                        "reason": proc.stderr.strip(),
+                    })
             except subprocess.CalledProcessError as e:
-                result["error"] = str(e)
-                print(f"\n❌ Git-Fehler: {e}")
-        else:
-            print("\n⏭️ Commit übersprungen.\n")
+                print(f"   ✗ Git-Fehler: {e}")
+                result["steps"].append({"step": step["step"], "error": str(e)})
 
+        result["committed"] = any("hash" in s for s in result["steps"])
+        if result["committed"]:
+            print(f"\n✅ {sum(1 for s in result['steps'] if 'hash' in s)} Commit(s) erstellt.\n")
         return result
+
+    def _parse_commit_groups(self, raw: str, all_files: list) -> list:
+        """Parse Qwen-JSON-Output für Commit-Steps. Fallback: 1 Commit mit allen Files."""
+        import re
+
+        # Code-Fences abziehen falls Qwen welche dranklebt
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\n", "", cleaned)
+            cleaned = re.sub(r"\n```\s*$", "", cleaned)
+
+        # JSON-Array suchen
+        match = re.search(r"\[\s*\{.*\}\s*\]", cleaned, re.DOTALL)
+        if not match:
+            return [self._fallback_commit_step(all_files)]
+
+        try:
+            steps = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return [self._fallback_commit_step(all_files)]
+
+        # Validierung + Normalisierung
+        all_files_set = set(all_files)
+        seen_files = set()
+        valid_steps = []
+        for s in steps:
+            if not isinstance(s, dict):
+                continue
+            files = [f for f in s.get("files", []) if f in all_files_set and f not in seen_files]
+            if not files:
+                continue
+            seen_files.update(files)
+            valid_steps.append({
+                "step":  s.get("step", "Step"),
+                "files": files,
+                "title": (s.get("title") or "chore: update")[:70],
+                "body":  s.get("body", "").strip(),
+            })
+
+        # Falls Files übrigbleiben (Qwen vergessen): Catchall-Step
+        leftover = [f for f in all_files if f not in seen_files]
+        if leftover:
+            valid_steps.append({
+                "step":  "remaining",
+                "files": leftover,
+                "title": "chore: remaining changes",
+                "body":  "Files, die nicht von Qwen gruppiert wurden.",
+            })
+
+        return valid_steps or [self._fallback_commit_step(all_files)]
+
+    def _fallback_commit_step(self, files: list) -> dict:
+        """Fallback wenn Qwen-Gruppierung fehlschlägt: 1 Commit mit allem."""
+        return {
+            "step":  "all",
+            "files": files,
+            "title": "chore: workflow changes",
+            "body":  "Combined commit (Qwen-Gruppierung fehlgeschlagen).",
+        }
 
     # =========================================================================
     # HILFSMETHODEN
@@ -676,11 +864,20 @@ Sei knapp, kritisch, konkret. Wenn ok: 1 Satz + 🟢. Sonst: nummerierte Punkte.
     # MAIN WORKFLOW
     # =========================================================================
 
-    def run_workflow(self, task: str) -> dict:
-        """Laufe alle 6 Phasen durch (Planning ist 2-stufig: Strategie + Detail)."""
+    def run_workflow(self, task: str, iteration: int = 0, max_iterations: int = 3,
+                     parent_id: str = None) -> dict:
+        """Laufe Workflow durch. Bei Test-Fail Loop zurück zu Phase 1 (max N Iterationen)."""
+        wf_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+        if iteration > 0:
+            print("\n" + "█"*70)
+            print(f"🔁 ITERATION {iteration}/{max_iterations} — neue Aufgabe aus Failure-Analyse")
+            print("█"*70)
+
         self.current_workflow = {
-            "id": datetime.now().strftime("%Y%m%d-%H%M%S"),
+            "id": wf_id,
             "task": task,
+            "iteration": iteration,
+            "parent_id": parent_id,
             "phases": {}
         }
 
@@ -714,16 +911,49 @@ Sei knapp, kritisch, konkret. Wenn ok: 1 Satz + 🟢. Sonst: nummerierte Punkte.
         verification = self.phase_verification(execution)
         self.current_workflow["phases"]["verification"] = verification
 
+        # Bei Test-Fail: Failure-Loop zurück zu Phase 1 (mit Iteration-Cap)
         if not verification.get("tests_passed"):
-            print("\n⚠️ Tests nicht alle bestanden. Überprüfe manuell.\n")
+            failure = self.phase_failure_analysis(briefing, execution, verification)
+            self.current_workflow["phases"]["failure_analysis"] = failure
 
-        # Phase 5: COMMIT
+            # Workflow-Log schreiben (auch die abgebrochene Iteration)
+            with open(self.workflow_log, "a") as f:
+                f.write(json.dumps(self.current_workflow, default=str) + "\n")
+
+            if iteration + 1 >= max_iterations:
+                print(f"\n🔴 Max Iterationen ({max_iterations}) erreicht. Workflow abgebrochen.\n")
+                self._executor.shutdown(wait=False)
+                return self.current_workflow
+
+            # User-Gate: Loop weitermachen?
+            choice = input(
+                f"\n👤 Folge-Iteration starten? (ja/nein/edit) "
+                f"[{iteration + 1}/{max_iterations}]: "
+            ).strip().lower()
+            if choice in ["nein", "no", "n"]:
+                print("\n⏭️ Loop abgebrochen, kein Commit.\n")
+                self._executor.shutdown(wait=False)
+                return self.current_workflow
+            if choice == "edit":
+                custom = input("Eigene Folge-Aufgabe: ").strip()
+                if custom:
+                    failure["followup_task"] = custom
+
+            # Rekursiv neue Iteration starten
+            return self.run_workflow(
+                task=failure["followup_task"],
+                iteration=iteration + 1,
+                max_iterations=max_iterations,
+                parent_id=wf_id,
+            )
+
+        # Phase 5: COMMIT (per Teilschritt)
         commit = self.phase_commit(briefing, execution, verification)
         self.current_workflow["phases"]["commit"] = commit
 
         # Log
         with open(self.workflow_log, "a") as f:
-            f.write(json.dumps(self.current_workflow) + "\n")
+            f.write(json.dumps(self.current_workflow, default=str) + "\n")
 
         print("\n" + "="*70)
         print("✅ WORKFLOW ABGESCHLOSSEN")
