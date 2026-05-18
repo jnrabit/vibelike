@@ -7,12 +7,13 @@ Orchestriert den kompletten Development Workflow:
 1.  BRIEFING            - Qwen analysiert Anfrage + Code   (parallel validiert)
 2a. PLANNING-STRATEGIE  - Allgemeines Vorgehen             (parallel validiert)
 2b. PLANNING-DETAIL     - Konkrete Durchführung            (parallel validiert)
-3.  EXECUTION           - Qwen schreibt Code automatisch
+3.  EXECUTION           - Code-Gen + Dry-Run-Diff          (parallel code-reviewt)
 4.  VERIFY              - Tests laufen automatisch
 5.  COMMIT              - Git-Commit wird erstellt
 
-Jede Plan-Phase (1, 2a, 2b) bekommt parallel einen kritischen Validator
-(zweiter Qwen-Aufruf als Reviewer), der vor der User-Genehmigung präsentiert wird.
+Plan-Phasen (1, 2a, 2b) bekommen parallel einen kritischen Validator.
+Execution bekommt parallel einen Code-Reviewer + Dry-Run-Diff-Anzeige
+(Files werden erst nach User-Approval geschrieben).
 
 Start: python workflow_agent.py
 """
@@ -307,9 +308,9 @@ Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
     # =========================================================================
 
     def phase_execution(self, briefing: dict, plan: dict) -> dict:
-        """Phase 3: Automatische Code-Implementierung."""
+        """Phase 3: Code-Generierung mit Dry-Run + parallelem Code-Reviewer + User-Gate."""
         print("\n" + "="*70)
-        print("PHASE 3: EXECUTION")
+        print("PHASE 3: EXECUTION (Dry-Run + Code-Review)")
         print("="*70)
 
         execution_prompt = f"""Du bist ein Experten-Code-Generator. Implementiere basierend auf diesem Plan:
@@ -344,25 +345,58 @@ Generiere kompletten, lauffähigen Code."""
         print("[🤖 Qwen schreibt Code...]")
         code = self.qwen.generate(execution_prompt, temperature=0.1)
 
+        # Parse OHNE zu schreiben (Dry-Run)
+        planned_changes = self._parse_code(code)
+
+        # Parallel: Code-Reviewer startet
+        review_future = self._start_code_review(code, plan, briefing['task'])
+
+        # Diff-Übersicht zeigen
+        print(f"\n📦 GEPLANTE ÄNDERUNGEN ({len(planned_changes)} Dateien):")
+        print("="*70)
+        self._show_diff(planned_changes, full=False)
+
+        # Generierten Code auch zeigen (für Kontext)
+        print("\n📝 GENERIERTER CODE (Ausschnitt):")
+        print("="*70)
+        print(code[:1500] + ("\n... [gekürzt]" if len(code) > 1500 else ""))
+
+        # Code-Review einsammeln
+        review = self._render_code_review(review_future)
+
         result = {
             "phase": "EXECUTION",
             "code": code,
+            "planned_changes": [{"path": c["path"], "exists": c["exists"], "lines": len(c["content"].splitlines())} for c in planned_changes],
+            "code_review": review,
             "timestamp": datetime.now().isoformat(),
-            "files_written": []
+            "files_written": [],
+            "approved": False,
         }
 
-        # Parse und schreib Code
-        try:
-            files = self._parse_and_write_code(code)
-            result["files_written"] = files
-            print(f"\n✅ Code geschrieben in {len(files)} Dateien")
-            for f in files:
-                print(f"   - {f}")
-        except Exception as e:
-            print(f"\n❌ Fehler beim Schreiben: {e}")
-            result["error"] = str(e)
+        # User-Gate vor dem Schreiben
+        print("\n" + "-"*70)
+        while True:
+            approval = input("\n👤 Änderungen anwenden? (ja/nein/diff/code): ").strip().lower()
+            if approval in ["ja", "yes", "y"]:
+                files = self._write_code(planned_changes)
+                result["files_written"] = files
+                result["approved"] = True
+                print(f"\n✅ Code geschrieben in {len(files)} Dateien:")
+                for f in files:
+                    print(f"   - {f}")
+                break
+            elif approval in ["nein", "no", "n"]:
+                print("\n❌ Execution abgebrochen, keine Files geschrieben.\n")
+                return result
+            elif approval == "diff":
+                print("\n📦 KOMPLETTER DIFF:")
+                self._show_diff(planned_changes, full=True)
+            elif approval == "code":
+                print(f"\n📝 KOMPLETTER CODE:\n{code}\n")
+            else:
+                print("Bitte 'ja', 'nein', 'diff' (volldiff) oder 'code' (vollcode) eingeben.")
 
-        print(f"\n{code}\n")
         return result
 
     # =========================================================================
@@ -503,46 +537,140 @@ Add GitHub README harvester for Code-Vault
             "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
         }
 
-    def _parse_and_write_code(self, code: str) -> list:
-        """Parse Code-Output und schreib Dateien."""
-        files_written = []
-
-        # Einfacher Parser für "## Datei: <path>" Blöcke
+    def _parse_code(self, code: str) -> list:
+        """Parse Code-Output, gibt Liste von {path, content, exists} zurück. SCHREIBT NICHT."""
+        changes = []
         lines = code.split("\n")
         current_file = None
         current_code = []
         in_code_block = False
 
-        for line in lines:
-            if line.startswith("## Datei:") or line.startswith("## File:"):
-                # Schreib vorherige Datei
-                if current_file and current_code:
-                    filepath = self.root / current_file.strip()
-                    filepath.parent.mkdir(parents=True, exist_ok=True)
-                    with open(filepath, "w") as f:
-                        f.write("\n".join(current_code))
-                    files_written.append(str(filepath))
+        def _flush():
+            if current_file:
+                path = (self.root / current_file.strip()).resolve()
+                content = "\n".join(current_code)
+                changes.append({
+                    "path": str(path),
+                    "content": content,
+                    "exists": path.exists(),
+                })
 
-                # Neue Datei
-                current_file = line.replace("## Datei:", "").replace("## File:", "").strip()
+        for line in lines:
+            if line.startswith("## Datei:") or line.startswith("## File:") or line.startswith("## Tests:"):
+                _flush()
+                current_file = (
+                    line.replace("## Datei:", "")
+                        .replace("## File:", "")
+                        .replace("## Tests:", "")
+                        .strip()
+                )
                 current_code = []
                 in_code_block = False
-
             elif line.startswith("```"):
                 in_code_block = not in_code_block
-
             elif in_code_block and current_file:
                 current_code.append(line)
+        _flush()
 
-        # Schreib letzte Datei
-        if current_file and current_code:
-            filepath = self.root / current_file
-            filepath.parent.mkdir(parents=True, exist_ok=True)
-            with open(filepath, "w") as f:
-                f.write("\n".join(current_code))
-            files_written.append(str(filepath))
+        return changes
 
+    def _write_code(self, planned_changes: list) -> list:
+        """Schreibt die geparsten Änderungen auf Platte. Gibt Liste der Pfade zurück."""
+        files_written = []
+        for change in planned_changes:
+            path = Path(change["path"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(change["content"])
+            files_written.append(str(path))
         return files_written
+
+    def _show_diff(self, planned_changes: list, full: bool = False) -> None:
+        """Zeigt Diff oder Preview pro geplanter Datei."""
+        import difflib
+
+        for change in planned_changes:
+            path = Path(change["path"])
+            new_content = change["content"]
+            rel = path.relative_to(self.root) if path.is_relative_to(self.root) else path
+
+            if change["exists"]:
+                old_content = path.read_text()
+                diff = list(difflib.unified_diff(
+                    old_content.splitlines(keepends=True),
+                    new_content.splitlines(keepends=True),
+                    fromfile=f"a/{rel}",
+                    tofile=f"b/{rel}",
+                    n=3,
+                ))
+                if not diff:
+                    print(f"  ≡ UNCHANGED: {rel}")
+                    continue
+                print(f"\n📝 MODIFY: {rel}  (+{sum(1 for l in diff if l.startswith('+') and not l.startswith('+++'))} / -{sum(1 for l in diff if l.startswith('-') and not l.startswith('---'))})")
+                if full:
+                    print("".join(diff))
+                else:
+                    preview = diff[:30]
+                    print("".join(preview))
+                    if len(diff) > 30:
+                        print(f"   ... ({len(diff) - 30} weitere Diff-Zeilen, 'diff' für Vollansicht)")
+            else:
+                lines = new_content.splitlines()
+                print(f"\n✨ NEW: {rel}  ({len(lines)} Zeilen)")
+                if full:
+                    print(new_content)
+                else:
+                    preview = "\n".join(lines[:15])
+                    print(preview)
+                    if len(lines) > 15:
+                        print(f"   ... ({len(lines) - 15} weitere Zeilen, 'code' für Vollansicht)")
+
+    def _start_code_review(self, code: str, plan: dict, task: str) -> concurrent.futures.Future:
+        """Startet parallelen Code-Reviewer (zweiter Qwen als Critic)."""
+        def _run() -> str:
+            review_prompt = f"""Du bist ein Senior Code-Reviewer. Reviewe diesen frisch generierten Code KRITISCH.
+
+ORIGINALAUFGABE:
+{task}
+
+DETAIL-PLAN (Soll-Zustand):
+{plan.get('plan', '')[:2000]}
+
+GENERIERTER CODE:
+{code}
+
+Prüfe konkret:
+1. KORREKTHEIT    - Implementiert es den Plan? Logik-Bugs?
+2. EDGE CASES     - Nullwerte, leere Listen, Race Conditions?
+3. ERROR HANDLING - Was passiert bei Exceptions? Zu defensiv / zu offen?
+4. STYLE          - Konsistenz mit bestehendem Code im Projekt?
+5. TESTS          - Decken sie wirklich die Logik ab oder nur Happy Path?
+6. SECURITY       - Injection, Pfad-Traversal, Secrets im Code, unsafe input?
+7. IMPORTS        - Alle nötigen da? Unbenutzte? Circular?
+8. AMPEL          - 🟢 mergen / 🟡 mergen mit Anmerkungen / 🔴 nicht mergen
+
+Sei knapp, kritisch, konkret. Wenn ok: 1 Satz + 🟢. Sonst: nummerierte Punkte."""
+            return self.validator_qwen.generate(review_prompt, temperature=0.3)
+
+        return self._executor.submit(_run)
+
+    def _render_code_review(self, review_future: concurrent.futures.Future) -> str:
+        """Holt Code-Reviewer-Ergebnis ab und rendert es."""
+        print("\n[🔍 Code-Reviewer läuft parallel...]")
+        try:
+            result = review_future.result(timeout=300)
+        except Exception as e:
+            result = f"[Reviewer-Fehler: {e}]"
+        print("\n" + "─"*70)
+        print("🔍 PARALLELER CODE-REVIEW (unabhängiger Critic)")
+        print("─"*70)
+        print(result)
+        print("─"*70)
+        return result
+
+    def _parse_and_write_code(self, code: str) -> list:
+        """Legacy-API: parse + write in einem Schritt (für Tests / externe Aufrufer)."""
+        changes = self._parse_code(code)
+        return self._write_code(changes)
 
     # =========================================================================
     # MAIN WORKFLOW
@@ -574,9 +702,13 @@ Add GitHub README harvester for Code-Vault
             return self.current_workflow
         self.current_workflow["phases"]["planning_detailed"] = planning
 
-        # Phase 3: EXECUTION
+        # Phase 3: EXECUTION (Dry-Run + Code-Review + User-Gate)
         execution = self.phase_execution(briefing, planning)
         self.current_workflow["phases"]["execution"] = execution
+        if not execution.get("approved"):
+            print("\n❌ Workflow abgebrochen (Code-Änderungen nicht genehmigt).\n")
+            self._executor.shutdown(wait=False)
+            return self.current_workflow
 
         # Phase 4: VERIFICATION
         verification = self.phase_verification(execution)
