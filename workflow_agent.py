@@ -4,12 +4,15 @@ Workflow Agent - 6-Phasen Feature Development mit Qwen2.5-Coder
 ================================================================
 
 Orchestriert den kompletten Development Workflow:
-1.  BRIEFING            - Qwen analysiert Anfrage + Code
-2a. PLANNING-STRATEGIE  - Allgemeines Vorgehen (User-Genehmigung)
-2b. PLANNING-DETAIL     - Konkrete Durchführung (User-Genehmigung)
+1.  BRIEFING            - Qwen analysiert Anfrage + Code   (parallel validiert)
+2a. PLANNING-STRATEGIE  - Allgemeines Vorgehen             (parallel validiert)
+2b. PLANNING-DETAIL     - Konkrete Durchführung            (parallel validiert)
 3.  EXECUTION           - Qwen schreibt Code automatisch
 4.  VERIFY              - Tests laufen automatisch
 5.  COMMIT              - Git-Commit wird erstellt
+
+Jede Plan-Phase (1, 2a, 2b) bekommt parallel einen kritischen Validator
+(zweiter Qwen-Aufruf als Reviewer), der vor der User-Genehmigung präsentiert wird.
 
 Start: python workflow_agent.py
 """
@@ -18,6 +21,7 @@ import os
 import sys
 import json
 import subprocess
+import concurrent.futures
 from pathlib import Path
 from datetime import datetime
 
@@ -27,17 +31,64 @@ sys.path.insert(0, str(Path(__file__).parent / "ossifikat"))
 
 
 class WorkflowAgent:
-    """5-Phasen Workflow Agent mit Qwen2.5-Coder."""
+    """6-Phasen Workflow Agent mit Qwen2.5-Coder + paralleler Phase-Validierung."""
 
     def __init__(self):
         # Import QwenCoder locally to avoid circular imports
         from terminal import QwenCoder
 
         self.qwen = QwenCoder()
+        # Separate QwenCoder instance for parallel validator (own HTTP session)
+        self.validator_qwen = QwenCoder()
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
         self.root = Path(__file__).parent
         self.workflow_log = self.root / "logs" / "workflows.jsonl"
         self.workflow_log.parent.mkdir(parents=True, exist_ok=True)
         self.current_workflow = None
+
+    # =========================================================================
+    # PARALLELE VALIDIERUNG (Critic)
+    # =========================================================================
+
+    def _start_validation(self, phase_name: str, output: str, context: str) -> concurrent.futures.Future:
+        """Startet Validator im Hintergrund. Gibt Future zurück (nicht blockierend)."""
+        def _run() -> str:
+            validator_prompt = f"""Du bist ein KRITISCHER REVIEWER. Validiere unabhängig diese {phase_name}-Ausgabe.
+
+KONTEXT (Originalaufgabe / Vorphase):
+{context}
+
+ZU VALIDIERENDE AUSGABE:
+{output}
+
+Prüfe diese Punkte ehrlich und knapp:
+1. VOLLSTÄNDIGKEIT  - Fehlt etwas Wichtiges? Lücken im Reasoning?
+2. WIDERSPRÜCHE    - Inkonsistenzen oder Annahmen, die kollidieren?
+3. RISIKEN         - Wurde an Edge Cases gedacht? Was geht schief?
+4. ANNAHMEN        - Unausgesprochene Annahmen, die problematisch sein könnten?
+5. ALTERNATIVEN    - Wurde ein besserer Ansatz übersehen?
+6. AMPEL           - 🟢 ok / 🟡 mit Vorbehalt / 🔴 Stop, neu denken
+
+Sei knapp und KRITISCH. Keine Bestätigungs-Floskeln, kein Lob.
+Wenn alles ok ist: 1 Satz + 🟢. Sonst: konkrete Punkte."""
+            return self.validator_qwen.generate(validator_prompt, temperature=0.4)
+
+        return self._executor.submit(_run)
+
+    def _render_validation(self, validation_future: concurrent.futures.Future) -> str:
+        """Holt Validator-Ergebnis ab und rendert es."""
+        print("\n[🔍 Validator läuft parallel...]")
+        try:
+            result = validation_future.result(timeout=300)
+        except Exception as e:
+            result = f"[Validator-Fehler: {e}]"
+        print("\n" + "─"*70)
+        print("🔍 PARALLELE VALIDIERUNG (unabhängiger Critic)")
+        print("─"*70)
+        print(result)
+        print("─"*70)
+        return result
 
     # =========================================================================
     # PHASE 1: BRIEFING
@@ -74,15 +125,22 @@ Sei präzise und technisch."""
         print("[🤖 Qwen analysiert...]")
         analysis = self.qwen.generate(analysis_prompt, temperature=0.3)
 
+        # Parallel: Validator startet, während wir die Ausgabe drucken
+        validation_future = self._start_validation("BRIEFING", analysis, f"AUFGABE: {task}")
+
+        print(f"\n{analysis}\n")
+
+        # Validation einsammeln (User-Lesezeit überlappt mit Validator-Run)
+        validation = self._render_validation(validation_future)
+
         result = {
             "phase": "BRIEFING",
             "task": task,
             "timestamp": datetime.now().isoformat(),
             "analysis": analysis,
+            "validation": validation,
             "project_info": project_info
         }
-
-        print(f"\n{analysis}\n")
         return result
 
     # =========================================================================
@@ -116,14 +174,26 @@ Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS u
         print("[🤖 Qwen entwickelt Strategie...]")
         strategy = self.qwen.generate(strategy_prompt, temperature=0.3)
 
+        # Parallel: Validator startet
+        validation_future = self._start_validation(
+            "PLANNING-STRATEGIE",
+            strategy,
+            f"BRIEFING-ANALYSE:\n{briefing['analysis']}"
+        )
+
+        print(f"\n{strategy}\n")
+
+        # Validation einsammeln
+        validation = self._render_validation(validation_future)
+
         result = {
             "phase": "PLANNING_STRATEGY",
             "strategy": strategy,
+            "validation": validation,
             "timestamp": datetime.now().isoformat(),
             "approved": False
         }
 
-        print(f"\n{strategy}\n")
         print("\n" + "-"*70)
 
         # User-Genehmigung der Strategie
@@ -182,15 +252,27 @@ Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
         print("[🤖 Qwen erstellt Detail-Plan...]")
         plan = self.qwen.generate(detail_prompt, temperature=0.2)
 
+        # Parallel: Validator startet
+        validation_future = self._start_validation(
+            "PLANNING-DETAIL",
+            plan,
+            f"AUFGABE: {briefing['task']}\n\nGENEHMIGTE STRATEGIE:\n{strategy['strategy']}"
+        )
+
+        print(f"\n{plan}\n")
+
+        # Validation einsammeln
+        validation = self._render_validation(validation_future)
+
         result = {
             "phase": "PLANNING_DETAILED",
             "plan": plan,
+            "validation": validation,
             "strategy_ref": strategy.get("strategy", ""),
             "timestamp": datetime.now().isoformat(),
             "approved": False
         }
 
-        print(f"\n{plan}\n")
         print("\n" + "-"*70)
 
         # User-Genehmigung des Detail-Plans
@@ -514,6 +596,9 @@ Add GitHub README harvester for Code-Vault
         print("\n" + "="*70)
         print("✅ WORKFLOW ABGESCHLOSSEN")
         print("="*70 + "\n")
+
+        # Validator-Threads sauber beenden
+        self._executor.shutdown(wait=False)
 
         return self.current_workflow
 
