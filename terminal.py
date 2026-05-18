@@ -46,7 +46,13 @@ from framework.quelibrium.intelligence.resonance import ResonanceField
 # Konfiguration
 # =============================================================================
 
-MODEL = "qwen2.5-coder:latest"
+# Foreground-Modell (Code-Gen, Planung)
+# Default qwen2.5-coder:1.5b: passt komplett in 8 GB VRAM, 100% GPU, schnell.
+# Für stärkeres Code-Reasoning: VIBELIKE_QWEN_MODEL=qwen2.5-coder:latest setzen
+# (Achtung: bei 8 GB VRAM cycelt das mit dem Validator).
+MODEL = os.environ.get("VIBELIKE_QWEN_MODEL", "qwen2.5-coder:1.5b")
+# Background-Modell (Validator, Reviewer)
+VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", "qwen2.5-coder:1.5b")
 OLLAMA_URL = "http://localhost:11434/api/generate"
 LOG_FILE = os.path.join(ROOT, "logs", "triplets.jsonl")
 
@@ -252,29 +258,33 @@ class CodeRetriever:
 # =============================================================================
 
 class QwenCoder:
-    """qwen2.5-coder über Ollama."""
-    
-    def __init__(self):
+    """qwen-Wrapper über Ollama. Modell pro Instanz wählbar (Foreground/Validator)."""
+
+    def __init__(self, model: str = None, num_predict: int = 2048, keep_alive: str = "30m"):
+        self.model = model or MODEL
+        self.num_predict = num_predict
+        self.keep_alive = keep_alive
         self.session = requests.Session()
         try:
             self.session.get("http://localhost:11434/api/tags", timeout=5)
-            print("[OK] Ollama läuft")
+            print(f"[OK] Ollama läuft (model={self.model})")
         except Exception:
             print("[WARN] Ollama nicht erreichbar")
-    
+
     def generate(self, prompt: str, system: str = None, temperature: float = 0.2,
                  stream: bool = False) -> str:
-        """Generiere mit qwen2.5-coder.
+        """Generiere mit dem konfigurierten Modell.
 
         stream=True: Tokens werden live nach stdout geschrieben (Vordergrund-Calls).
         stream=False: ein Block, kein Live-Output (Hintergrund-Threads, sonst Interleaving).
         Rückgabe ist in beiden Fällen der volle Antworttext.
         """
         payload = {
-            "model": MODEL,
+            "model": self.model,
             "prompt": prompt,
             "stream": stream,
-            "options": {"temperature": temperature, "top_p": 0.9, "num_predict": 2048},
+            "keep_alive": self.keep_alive,
+            "options": {"temperature": temperature, "top_p": 0.9, "num_predict": self.num_predict},
         }
         if system:
             payload["system"] = system

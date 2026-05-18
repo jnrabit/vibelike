@@ -37,12 +37,19 @@ class WorkflowAgent:
     """6-Phasen Workflow Agent mit Qwen2.5-Coder + paralleler Phase-Validierung."""
 
     def __init__(self):
-        # Import QwenCoder locally to avoid circular imports
-        from terminal import QwenCoder
+        # Import QwenCoder + Modell-Konstanten lokal (circular-import-Schutz)
+        from terminal import QwenCoder, VALIDATOR_MODEL
 
+        # Foreground: großes Modell für Code-Gen / Planung (siehe terminal.MODEL)
         self.qwen = QwenCoder()
-        # Separate QwenCoder instance for parallel validator (own HTTP session)
-        self.validator_qwen = QwenCoder()
+        # Background: kleines Modell für parallelen Critic/Reviewer.
+        # Eigene HTTP-Session, kleinerer num_predict (Reviews sind kurz),
+        # keep_alive lang damit Modell nicht zwischen Aufrufen entlädt.
+        self.validator_qwen = QwenCoder(
+            model=VALIDATOR_MODEL,
+            num_predict=768,
+            keep_alive="60m",
+        )
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
         self.root = Path(__file__).parent
