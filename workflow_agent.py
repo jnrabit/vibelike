@@ -114,7 +114,7 @@ AUFGABE:
 {task}
 
 PROJEKTSTRUKTUR:
-{json.dumps(project_info, indent=2)}
+{json.dumps(project_info, indent=2, default=str)}
 
 Antworte mit einer Analyse:
 1. Verstehen Sie die Aufgabe korrekt?
@@ -470,7 +470,7 @@ URSPRÜNGLICHE AUFGABE:
 {briefing['task']}
 
 GEÄNDERTE DATEIEN:
-{json.dumps(files_changed, indent=2)}
+{json.dumps(files_changed, indent=2, default=str)}
 
 TEST-OUTPUT (letzte Zeilen):
 {verification.get('output', '')[-2000:]}
@@ -545,7 +545,7 @@ DETAIL-PLAN (Soll-Sequenz):
 {plan_text[:3000]}
 
 TATSÄCHLICH GEÄNDERTE DATEIEN:
-{json.dumps(files_changed, indent=2)}
+{json.dumps(files_changed, indent=2, default=str)}
 
 Antworte AUSSCHLIESSLICH mit gültigem JSON (kein Markdown-Block, kein Text drumherum):
 [
@@ -716,10 +716,10 @@ Regeln:
     # =========================================================================
 
     def _gather_project_info(self) -> dict:
-        """Sammle Projektstruktur-Info."""
+        """Sammle Projektstruktur-Info (alle Pfade als str für JSON-Serialisierung)."""
         return {
             "root": str(self.root),
-            "main_files": list((self.root).glob("*.py"))[:10],
+            "main_files": [p.name for p in sorted(self.root.glob("*.py"))[:10]],
             "has_tests": (self.root / "tests").exists(),
             "has_git": (self.root / ".git").exists(),
             "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
