@@ -51,8 +51,14 @@ from framework.quelibrium.intelligence.resonance import ResonanceField
 # Für stärkeres Code-Reasoning: VIBELIKE_QWEN_MODEL=qwen2.5-coder:latest setzen
 # (Achtung: bei 8 GB VRAM cycelt das mit dem Validator).
 MODEL = os.environ.get("VIBELIKE_QWEN_MODEL", "qwen2.5-coder:1.5b")
-# Background-Modell (Validator, Reviewer)
-VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", "qwen2.5-coder:1.5b")
+# Background-Modell (Validator, Reviewer). 1.5b ist als Critic schwach,
+# aber qwen3:8b und qwen2.5-coder:latest passen auf 8 GB VRAM nicht
+# koexistent → Eviction-Cycling macht Validator-Calls 30-60s teurer als
+# der eigentliche Workflow. Daher Standard = gleiches Modell wie Foreground;
+# wir kompensieren die Schwäche mit einem aggressiven Anti-Floskel-Prompt.
+# Wer bessere Critic-Qualität braucht und Eviction-Latenz akzeptiert:
+#   VIBELIKE_VALIDATOR_MODEL=qwen3:8b   (oder qwen2.5-coder:latest)
+VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", MODEL)
 OLLAMA_URL = "http://localhost:11434/api/generate"
 LOG_FILE = os.path.join(ROOT, "logs", "triplets.jsonl")
 

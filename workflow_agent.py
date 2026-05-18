@@ -64,24 +64,30 @@ class WorkflowAgent:
     def _start_validation(self, phase_name: str, output: str, context: str) -> concurrent.futures.Future:
         """Startet Validator im Hintergrund. Gibt Future zurück (nicht blockierend)."""
         def _run() -> str:
-            validator_prompt = f"""Du bist ein KRITISCHER REVIEWER. Validiere unabhängig diese {phase_name}-Ausgabe.
+            validator_prompt = f"""Du bist ein adversarialer Reviewer. Deine EINZIGE Aufgabe: finde, was schiefgehen kann.
 
-KONTEXT (Originalaufgabe / Vorphase):
+KONTEXT:
 {context}
 
-ZU VALIDIERENDE AUSGABE:
+ZU REVIEWEN ({phase_name}):
 {output}
 
-Prüfe diese Punkte ehrlich und knapp:
-1. VOLLSTÄNDIGKEIT  - Fehlt etwas Wichtiges? Lücken im Reasoning?
-2. WIDERSPRÜCHE    - Inkonsistenzen oder Annahmen, die kollidieren?
-3. RISIKEN         - Wurde an Edge Cases gedacht? Was geht schief?
-4. ANNAHMEN        - Unausgesprochene Annahmen, die problematisch sein könnten?
-5. ALTERNATIVEN    - Wurde ein besserer Ansatz übersehen?
-6. AMPEL           - 🟢 ok / 🟡 mit Vorbehalt / 🔴 Stop, neu denken
+REGELN (strikt):
+- Beginne mit GENAU einer Zeile: "🟢" oder "🟡 <ein-Satz-Grund>" oder "🔴 <ein-Satz-Grund>"
+- Danach MAXIMAL 3 konkrete Punkte, je 1-2 Sätze, mit Zitat aus der Ausgabe oder Verweis auf konkrete Stelle
+- VERBOTEN: "✅"-Listen, Wiederholung der Punkte aus der Ausgabe, Bestätigungsfloskeln ("gut implementiert", "korrekt umgesetzt"), allgemeine Best-Practice-Lyrik
+- Wenn du nichts Konkretes findest: NUR "🟢" ausgeben, sonst NICHTS
 
-Sei knapp und KRITISCH. Keine Bestätigungs-Floskeln, kein Lob.
-Wenn alles ok ist: 1 Satz + 🟢. Sonst: konkrete Punkte."""
+Beispiele für GUTE Punkte:
+- "Annahme dass GitHub API ohne Auth nutzbar — bei >60 req/h hard limit, Plan erwähnt keinen Token"
+- "Plan überspringt was passiert wenn README binary ist (UnicodeDecodeError in Zeile X)"
+- "Tests behaupten 'race conditions abgedeckt' aber kein einziger Concurrency-Test im Plan"
+
+Beispiele für SCHLECHTE Punkte (nicht so):
+- "Implementiert Error-Handling mit try-except"
+- "Folgt PEP 8 Style"
+- "Tests decken die Logik ab"
+"""
             return self.validator_qwen.generate(validator_prompt, temperature=0.4)
 
         return self._executor.submit(_run)
@@ -810,28 +816,38 @@ Regeln:
     def _start_code_review(self, code: str, plan: dict, task: str) -> concurrent.futures.Future:
         """Startet parallelen Code-Reviewer (zweiter Qwen als Critic)."""
         def _run() -> str:
-            review_prompt = f"""Du bist ein Senior Code-Reviewer. Reviewe diesen frisch generierten Code KRITISCH.
+            review_prompt = f"""Du bist ein adversarialer Code-Reviewer. Deine EINZIGE Aufgabe: finde konkrete Bugs.
 
-ORIGINALAUFGABE:
+AUFGABE:
 {task}
 
-DETAIL-PLAN (Soll-Zustand):
-{plan.get('plan', '')[:2000]}
+PLAN (Soll-Zustand):
+{plan.get('plan', '')[:1500]}
 
 GENERIERTER CODE:
 {code}
 
-Prüfe konkret:
-1. KORREKTHEIT    - Implementiert es den Plan? Logik-Bugs?
-2. EDGE CASES     - Nullwerte, leere Listen, Race Conditions?
-3. ERROR HANDLING - Was passiert bei Exceptions? Zu defensiv / zu offen?
-4. STYLE          - Konsistenz mit bestehendem Code im Projekt?
-5. TESTS          - Decken sie wirklich die Logik ab oder nur Happy Path?
-6. SECURITY       - Injection, Pfad-Traversal, Secrets im Code, unsafe input?
-7. IMPORTS        - Alle nötigen da? Unbenutzte? Circular?
-8. AMPEL          - 🟢 mergen / 🟡 mergen mit Anmerkungen / 🔴 nicht mergen
+REGELN (strikt):
+- Beginne mit GENAU einer Zeile: "🟢" oder "🟡 <ein-Satz-Grund>" oder "🔴 <ein-Satz-Grund>"
+- Danach MAXIMAL 5 konkrete Befunde. Jeder Befund:
+   "<datei>:<zeile> | <was-ist-falsch> | <warum-bug>"
+- VERBOTEN: "✅"-Listen, "Implementiert X korrekt"-Sätze, Best-Practice-Lyrik,
+   Wiederholung des Plans, Stil-Hinweise ohne konkrete Zeile
+- Wenn du keinen konkreten Bug findest: NUR "🟢" ausgeben, sonst NICHTS
 
-Sei knapp, kritisch, konkret. Wenn ok: 1 Satz + 🟢. Sonst: nummerierte Punkte."""
+Was zählt als konkreter Bug:
+- Plan-Abweichung (Plan sagt X, Code macht Y)
+- Crash-Pfad (NPE, leere Liste, Encoding, Race)
+- Falsche Annahme (z.B. API ohne Auth limitiert, Pfad existiert nicht)
+- Test prüft nicht was er behauptet
+- Security: tatsächlicher unsafe input, kein Theoretisches
+
+Was NICHT zählt:
+- "Könnte besser kommentiert sein"
+- "Folgt PEP 8"
+- "Hat try-except"
+- Allgemeine Anmerkungen ohne Code-Zeile
+"""
             return self.validator_qwen.generate(review_prompt, temperature=0.3)
 
         return self._executor.submit(_run)
