@@ -32,22 +32,38 @@ This session completed three major tasks:
 
 ```bash
 # 1. In Terminal 1: Start the background worker
-python harvest_worker.py
+python harvest_worker.py --full-mode --limit 100
 
-# 2. In Terminal 2: Schedule harvest jobs
-python harvest_scheduler.py wikipedia --limit 100
-python harvest_scheduler.py batch --limit 50
-
-# 3. In Terminal 3: Use interactive search
+# 2. In Terminal 2: Use interactive search & workflow
 python terminal.py
 
 # In terminal.py:
-# > your search query
-# [Results appear]
-# > r
-# [Review results in ossifikat knowledge graph]
-# > q
-# [Quit]
+# > your search query                    # Search Code-Vault
+# [Results appear with context]
+# > r                                    # Review ossifikat triples
+# > w                                    # Start 5-phase workflow
+#   (Briefing → Planning → Execution → Verification → Commit)
+# > q                                    # Quit
+```
+
+## Workflow Mode
+
+Use the **5-Phase Development Workflow** to implement features with Qwen2.5-Code:
+
+```
+# Method 1: Interactive command
+> w
+📝 Aufgabe eingeben: Add GitHub README harvester
+
+# Method 2: Direct briefing
+> Briefing: Add GitHub README harvester
+
+The system will:
+1. BRIEFING   - Analyze task + project code
+2. PLANNING   - Propose implementation plan (you approve)
+3. EXECUTION  - Write production code + tests
+4. VERIFY     - Run test suite automatically
+5. COMMIT     - Create git commit with message
 ```
 
 ## Documentation
@@ -78,10 +94,11 @@ Read these in order:
 
 ### Core Modules
 ```
-terminal.py              - Interactive CLI with search & review
+terminal.py              - Interactive CLI with search, review & workflow
+workflow_agent.py        - 5-phase development workflow orchestrator (NEW)
 harvest.py              - Document harvesting (Wikipedia, RFC, PEP)
-harvest_scheduler.py    - Job scheduling API (NEW)
-harvest_worker.py       - Background job processor (NEW)
+harvest_scheduler.py    - Job scheduling API
+harvest_worker.py       - Background job processor
 tools_harvester.py      - Tool documentation collector
 ```
 
@@ -94,9 +111,12 @@ models/                 - Data models
 logdb/                  - Event logging
 ```
 
-### Configuration
+### Configuration & Documentation
 ```
+config.py               - Centralized configuration with env variables (NEW)
 pyproject.toml          - Package configuration
+WORKFLOW.md             - Workflow documentation with templates (NEW)
+FEATURE_TEMPLATE.md     - Feature request template (NEW)
 INTEGRATION.md          - Architecture guide
 SESSION_SUMMARY.md      - Work summary
 QUICKSTART.md          - User guide
@@ -133,6 +153,13 @@ README_FINAL.md        - This file
 - **ResonanceField** - Co-activation matrix
 - **Thompson Sampling** - Exploration/exploitation
 
+### Workflow (NEW)
+- **5-Phase Development** - Briefing → Planning → Execution → Verification → Commit
+- **Qwen2.5-Code Integration** - LLM-powered code generation
+- **User Approval Gates** - Explicit sign-off at planning phase
+- **Automatic Testing** - Full test suite validation
+- **Git Integration** - Automatic commit generation
+
 ### Harvesting
 - Wikipedia (CS topics, DE+EN)
 - RFCs (network protocols)
@@ -157,12 +184,18 @@ README_FINAL.md        - This file
 ### Terminal (interactive)
 ```bash
 python terminal.py
-> your query      # Search Code-Vault
+> your query      # Search Code-Vault with ChaosRetrieval
 > r               # Review ossifikat triples
+> w               # Start 5-phase workflow (NEW)
 > l               # Show logs
 > s               # Show hardware state
 > c               # Clear screen
 > q               # Quit
+
+# Or use direct workflow invocation:
+> Briefing: Add GitHub harvester
+> Briefing: Fix authentication bug
+> Briefing: Optimize database queries
 ```
 
 ### Harvester (background)
@@ -256,14 +289,19 @@ The vibelike system is now:
 - ✓ Tested and verified
 - ✓ Comprehensively documented
 - ✓ Ready for production use
+- ✓ AI-powered development workflow enabled
 
 You can immediately:
-1. Search the Code-Vault interactively
-2. Run background harvesting jobs
-3. Review and confirm knowledge triples
-4. Monitor harvest progress
+1. Search the Code-Vault interactively with advanced retrieval
+2. Run background harvesting jobs for continuous data collection
+3. Review and confirm knowledge triples in ossifikat
+4. Monitor harvest progress in real-time
+5. **Use the 5-phase workflow to implement features with Qwen2.5-Code**
+   - Describe a feature in natural language
+   - Get automatic analysis, planning, implementation, testing, and git commits
+   - Maintain human control with approval gates at each phase
 
-All components work together seamlessly. The system is ready to deploy! 🚀
+All components work together seamlessly. The system is ready to deploy and develop! 🚀
 
 ---
 
