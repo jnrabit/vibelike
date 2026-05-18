@@ -1,8 +1,9 @@
 # Vibelike Feature Development Workflow
 
-Ein strukturierter 5-Phasen-Prozess für neue Features und Verbesserungen.
+Ein strukturierter 6-Phasen-Prozess für neue Features und Verbesserungen.
+(Planung ist 2-stufig: erst Strategie, dann Detail-Plan)
 
-## 📋 Die 5 Phasen
+## 📋 Die 6 Phasen
 
 ### Phase 1️⃣: BRIEFING
 **Du beschreibst die Aufgabe**
@@ -19,8 +20,32 @@ Claude wird:
 
 ---
 
-### Phase 2️⃣: PLANUNG
-**Claude schlägt einen Plan vor**
+### Phase 2A️⃣: PLANUNG - STRATEGIE
+**Qwen schlägt das ALLGEMEINE VORGEHEN vor**
+
+High-Level: noch keine konkreten Dateien, sondern Architektur & Trade-Offs.
+
+Du siehst:
+```
+ANSATZ: Neuen Harvester als Plugin in bestehende Pipeline einhängen
+ARCHITEKTUR: Adapter-Pattern (analog zu Wikipedia-Harvester)
+ALTERNATIVEN: Standalone-Service (verworfen - zu viel Overhead)
+TRADE-OFFS: 
+  + Einheitlich zu bestehenden Harvestern
+  - Rate-Limit-Logik muss eigenständig sein
+ABHÄNGIGKEITEN: requests, github3.py (optional für API-Wrapper)
+RISIKEN: GitHub Rate-Limits, große README-Files
+AUFWAND: 4-6 Stunden
+```
+
+**Du nickst ab:** "ja" oder "änderungen" mit Begründung
+
+---
+
+### Phase 2B️⃣: PLANUNG - DETAILPLAN
+**Qwen erstellt den KONKRETEN DURCHFÜHRUNGSPLAN**
+
+Detail-Level: jetzt das WIE - Dateien, Funktionen, Tests.
 
 Du siehst:
 ```
@@ -30,17 +55,26 @@ Betroffene Dateien:
   ├─ harvest_worker.py (update --full-mode)
   └─ tests/test_github_harvest.py (neue Tests)
 
+Funktionssignaturen:
+  harvest_github_readme(repos: list[str], limit: int = 50) -> int
+
 Tests:
   ├─ test_github_api_connection
   ├─ test_readme_parsing
   ├─ test_rate_limit_handling
   └─ test_integration
 
-Dependencies:
-  └─ requests library (für GitHub API)
+Code-Flow:
+  1. Top-Repos via GitHub Search API
+  2. README via raw.githubusercontent.com
+  3. Markdown → text
+  4. CodeVaultWriter.add(doc)
+
+Rollback: git revert <commit>
+LOC: ~180 Zeilen
 ```
 
-**Du nickst ab:** "Looks good, go ahead" oder "Change X to Y first"
+**Du nickst ab:** "ja" → Execution startet
 
 ---
 

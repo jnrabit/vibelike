@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Workflow Agent - 5-Phasen Feature Development mit Qwen2.5-Coder
+Workflow Agent - 6-Phasen Feature Development mit Qwen2.5-Coder
 ================================================================
 
 Orchestriert den kompletten Development Workflow:
-1. BRIEFING  - Qwen analysiert Anfrage + Code
-2. PLANNING  - Qwen schlägt Plan vor (User-Genehmigung)
-3. EXECUTION - Qwen schreibt Code automatisch
-4. VERIFY    - Tests laufen automatisch
-5. COMMIT    - Git-Commit wird erstellt
+1.  BRIEFING            - Qwen analysiert Anfrage + Code
+2a. PLANNING-STRATEGIE  - Allgemeines Vorgehen (User-Genehmigung)
+2b. PLANNING-DETAIL     - Konkrete Durchführung (User-Genehmigung)
+3.  EXECUTION           - Qwen schreibt Code automatisch
+4.  VERIFY              - Tests laufen automatisch
+5.  COMMIT              - Git-Commit wird erstellt
 
 Start: python workflow_agent.py
 """
@@ -85,36 +86,106 @@ Sei präzise und technisch."""
         return result
 
     # =========================================================================
-    # PHASE 2: PLANNING
+    # PHASE 2A: PLANNING (STRATEGIE / ALLGEMEINES VORGEHEN)
     # =========================================================================
 
-    def phase_planning(self, briefing: dict) -> dict:
-        """Phase 2: Plan-Erstellung mit Qwen (User-Genehmigung erforderlich)."""
+    def phase_planning_strategy(self, briefing: dict) -> dict:
+        """Phase 2a: Strategische Planung - allgemeines Vorgehen (User-Genehmigung)."""
         print("\n" + "="*70)
-        print("PHASE 2: PLANNING")
+        print("PHASE 2A: PLANNING - STRATEGIE (Allgemeines Vorgehen)")
         print("="*70)
 
-        plan_prompt = f"""Basierend auf dieser Analyse, erstelle einen detaillierten Implementierungsplan:
+        strategy_prompt = f"""Du bist ein Senior Software-Architekt. Erstelle eine STRATEGISCHE Planung für die Aufgabe.
 
 ANALYSE:
 {briefing['analysis']}
 
-Erstelle einen Plan mit:
-1. Betroffene Dateien (mit Zeilen-Nummern wenn möglich)
-2. Neue Funktionen/Klassen
-3. Tests die geschrieben werden müssen
-4. Dependencies/Imports
-5. Risiken & Mitigationen
-6. Estimated Lines of Code
+Diese Phase ist HIGH-LEVEL - noch KEINE konkreten Dateien/Funktionen.
 
-Format: Strukturiert, aber lesbar für den User."""
+Beantworte:
+1. ANSATZ: Welche grundsätzliche Strategie? (z.B. neuer Service, Erweiterung, Refactoring)
+2. ARCHITEKTUR: Welche Komponenten/Pattern verwenden? (z.B. Plugin-System, Adapter, Decorator)
+3. ALTERNATIVEN: Welche Alternativen gibt es? Warum diese Wahl?
+4. TRADE-OFFS: Vor- und Nachteile des gewählten Ansatzes
+5. ABHÄNGIGKEITEN: Welche externen Libraries/APIs nötig?
+6. RISIKEN: Was könnte schiefgehen? (technisch & inhaltlich)
+7. AUFWAND: Grob - Stunden? Tage? Wochen?
 
-        print("[🤖 Qwen erstellt Plan...]")
-        plan = self.qwen.generate(plan_prompt, temperature=0.2)
+Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS und WARUM, noch nicht auf das WIE."""
+
+        print("[🤖 Qwen entwickelt Strategie...]")
+        strategy = self.qwen.generate(strategy_prompt, temperature=0.3)
 
         result = {
-            "phase": "PLANNING",
+            "phase": "PLANNING_STRATEGY",
+            "strategy": strategy,
+            "timestamp": datetime.now().isoformat(),
+            "approved": False
+        }
+
+        print(f"\n{strategy}\n")
+        print("\n" + "-"*70)
+
+        # User-Genehmigung der Strategie
+        while True:
+            approval = input("\n👤 Strategie ok? (ja/nein/änderungen): ").strip().lower()
+            if approval in ["ja", "yes", "y"]:
+                result["approved"] = True
+                print("\n✅ Strategie genehmigt! Starte Detail-Planung...\n")
+                break
+            elif approval in ["nein", "no", "n"]:
+                print("\n❌ Strategie nicht genehmigt. Workflow abgebrochen.\n")
+                return None
+            elif approval.startswith("änder"):
+                changes = input("Welche Änderungen an der Strategie? ")
+                print(f"[Info] Änderungswunsch notiert: {changes}")
+                result["change_request"] = changes
+            else:
+                print("Bitte 'ja', 'nein' oder 'änderungen' eingeben.")
+
+        return result
+
+    # =========================================================================
+    # PHASE 2B: PLANNING (DETAILPLAN / KONKRETE DURCHFÜHRUNG)
+    # =========================================================================
+
+    def phase_planning_detailed(self, briefing: dict, strategy: dict) -> dict:
+        """Phase 2b: Detail-Planung - konkrete Durchführung (User-Genehmigung)."""
+        print("\n" + "="*70)
+        print("PHASE 2B: PLANNING - DETAILPLAN (Konkrete Durchführung)")
+        print("="*70)
+
+        detail_prompt = f"""Du bist ein Senior Software Engineer. Erstelle den DETAILLIERTEN Durchführungsplan
+basierend auf der genehmigten Strategie.
+
+ORIGINALAUFGABE:
+{briefing['task']}
+
+GENEHMIGTE STRATEGIE:
+{strategy['strategy']}
+
+Diese Phase ist KONKRET - jetzt das WIE.
+
+Erstelle einen Plan mit:
+1. BETROFFENE DATEIEN (exakte Pfade, ggf. mit Zeilen-Nummern)
+2. NEUE DATEIEN (mit Begründung warum nötig)
+3. FUNKTIONEN/KLASSEN (Signaturen, Parameter, Return-Types)
+4. CODE-FLOW (Schritt-für-Schritt was passieren soll)
+5. TESTS (Test-Funktionen mit Setup/Teardown, Edge Cases)
+6. IMPORTS (welche neuen Imports werden gebraucht)
+7. INTEGRATION (wie wird in bestehenden Code eingebunden)
+8. ROLLBACK-PLAN (wie kann man die Änderung rückgängig machen)
+9. ESTIMATED LINES OF CODE (pro Datei)
+
+Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
+
+        print("[🤖 Qwen erstellt Detail-Plan...]")
+        plan = self.qwen.generate(detail_prompt, temperature=0.2)
+
+        result = {
+            "phase": "PLANNING_DETAILED",
             "plan": plan,
+            "strategy_ref": strategy.get("strategy", ""),
             "timestamp": datetime.now().isoformat(),
             "approved": False
         }
@@ -122,24 +193,32 @@ Format: Strukturiert, aber lesbar für den User."""
         print(f"\n{plan}\n")
         print("\n" + "-"*70)
 
-        # User-Genehmigung
+        # User-Genehmigung des Detail-Plans
         while True:
-            approval = input("\n👤 Plan ok? (ja/nein/änderungen): ").strip().lower()
+            approval = input("\n👤 Detail-Plan ok? (ja/nein/änderungen): ").strip().lower()
             if approval in ["ja", "yes", "y"]:
                 result["approved"] = True
-                print("\n✅ Plan genehmigt! Starte Execution...\n")
+                print("\n✅ Detail-Plan genehmigt! Starte Execution...\n")
                 break
             elif approval in ["nein", "no", "n"]:
-                print("\n❌ Plan nicht genehmigt. Bitte neue Aufgabe.\n")
+                print("\n❌ Detail-Plan nicht genehmigt. Workflow abgebrochen.\n")
                 return None
             elif approval.startswith("änder"):
-                changes = input("Welche Änderungen? ")
-                # Qwen könnte hier iterativ den Plan anpassen
+                changes = input("Welche Änderungen am Detail-Plan? ")
                 print(f"[Info] Änderungswunsch notiert: {changes}")
+                result["change_request"] = changes
             else:
                 print("Bitte 'ja', 'nein' oder 'änderungen' eingeben.")
 
         return result
+
+    # Backwards-compat alias
+    def phase_planning(self, briefing: dict) -> dict:
+        """Legacy method - delegates to two-phase planning."""
+        strategy = self.phase_planning_strategy(briefing)
+        if not strategy or not strategy.get("approved"):
+            return None
+        return self.phase_planning_detailed(briefing, strategy)
 
     # =========================================================================
     # PHASE 3: EXECUTION
@@ -388,36 +467,43 @@ Add GitHub README harvester for Code-Vault
     # =========================================================================
 
     def run_workflow(self, task: str) -> dict:
-        """Laufe alle 5 Phasen durch."""
+        """Laufe alle 6 Phasen durch (Planning ist 2-stufig: Strategie + Detail)."""
         self.current_workflow = {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S"),
             "task": task,
             "phases": {}
         }
 
-        # Phase 1
+        # Phase 1: BRIEFING
         briefing = self.phase_briefing(task)
         self.current_workflow["phases"]["briefing"] = briefing
 
-        # Phase 2
-        planning = self.phase_planning(briefing)
-        if not planning or not planning.get("approved"):
-            print("\n❌ Workflow abgebrochen.\n")
+        # Phase 2A: PLANNING - STRATEGIE
+        strategy = self.phase_planning_strategy(briefing)
+        if not strategy or not strategy.get("approved"):
+            print("\n❌ Workflow abgebrochen (Strategie nicht genehmigt).\n")
             return self.current_workflow
-        self.current_workflow["phases"]["planning"] = planning
+        self.current_workflow["phases"]["planning_strategy"] = strategy
 
-        # Phase 3
+        # Phase 2B: PLANNING - DETAILPLAN
+        planning = self.phase_planning_detailed(briefing, strategy)
+        if not planning or not planning.get("approved"):
+            print("\n❌ Workflow abgebrochen (Detail-Plan nicht genehmigt).\n")
+            return self.current_workflow
+        self.current_workflow["phases"]["planning_detailed"] = planning
+
+        # Phase 3: EXECUTION
         execution = self.phase_execution(briefing, planning)
         self.current_workflow["phases"]["execution"] = execution
 
-        # Phase 4
+        # Phase 4: VERIFICATION
         verification = self.phase_verification(execution)
         self.current_workflow["phases"]["verification"] = verification
 
         if not verification.get("tests_passed"):
             print("\n⚠️ Tests nicht alle bestanden. Überprüfe manuell.\n")
 
-        # Phase 5
+        # Phase 5: COMMIT
         commit = self.phase_commit(briefing, execution, verification)
         self.current_workflow["phases"]["commit"] = commit
 

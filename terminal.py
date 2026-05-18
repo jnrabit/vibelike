@@ -410,10 +410,19 @@ def start_workflow():
         print("\n" + "=" * 60)
         print("✅ WORKFLOW SUMMARY")
         print("=" * 60)
+        phase_labels = {
+            "briefing":           "1.  BRIEFING            ",
+            "planning_strategy":  "2a. PLANNING-STRATEGIE  ",
+            "planning_detailed":  "2b. PLANNING-DETAIL     ",
+            "execution":          "3.  EXECUTION           ",
+            "verification":       "4.  VERIFICATION        ",
+            "commit":             "5.  COMMIT              ",
+        }
         for phase_name, phase_data in workflow.get("phases", {}).items():
             if phase_data:
                 status = "✓" if phase_data.get("approved") or phase_data.get("tests_passed") or phase_data.get("committed") else "✗"
-                print(f"{status} {phase_name.upper()}: {phase_data.get('timestamp', 'N/A')}")
+                label = phase_labels.get(phase_name, phase_name.upper())
+                print(f"{status} {label} {phase_data.get('timestamp', 'N/A')}")
 
     except Exception as e:
         print(f"\n[ERR] Workflow fehlgeschlagen: {e}")
