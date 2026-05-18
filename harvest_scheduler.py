@@ -12,8 +12,15 @@ from datetime import datetime
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
-from reqqueue.manager import RequestQueue
-from models import Request
+try:
+    from reqqueue.manager import RequestQueue
+except ImportError:
+    from vibelike.reqqueue.manager import RequestQueue
+
+try:
+    from models import Request
+except ImportError:
+    from vibelike.models import Request
 
 logger = logging.getLogger(__name__)
 

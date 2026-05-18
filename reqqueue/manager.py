@@ -8,7 +8,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from vibelike.models import Request
+try:
+    from models import Request
+except ImportError:
+    try:
+        from vibelike.models import Request
+    except ImportError:
+        Request = None
 
 
 @dataclass

@@ -13,15 +13,35 @@ from typing import Optional
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
-from reqqueue.manager import RequestQueue
-from adapters import HarvestAdapter
-from models import Request
-from harvest import (
-    harvest_wikipedia_worker,
-    harvest_rfcs_worker,
-    harvest_peps_worker,
-    harvest_tools_worker
-)
+try:
+    from reqqueue.manager import RequestQueue
+except ImportError:
+    from vibelike.reqqueue.manager import RequestQueue
+
+try:
+    from adapters import HarvestAdapter
+except ImportError:
+    from vibelike.adapters import HarvestAdapter
+
+try:
+    from models import Request
+except ImportError:
+    from vibelike.models import Request
+
+try:
+    from harvest import (
+        harvest_wikipedia_worker,
+        harvest_rfcs_worker,
+        harvest_peps_worker,
+        harvest_tools_worker
+    )
+except ImportError:
+    from vibelike.harvest import (
+        harvest_wikipedia_worker,
+        harvest_rfcs_worker,
+        harvest_peps_worker,
+        harvest_tools_worker
+    )
 
 # Configure logging
 logging.basicConfig(
