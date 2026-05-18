@@ -17,8 +17,7 @@ import time
 import shutil
 from collections import defaultdict
 
-# Für Code-Vault: FIELD_FILE wird nicht genutzt, aber für Kompatibilität
-FIELD_FILE = None
+from framework.quelibrium.core.paths import CODE_FIELD_FILE as FIELD_FILE
 
 
 class ResonanceField:
