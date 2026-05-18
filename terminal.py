@@ -27,6 +27,12 @@ try:
 except ImportError:
     ADAPTERS_AVAILABLE = False
 
+try:
+    from workflow_agent import WorkflowAgent
+    WORKFLOW_AVAILABLE = True
+except ImportError:
+    WORKFLOW_AVAILABLE = False
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
@@ -320,7 +326,7 @@ def print_header():
     print("=" * 60)
     print("CODE-VAULT TERMINAL")
     print("=" * 60)
-    print("[q] beenden | [l] logs | [s] state | [r] review | [c] clear")
+    print("[q] beenden | [l] logs | [s] state | [r] review | [c] clear | [w] workflow")
     print("-" * 60)
 
 
@@ -380,6 +386,41 @@ def review_triples(retriever):
         print(f"[ERR] Review fehlgeschlagen: {e}")
 
 
+def start_workflow():
+    """Start the 5-phase development workflow."""
+    if not WORKFLOW_AVAILABLE:
+        print("[WARN] Workflow Agent nicht verfügbar. Installiere workflow_agent.py")
+        return
+
+    print("\n" + "=" * 60)
+    print("VIBELIKE WORKFLOW AGENT - 5-Phasen Development")
+    print("=" * 60)
+
+    task = input("\n📝 Aufgabe eingeben: ").strip()
+
+    if not task:
+        print("❌ Keine Aufgabe eingegeben.")
+        return
+
+    try:
+        agent = WorkflowAgent()
+        workflow = agent.run_workflow(task)
+
+        # Show workflow summary
+        print("\n" + "=" * 60)
+        print("✅ WORKFLOW SUMMARY")
+        print("=" * 60)
+        for phase_name, phase_data in workflow.get("phases", {}).items():
+            if phase_data:
+                status = "✓" if phase_data.get("approved") or phase_data.get("tests_passed") or phase_data.get("committed") else "✗"
+                print(f"{status} {phase_name.upper()}: {phase_data.get('timestamp', 'N/A')}")
+
+    except Exception as e:
+        print(f"\n[ERR] Workflow fehlgeschlagen: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def main():
     print_header()
     
@@ -414,6 +455,23 @@ def main():
 
             if query.lower() == "r":
                 review_triples(retriever)
+                continue
+
+            if query.lower() == "w":
+                start_workflow()
+                continue
+
+            # Workflow via "Briefing:" prefix
+            if query.startswith("Briefing:") or query.startswith("briefing:"):
+                task = query[9:].strip()
+                if task:
+                    try:
+                        agent = WorkflowAgent()
+                        workflow = agent.run_workflow(task)
+                    except Exception as e:
+                        print(f"\n[ERR] Workflow fehlgeschlagen: {e}")
+                else:
+                    print("[ERR] Keine Aufgabe nach 'Briefing:' eingegeben")
                 continue
 
             # Suche im Vault
