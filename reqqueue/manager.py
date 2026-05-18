@@ -80,6 +80,31 @@ class RequestQueue:
                 CREATE INDEX IF NOT EXISTS idx_reminders_status ON reminders(status);
             """)
 
+            # Migrate existing database schema
+            self._migrate_schema(conn)
+
+    def _migrate_schema(self, conn: sqlite3.Connection) -> None:
+        """Add missing columns to existing tables."""
+        cursor = conn.cursor()
+
+        # Check if columns exist and add them if missing
+        cursor.execute("PRAGMA table_info(request_queue)")
+        columns = {row[1] for row in cursor.fetchall()}
+
+        migrations = [
+            ("started_at", "ALTER TABLE request_queue ADD COLUMN started_at TIMESTAMP"),
+            ("completed_at", "ALTER TABLE request_queue ADD COLUMN completed_at TIMESTAMP"),
+            ("exit_code", "ALTER TABLE request_queue ADD COLUMN exit_code INTEGER"),
+        ]
+
+        for col_name, alter_sql in migrations:
+            if col_name not in columns:
+                try:
+                    cursor.execute(alter_sql)
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+
     def _update_health_check(self) -> None:
         """Aktualisiert die Health-Check-Datei."""
         self._health_check_path.parent.mkdir(parents=True, exist_ok=True)
