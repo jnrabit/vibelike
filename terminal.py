@@ -262,22 +262,50 @@ class QwenCoder:
         except Exception:
             print("[WARN] Ollama nicht erreichbar")
     
-    def generate(self, prompt: str, system: str = None, temperature: float = 0.2) -> str:
-        """Generiere mit qwen2.5-coder."""
+    def generate(self, prompt: str, system: str = None, temperature: float = 0.2,
+                 stream: bool = False) -> str:
+        """Generiere mit qwen2.5-coder.
+
+        stream=True: Tokens werden live nach stdout geschrieben (Vordergrund-Calls).
+        stream=False: ein Block, kein Live-Output (Hintergrund-Threads, sonst Interleaving).
+        Rückgabe ist in beiden Fällen der volle Antworttext.
+        """
         payload = {
             "model": MODEL,
             "prompt": prompt,
-            "stream": False,
+            "stream": stream,
             "options": {"temperature": temperature, "top_p": 0.9, "num_predict": 2048},
         }
         if system:
             payload["system"] = system
-        
+
         try:
-            response = self.session.post(OLLAMA_URL, json=payload, timeout=600)
-            if response.status_code == 200:
-                return response.json().get("response", "")
-            return f"[ERR] HTTP {response.status_code}"
+            if not stream:
+                response = self.session.post(OLLAMA_URL, json=payload, timeout=600)
+                if response.status_code == 200:
+                    return response.json().get("response", "")
+                return f"[ERR] HTTP {response.status_code}"
+
+            # Streaming: zeilenweise JSON-Chunks parsen, jedes "response"-Feld printen
+            chunks = []
+            with self.session.post(OLLAMA_URL, json=payload, stream=True, timeout=600) as resp:
+                if resp.status_code != 200:
+                    return f"[ERR] HTTP {resp.status_code}"
+                for raw in resp.iter_lines(decode_unicode=True):
+                    if not raw:
+                        continue
+                    try:
+                        obj = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    token = obj.get("response", "")
+                    if token:
+                        print(token, end="", flush=True)
+                        chunks.append(token)
+                    if obj.get("done"):
+                        break
+            print()  # Newline nach dem Stream
+            return "".join(chunks)
         except Exception as e:
             return f"[ERR] {str(e)}"
 
@@ -513,17 +541,13 @@ def main():
             # System-Prompt bauen
             system_prompt = build_system_prompt(context)
             
-            # Generieren
-            print("[GEN] qwen2.5-coder...")
-            response = coder.generate(query, system=system_prompt)
-            
+            # Generieren (streaming → Live-Output)
+            print("[GEN] qwen2.5-coder...\n" + "-" * 60)
+            response = coder.generate(query, system=system_prompt, stream=True)
+            print("-" * 60)
+
             # Triplet loggen
             retriever.hw_logger.log_triplet(query, context, response)
-            
-            # Ausgabe
-            print("\n" + "-" * 60)
-            print(response)
-            print("-" * 60)
             
         except KeyboardInterrupt:
             break

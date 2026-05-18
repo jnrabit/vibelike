@@ -125,13 +125,11 @@ Antworte mit einer Analyse:
 
 Sei präzise und technisch."""
 
-        print("[🤖 Qwen analysiert...]")
-        analysis = self.qwen.generate(analysis_prompt, temperature=0.3)
+        print("[🤖 Qwen analysiert...]\n")
+        analysis = self.qwen.generate(analysis_prompt, temperature=0.3, stream=True)
 
-        # Parallel: Validator startet, während wir die Ausgabe drucken
+        # Parallel: Validator startet, nachdem Stream fertig ist
         validation_future = self._start_validation("BRIEFING", analysis, f"AUFGABE: {task}")
-
-        print(f"\n{analysis}\n")
 
         # Validation einsammeln (User-Lesezeit überlappt mit Validator-Run)
         validation = self._render_validation(validation_future)
@@ -174,8 +172,8 @@ Beantworte:
 
 Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS und WARUM, noch nicht auf das WIE."""
 
-        print("[🤖 Qwen entwickelt Strategie...]")
-        strategy = self.qwen.generate(strategy_prompt, temperature=0.3)
+        print("[🤖 Qwen entwickelt Strategie...]\n")
+        strategy = self.qwen.generate(strategy_prompt, temperature=0.3, stream=True)
 
         # Parallel: Validator startet
         validation_future = self._start_validation(
@@ -183,8 +181,6 @@ Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS u
             strategy,
             f"BRIEFING-ANALYSE:\n{briefing['analysis']}"
         )
-
-        print(f"\n{strategy}\n")
 
         # Validation einsammeln
         validation = self._render_validation(validation_future)
@@ -252,8 +248,8 @@ Erstelle einen Plan mit:
 
 Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
 
-        print("[🤖 Qwen erstellt Detail-Plan...]")
-        plan = self.qwen.generate(detail_prompt, temperature=0.2)
+        print("[🤖 Qwen erstellt Detail-Plan...]\n")
+        plan = self.qwen.generate(detail_prompt, temperature=0.2, stream=True)
 
         # Parallel: Validator startet
         validation_future = self._start_validation(
@@ -261,8 +257,6 @@ Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
             plan,
             f"AUFGABE: {briefing['task']}\n\nGENEHMIGTE STRATEGIE:\n{strategy['strategy']}"
         )
-
-        print(f"\n{plan}\n")
 
         # Validation einsammeln
         validation = self._render_validation(validation_future)
@@ -344,24 +338,19 @@ Strukturiere die Antwort als:
 
 Generiere kompletten, lauffähigen Code."""
 
-        print("[🤖 Qwen schreibt Code...]")
-        code = self.qwen.generate(execution_prompt, temperature=0.1)
+        print("[🤖 Qwen schreibt Code...]\n")
+        code = self.qwen.generate(execution_prompt, temperature=0.1, stream=True)
 
         # Parse OHNE zu schreiben (Dry-Run)
         planned_changes = self._parse_code(code)
 
-        # Parallel: Code-Reviewer startet
+        # Parallel: Code-Reviewer startet (nach Stream-Ende)
         review_future = self._start_code_review(code, plan, briefing['task'])
 
-        # Diff-Übersicht zeigen
+        # Strukturierter Diff
         print(f"\n📦 GEPLANTE ÄNDERUNGEN ({len(planned_changes)} Dateien):")
         print("="*70)
         self._show_diff(planned_changes, full=False)
-
-        # Generierten Code auch zeigen (für Kontext)
-        print("\n📝 GENERIERTER CODE (Ausschnitt):")
-        print("="*70)
-        print(code[:1500] + ("\n... [gekürzt]" if len(code) > 1500 else ""))
 
         # Code-Review einsammeln
         review = self._render_code_review(review_future)
@@ -488,8 +477,8 @@ Liefere:
 
 Sei knapp, kein Fließtext."""
 
-        print("[🤖 Qwen analysiert Test-Failure...]")
-        analysis = self.qwen.generate(analysis_prompt, temperature=0.3)
+        print("[🤖 Qwen analysiert Test-Failure...]\n")
+        analysis = self.qwen.generate(analysis_prompt, temperature=0.3, stream=True)
 
         # Korrektur-Aufgabe extrahieren (suche nach "Fix:" Zeile)
         followup_task = None
@@ -510,8 +499,7 @@ Sei knapp, kein Fließtext."""
             "timestamp": datetime.now().isoformat(),
         }
 
-        print(f"\n{analysis}\n")
-        print("-"*70)
+        print("\n" + "-"*70)
         print(f"\n🔁 Vorgeschlagene Folge-Aufgabe:\n  {followup_task}\n")
 
         return result
