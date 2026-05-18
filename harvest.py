@@ -1225,5 +1225,45 @@ def main():
     print(f"    Total Code-Vault: {len(writer.archive)} docs, {len(writer.cache)} embeddings")
 
 
+# =============================================================================
+# Worker-Friendly Wrapper Functions (for background job processing)
+# =============================================================================
+
+def harvest_wikipedia_worker(source: str = "wikipedia", limit: int = 100, **kwargs) -> int:
+    """Wrapper for background job processing - harvests Wikipedia."""
+    writer = CodeVaultWriter(device=kwargs.get("device", "cpu"))
+    total = 0
+    phases = ["basics", "languages"]  # Default: start with basics
+    for phase in phases:
+        if phase in PHASE_MAP:
+            seeds_de, seeds_en, sector, source_tag = PHASE_MAP[phase]
+            total += harvest_wikipedia_seeds(writer, seeds_de, "de", sector, source_tag)
+            time.sleep(WIKI_INTER_SECTOR_COOLDOWN)
+            if seeds_en:
+                total += harvest_wikipedia_seeds(writer, seeds_en, "en", sector, source_tag)
+                time.sleep(WIKI_INTER_SECTOR_COOLDOWN)
+    return total
+
+
+def harvest_rfcs_worker(limit: int = 50, **kwargs) -> int:
+    """Wrapper for background job processing - harvests RFCs."""
+    writer = CodeVaultWriter(device=kwargs.get("device", "cpu"))
+    rfc_list = RFC_NUMBERS[:limit] if limit else RFC_NUMBERS
+    return harvest_rfcs(writer, rfc_list)
+
+
+def harvest_peps_worker(limit: int = 50, **kwargs) -> int:
+    """Wrapper for background job processing - harvests PEPs."""
+    writer = CodeVaultWriter(device=kwargs.get("device", "cpu"))
+    pep_list = PEP_NUMBERS[:limit] if limit else PEP_NUMBERS
+    return harvest_peps(writer, pep_list)
+
+
+def harvest_tools_worker(limit: int = 50, **kwargs) -> int:
+    """Wrapper for background job processing - harvests tool docs."""
+    writer = CodeVaultWriter(device=kwargs.get("device", "cpu"))
+    return harvest_tool_docs(writer)
+
+
 if __name__ == "__main__":
     main()

@@ -40,9 +40,11 @@ Repository = "https://github.com/jnrabit/vibelike.git"
 vibelike-harvest = "vibelike.harvest:main"
 vibelike-terminal = "vibelike.terminal:main"
 vibelike-tools = "vibelike.tools_harvester:main"
+vibelike-harvest-worker = "vibelike.harvest_worker:main"
+vibelike-harvest-scheduler = "vibelike.harvest_scheduler:main"
 
 [tool.setuptools]
-py-modules = ["harvest", "terminal", "tools_harvester"]
+py-modules = ["harvest", "terminal", "tools_harvester", "harvest_worker", "harvest_scheduler"]
 
 [tool.setuptools.packages.find]
 where = ["."]
