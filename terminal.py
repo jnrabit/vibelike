@@ -21,11 +21,19 @@ import pickle
 import numpy as np
 import requests
 
+try:
+    from adapters import TerminalAdapter
+    ADAPTERS_AVAILABLE = True
+except ImportError:
+    ADAPTERS_AVAILABLE = False
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
 from framework.quelibrium.core.protocol import Protocol
 from framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE
+from framework.quelibrium.intelligence.retrieval import ChaosRetrieval, RiemannianWarp, ThompsonSampler
+from framework.quelibrium.intelligence.resonance import ResonanceField
 
 
 # =============================================================================
@@ -114,14 +122,14 @@ class HardwareLogger:
 # =============================================================================
 
 class CodeRetriever:
-    """Code-Vault Retrieval mit C++ Engine."""
-    
+    """Code-Vault Retrieval mit C++ Engine + Advanced Chaos Retrieval."""
+
     EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
-    
+
     def __init__(self):
         self.protocol = Protocol(vault_file=CODE_VAULT_FILE, cache_file=CODE_CACHE_FILE)
         self.hw_logger = HardwareLogger(self.protocol)
-        
+
         # SentenceTransformer laden
         try:
             from sentence_transformers import SentenceTransformer
@@ -131,7 +139,29 @@ class CodeRetriever:
         except ImportError as e:
             print(f"[ERR] sentence-transformers nicht installiert: {e}")
             self.encoder = None
-        
+
+        # Advanced Retrieval: ResonanceField + ChaosRetrieval
+        try:
+            self.resonance_field = ResonanceField()
+            self.chaos_retrieval = ChaosRetrieval(protocol=self.protocol, field=self.resonance_field)
+            print("[OK] ⚡ Chaos Retrieval mit Resonance Field aktiviert")
+            self.use_chaos_retrieval = True
+        except Exception as e:
+            print(f"[WARN] Chaos Retrieval nicht verfügbar: {e}")
+            self.chaos_retrieval = None
+            self.use_chaos_retrieval = False
+
+        # Ossifikat Integration
+        try:
+            if ADAPTERS_AVAILABLE:
+                self.terminal_adapter = TerminalAdapter()
+                print("[OK] 📊 Ossifikat TerminalAdapter aktiviert")
+            else:
+                self.terminal_adapter = None
+        except Exception as e:
+            print(f"[WARN] Ossifikat nicht verfügbar: {e}")
+            self.terminal_adapter = None
+
         print(f"[OK] Code-Vault: {len(self.protocol.archive):,} docs, {len(self.protocol._doc_cache):,} vectors")
     
     @staticmethod
@@ -143,22 +173,60 @@ class CodeRetriever:
             return False
     
     def search(self, query: str, k: int = 10) -> tuple:
-        """Such im Code-Vault. Rückgabe: (Dokumente, Hardware-State vor/nach Suche)"""
+        """Such im Code-Vault mit optionalem Chaos Retrieval. Rückgabe: (Dokumente, Hardware-State vor/nach)"""
         if not self.encoder:
             return [], None, None
-        
+
         # Hardware-State vor Suche
         state_before = self.hw_logger.log_state(query, "search_start")
-        
+
         # Query embedden
         query_vec = self.encoder.encode(query, convert_to_numpy=True).astype(np.float32)
         if query_vec.ndim > 1:
             query_vec = query_vec[0]
-        
-        # Suche
-        results = self.protocol.raw_search(query_vec, density=1.0)
-        
-        # Dokumente auflösen
+
+        # Suche mit Chaos Retrieval (wenn verfügbar) oder Standard
+        if self.use_chaos_retrieval and self.chaos_retrieval:
+            try:
+                # Update Warp mit aktuellem Lorenz-State
+                lorenz_state = self.protocol.get_lorenz_params()
+                self.chaos_retrieval.warp.update(lorenz_state)
+
+                # Chaos-basierte Suche
+                results = self.chaos_retrieval.search(query_vec, top_k=k * 2)
+
+                # Dokumente auflösen
+                docs = []
+                archive_index = {str(d.get("id", "")): d for d in self.protocol.archive}
+                for idx, score in enumerate(results[:k]):
+                    if idx < len(self.protocol._id_map):
+                        doc_id = self.protocol._id_map[idx]
+                        doc = archive_index.get(str(doc_id))
+                        if doc:
+                            docs.append({
+                                "id": doc_id,
+                                "content": doc.get("text", doc.get("content", "")),
+                                "title": doc.get("title", ""),
+                                "source": doc.get("source", "code-vault"),
+                                "score": float(score),
+                                "retrieval_method": "chaos",
+                            })
+            except Exception as e:
+                print(f"[WARN] Chaos Retrieval fehlgeschlagen, fallback zu raw_search: {e}")
+                results = self.protocol.raw_search(query_vec, density=1.0)
+                docs = self._docs_from_results(results, k)
+        else:
+            # Standard-Suche
+            results = self.protocol.raw_search(query_vec, density=1.0)
+            docs = self._docs_from_results(results, k)
+
+        # Hardware-State nach Suche
+        state_after = self.hw_logger.log_state(query, "search_end")
+
+        return docs, state_before, state_after
+
+    def _docs_from_results(self, results: list, k: int) -> list:
+        """Helper: Konvertiere Raw-Search Ergebnisse in Doc-Dicts."""
         docs = []
         archive_index = {str(d.get("id", "")): d for d in self.protocol.archive}
         for doc_id, distance in results[:k]:
@@ -170,12 +238,9 @@ class CodeRetriever:
                     "title": doc.get("title", ""),
                     "source": doc.get("source", "code-vault"),
                     "distance": float(distance),
+                    "retrieval_method": "raw_search",
                 })
-        
-        # Hardware-State nach Suche
-        state_after = self.hw_logger.log_state(query, "search_end")
-        
-        return docs, state_before, state_after
+        return docs
 
 
 # =============================================================================
@@ -255,7 +320,7 @@ def print_header():
     print("=" * 60)
     print("CODE-VAULT TERMINAL")
     print("=" * 60)
-    print("[q] beenden | [l] logs anzeigen | [s] state anzeigen")
+    print("[q] beenden | [l] logs | [s] state | [r] review | [c] clear")
     print("-" * 60)
 
 
@@ -299,6 +364,22 @@ def print_logs():
     print("=" * 40 + "\n")
 
 
+def review_triples(retriever):
+    """Review ossifikat staging with TerminalAdapter."""
+    if not ADAPTERS_AVAILABLE or not retriever.terminal_adapter:
+        print("[WARN] Ossifikat TerminalAdapter nicht verfügbar")
+        return
+
+    try:
+        from ossifikat.cli import review_staging
+        print("[REVIEW] Öffne ossifikat Staging-Review...")
+        review_staging()
+    except ImportError:
+        print("[WARN] ossifikat nicht installiert: pip install ossifikat")
+    except Exception as e:
+        print(f"[ERR] Review fehlgeschlagen: {e}")
+
+
 def main():
     print_header()
     
@@ -330,7 +411,11 @@ def main():
                 clear_screen()
                 print_header()
                 continue
-            
+
+            if query.lower() == "r":
+                review_triples(retriever)
+                continue
+
             # Suche im Vault
             print("[SEARCH] Suche im Code-Vault...")
             context, _, _ = retriever.search(query, k=5)
@@ -340,6 +425,15 @@ def main():
                 for i, doc in enumerate(context):
                     title = doc.get("title", "Unbekannt")[:40]
                     print(f"  [{i+1}] {title}... (Dist: {doc['distance']:.1f})")
+
+                # Log to ossifikat
+                if ADAPTERS_AVAILABLE and retriever.terminal_adapter:
+                    context_ids = [str(c.get("id", "")) for c in context]
+                    retriever.terminal_adapter.store_query_response(
+                        query=query,
+                        response="",
+                        context_ids=context_ids
+                    )
             else:
                 print("[WARN] Keine Dokumente gefunden")
             
