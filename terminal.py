@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+"""
+terminal.py - Minimales CLI-Terminal für Code-Vault + qwen2.5-coder
+================================================================
+
+Start: python terminal.py
+
+Features:
+- Code-Vault Retrieval mit C++ Engine
+- qwen2.5-coder über Ollama
+- Log-Triplets: (query, context, response) als JSON-Lines
+- Hardware-State Logging
+- Keine Redis-Abhängigkeit
+"""
+
+import os
+import sys
+import json
+import time
+import pickle
+import numpy as np
+import requests
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, ROOT)
+
+from framework.quelibrium.core.protocol import Protocol
+from framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE
+
+
+# =============================================================================
+# Konfiguration
+# =============================================================================
+
+MODEL = "qwen2.5-coder:latest"
+OLLAMA_URL = "http://localhost:11434/api/generate"
+LOG_FILE = os.path.join(ROOT, "logs", "triplets.jsonl")
+
+# Erstelle Log-Verzeichnis
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+
+
+# =============================================================================
+# Hardware State Logger
+# =============================================================================
+
+class HardwareLogger:
+    """Loggt Hardware-State als binärnahes Format."""
+    
+    def __init__(self, protocol):
+        self.protocol = protocol
+        self.logs = []
+    
+    def log_state(self, query: str = None, label: str = None) -> dict:
+        """Loggt aktuellen Hardware-State."""
+        state = self.protocol.get_hardware_state()
+        lorenz = self.protocol.get_lorenz_params()
+        
+        entry = {
+            "timestamp": time.time(),
+            "type": "hardware_state",
+            "query": query,
+            "label": label,
+            "lorenz": {
+                "x1": state["x1"], "y1": state["y1"], "z1": state["z1"], "w1": state["w1"],
+                "x2": state["x2"], "y2": state["y2"],
+            },
+            "thermodynamics": {
+                "entropy": state["entropy"],
+                "temperature": state["temperature"],
+                "cortex_bias": state["cortex_bias"],
+            },
+            "params": {
+                "rho": lorenz["rho"], "sigma": lorenz["sigma"], "beta": lorenz["beta"],
+                "reason": lorenz["reason"], "cycle": lorenz["cycle"],
+            }
+        }
+        self.logs.append(entry)
+        return entry
+    
+    def log_triplet(self, query: str, context: list, response: str) -> dict:
+        """Loggt ein Triplet (Query, Context, Response)."""
+        # Kontext als binärnahe Repräsentation
+        context_bin = [{
+            "id": c.get("id"),
+            "distance": c.get("distance", 0),
+            "source": c.get("source", ""),
+            "content_hash": hash(c.get("content", "")) % 2**32,
+            "content_len": len(c.get("content", ""))
+        } for c in context]
+        
+        entry = {
+            "timestamp": time.time(),
+            "type": "triplet",
+            "query": query,
+            "query_hash": hash(query) % 2**32,
+            "context": context_bin,
+            "context_count": len(context),
+            "response": response,
+            "response_len": len(response),
+            "response_hash": hash(response) % 2**32,
+        }
+        self.logs.append(entry)
+        
+        # Schreibe direkt in Log-Datei
+        with open(LOG_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+        
+        return entry
+
+
+# =============================================================================
+# Code Retriever
+# =============================================================================
+
+class CodeRetriever:
+    """Code-Vault Retrieval mit C++ Engine."""
+    
+    EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+    
+    def __init__(self):
+        self.protocol = Protocol(vault_file=CODE_VAULT_FILE, cache_file=CODE_CACHE_FILE)
+        self.hw_logger = HardwareLogger(self.protocol)
+        
+        # SentenceTransformer laden
+        try:
+            from sentence_transformers import SentenceTransformer
+            device = "cuda" if self._has_cuda() else "cpu"
+            self.encoder = SentenceTransformer(self.EMBEDDING_MODEL, device=device)
+            print("[OK] SentenceTransformer geladen")
+        except ImportError as e:
+            print(f"[ERR] sentence-transformers nicht installiert: {e}")
+            self.encoder = None
+        
+        print(f"[OK] Code-Vault: {len(self.protocol.archive):,} docs, {len(self.protocol._doc_cache):,} vectors")
+    
+    @staticmethod
+    def _has_cuda() -> bool:
+        try:
+            import torch
+            return torch.cuda.is_available()
+        except Exception:
+            return False
+    
+    def search(self, query: str, k: int = 10) -> tuple:
+        """Such im Code-Vault. Rückgabe: (Dokumente, Hardware-State vor/nach Suche)"""
+        if not self.encoder:
+            return [], None, None
+        
+        # Hardware-State vor Suche
+        state_before = self.hw_logger.log_state(query, "search_start")
+        
+        # Query embedden
+        query_vec = self.encoder.encode(query, convert_to_numpy=True).astype(np.float32)
+        if query_vec.ndim > 1:
+            query_vec = query_vec[0]
+        
+        # Suche
+        results = self.protocol.raw_search(query_vec, density=1.0)
+        
+        # Dokumente auflösen
+        docs = []
+        archive_index = {str(d.get("id", "")): d for d in self.protocol.archive}
+        for doc_id, distance in results[:k]:
+            doc = archive_index.get(str(doc_id))
+            if doc:
+                docs.append({
+                    "id": doc_id,
+                    "content": doc.get("text", doc.get("content", "")),
+                    "title": doc.get("title", ""),
+                    "source": doc.get("source", "code-vault"),
+                    "distance": float(distance),
+                })
+        
+        # Hardware-State nach Suche
+        state_after = self.hw_logger.log_state(query, "search_end")
+        
+        return docs, state_before, state_after
+
+
+# =============================================================================
+# qwen2.5-coder
+# =============================================================================
+
+class QwenCoder:
+    """qwen2.5-coder über Ollama."""
+    
+    def __init__(self):
+        self.session = requests.Session()
+        try:
+            self.session.get("http://localhost:11434/api/tags", timeout=5)
+            print("[OK] Ollama läuft")
+        except Exception:
+            print("[WARN] Ollama nicht erreichbar")
+    
+    def generate(self, prompt: str, system: str = None, temperature: float = 0.2) -> str:
+        """Generiere mit qwen2.5-coder."""
+        payload = {
+            "model": MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": temperature, "top_p": 0.9, "num_predict": 2048},
+        }
+        if system:
+            payload["system"] = system
+        
+        try:
+            response = self.session.post(OLLAMA_URL, json=payload, timeout=600)
+            if response.status_code == 200:
+                return response.json().get("response", "")
+            return f"[ERR] HTTP {response.status_code}"
+        except Exception as e:
+            return f"[ERR] {str(e)}"
+
+
+# =============================================================================
+# System Prompt Builder
+# =============================================================================
+
+def build_system_prompt(context: list) -> str:
+    """Baue System-Prompt mit Code-Kontext."""
+    if not context:
+        return """Du bist ein Senior Software Engineer.
+Antworte technisch präzise auf Deutsch. Code in Markdown-Codeblöcken.
+Wenn unsicher: explizit markieren."""
+    
+    sources = []
+    for i, d in enumerate(context[:3]):  # Max 3 Quellen für Fokus
+        sources.append(
+            f"QUELLE {i+1} ({d.get('distance', 0):.1f}, {d.get('source', 'code-vault')}):\n"
+            f"{d.get('content', '')[:400]}"
+        )
+    
+    return f"""Du bist ein Senior Software Engineer mit Quellen-Fokus.
+
+REGELN:
+1. Antworte primär basierend auf den QUELLEN.
+2. Code IMMER in Markdown-Codeblöcken mit Sprachen-Tag.
+3. Wenn Quellen nicht ausreichen: explizit sagen.
+4. Technisch präzise, auf Deutsch.
+
+QUELLEN:\n\n""" + "\n\n".join(sources)
+
+
+# =============================================================================
+# CLI Interface
+# =============================================================================
+
+def clear_screen():
+    os.system("cls" if os.name == "nt" else "clear")
+
+
+def print_header():
+    clear_screen()
+    print("=" * 60)
+    print("CODE-VAULT TERMINAL")
+    print("=" * 60)
+    print("[q] beenden | [l] logs anzeigen | [s] state anzeigen")
+    print("-" * 60)
+
+
+def print_state(retriever):
+    """Zeige aktuellen Hardware-State."""
+    state = retriever.protocol.get_hardware_state()
+    lorenz = retriever.protocol.get_lorenz_params()
+    
+    print("\n" + "=" * 40)
+    print("HARDWARE STATE")
+    print("=" * 40)
+    print(f"Lorenz: x1={state['x1']:.2f} y1={state['y1']:.2f} z1={state['z1']:.2f} w1={state['w1']:.2f}")
+    print(f"        x2={state['x2']:.2f} y2={state['y2']:.2f}")
+    print(f"Thermo: entropy={state['entropy']:.2f} temp={state['temperature']:.2f} cortex={state['cortex_bias']:.2f}")
+    print(f"Params: rho={lorenz['rho']:.2f} sigma={lorenz['sigma']:.2f} beta={lorenz['beta']:.2f}")
+    print(f"        reason={lorenz['reason']:.2f} cycle={lorenz['cycle']}")
+    print("=" * 40 + "\n")
+
+
+def print_logs():
+    """Zeige letzte Log-Einträge."""
+    if not os.path.exists(LOG_FILE):
+        print("\n[INFO] Keine Logs vorhanden")
+        return
+    
+    print("\n" + "=" * 40)
+    print("LOGS (letzte 10)")
+    print("=" * 40)
+    
+    with open(LOG_FILE, "r") as f:
+        lines = f.readlines()
+    
+    for line in lines[-10:]:
+        entry = json.loads(line)
+        if entry["type"] == "triplet":
+            print(f"[{time.strftime('%H:%M:%S', time.localtime(entry['timestamp']))}] QUERY: {entry['query'][:50]}...")
+            print(f"  -> Context: {entry['context_count']} docs, Response: {entry['response_len']} chars")
+        elif entry["type"] == "hardware_state":
+            print(f"[{time.strftime('%H:%M:%S', time.localtime(entry['timestamp']))}] HARDWARE: entropy={entry['thermodynamics']['entropy']:.2f} temp={entry['thermodynamics']['temperature']:.2f}")
+    
+    print("=" * 40 + "\n")
+
+
+def main():
+    print_header()
+    
+    # Initialisierung
+    print("[INIT] Lade Code-Vault...")
+    retriever = CodeRetriever()
+    coder = QwenCoder()
+    print()
+    
+    while True:
+        try:
+            query = input("\n> ").strip()
+            
+            if not query:
+                continue
+            
+            if query.lower() == "q":
+                break
+            
+            if query.lower() == "l":
+                print_logs()
+                continue
+            
+            if query.lower() == "s":
+                print_state(retriever)
+                continue
+            
+            if query.lower() == "c":
+                clear_screen()
+                print_header()
+                continue
+            
+            # Suche im Vault
+            print("[SEARCH] Suche im Code-Vault...")
+            context, _, _ = retriever.search(query, k=5)
+            
+            if context:
+                print(f"[OK] Gefunden: {len(context)} Dokumente")
+                for i, doc in enumerate(context):
+                    title = doc.get("title", "Unbekannt")[:40]
+                    print(f"  [{i+1}] {title}... (Dist: {doc['distance']:.1f})")
+            else:
+                print("[WARN] Keine Dokumente gefunden")
+            
+            # System-Prompt bauen
+            system_prompt = build_system_prompt(context)
+            
+            # Generieren
+            print("[GEN] qwen2.5-coder...")
+            response = coder.generate(query, system=system_prompt)
+            
+            # Triplet loggen
+            retriever.hw_logger.log_triplet(query, context, response)
+            
+            # Ausgabe
+            print("\n" + "-" * 60)
+            print(response)
+            print("-" * 60)
+            
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(f"\n[ERR] {e}")
+            import traceback
+            traceback.print_exc()
+    
+    print("\n[BYE] Auf Wiedersehen")
+    retriever.protocol.close()
+
+
+if __name__ == "__main__":
+    main()
