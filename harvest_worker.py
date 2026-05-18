@@ -43,12 +43,16 @@ except ImportError:
         harvest_tools_worker
     )
 
-# Configure logging
+# Configure logging with more detailed output
 logging.basicConfig(
     level=logging.INFO,
-    format='[%(asctime)s] %(name)s: %(message)s'
+    format='[%(asctime)s] %(levelname)s: %(message)s',
+    datefmt='%H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+
+# Make harvest operations more verbose
+logging.getLogger('harvest').setLevel(logging.INFO)
 
 # Harvest operations mapping
 HARVEST_OPERATIONS = {
@@ -147,9 +151,14 @@ class HarvesterWorker:
         Returns:
             True if a request was processed, False if queue was empty
         """
+        # Check queue status
+        status = self.queue.get_status()
+        logger.debug(f"Queue status: {status.pending} pending, {status.running} running, {status.completed} completed")
+
         # Dequeue next request
         request = self.queue.dequeue()
         if not request:
+            logger.debug("Queue empty, waiting...")
             return False
 
         # Check if this is a harvest request
@@ -159,6 +168,7 @@ class HarvesterWorker:
             return True
 
         # Process the request
+        logger.info(f"[JOB] Starting: {request.req_id[:8]}... ({request.operation})")
         self.process_request(request)
         return True
 
@@ -171,12 +181,15 @@ class HarvesterWorker:
         """
         self.running = True
         iteration = 0
+        last_status_time = time.time()
 
         logger.info("HarvesterWorker starting...")
         print("=" * 60)
         print("HARVESTER WORKER")
         print("=" * 60)
         print("[Press Ctrl+C to stop]")
+        print("-" * 60)
+        print(f"[{time.strftime('%H:%M:%S')}] Ready. Waiting for harvest jobs...")
         print("-" * 60)
 
         try:
@@ -189,17 +202,38 @@ class HarvesterWorker:
                 # Process one request
                 if not self.run_once():
                     # Queue was empty, wait and retry
-                    logger.debug(f"Queue empty, waiting {self.poll_interval}s...")
+                    current_time = time.time()
+
+                    # Print status every 30 seconds
+                    if current_time - last_status_time >= 30:
+                        status = self.queue.get_status()
+                        print(f"[{time.strftime('%H:%M:%S')}] Polling... | "
+                              f"Pending: {status.pending} | "
+                              f"Running: {status.running} | "
+                              f"Completed: {status.completed} | "
+                              f"Failed: {status.failed}")
+                        last_status_time = current_time
+
                     time.sleep(self.poll_interval)
                 else:
+                    # Job was processed, show status
                     iteration += 1
+                    status = self.queue.get_status()
+                    print(f"[{time.strftime('%H:%M:%S')}] ✓ Job completed | "
+                          f"Pending: {status.pending} | Completed: {status.completed}")
+                    last_status_time = time.time()
 
         except KeyboardInterrupt:
+            print()
             logger.info("Stopping HarvesterWorker...")
         finally:
             self.running = False
-            logger.info("HarvesterWorker stopped")
+            status = self.queue.get_status()
             print("-" * 60)
+            logger.info("HarvesterWorker stopped")
+            print(f"[{time.strftime('%H:%M:%S')}] Final status: "
+                  f"Completed: {status.completed}, Failed: {status.failed}, "
+                  f"Pending: {status.pending}")
             print("[BYE] Auf Wiedersehen")
 
 

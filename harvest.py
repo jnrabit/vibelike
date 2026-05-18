@@ -1231,38 +1231,50 @@ def main():
 
 def harvest_wikipedia_worker(source: str = "wikipedia", limit: int = 100, **kwargs) -> int:
     """Wrapper for background job processing - harvests Wikipedia."""
+    print(f"[harvest] Initializing Wikipedia harvester (device: {kwargs.get('device', 'cpu')})")
     writer = CodeVaultWriter(device=kwargs.get("device", "cpu"))
     total = 0
     phases = ["basics", "languages"]  # Default: start with basics
-    for phase in phases:
+    for i, phase in enumerate(phases):
         if phase in PHASE_MAP:
+            print(f"[harvest] Phase {i+1}/{len(phases)}: {phase}")
             seeds_de, seeds_en, sector, source_tag = PHASE_MAP[phase]
             total += harvest_wikipedia_seeds(writer, seeds_de, "de", sector, source_tag)
             time.sleep(WIKI_INTER_SECTOR_COOLDOWN)
             if seeds_en:
                 total += harvest_wikipedia_seeds(writer, seeds_en, "en", sector, source_tag)
                 time.sleep(WIKI_INTER_SECTOR_COOLDOWN)
+    print(f"[harvest] Wikipedia complete: +{total} documents")
     return total
 
 
 def harvest_rfcs_worker(limit: int = 50, **kwargs) -> int:
     """Wrapper for background job processing - harvests RFCs."""
+    print(f"[harvest] Starting RFC harvester (limit: {limit})")
     writer = CodeVaultWriter(device=kwargs.get("device", "cpu"))
     rfc_list = RFC_NUMBERS[:limit] if limit else RFC_NUMBERS
-    return harvest_rfcs(writer, rfc_list)
+    result = harvest_rfcs(writer, rfc_list)
+    print(f"[harvest] RFC complete: +{result} documents")
+    return result
 
 
 def harvest_peps_worker(limit: int = 50, **kwargs) -> int:
     """Wrapper for background job processing - harvests PEPs."""
+    print(f"[harvest] Starting PEP harvester (limit: {limit})")
     writer = CodeVaultWriter(device=kwargs.get("device", "cpu"))
     pep_list = PEP_NUMBERS[:limit] if limit else PEP_NUMBERS
-    return harvest_peps(writer, pep_list)
+    result = harvest_peps(writer, pep_list)
+    print(f"[harvest] PEP complete: +{result} documents")
+    return result
 
 
 def harvest_tools_worker(limit: int = 50, **kwargs) -> int:
     """Wrapper for background job processing - harvests tool docs."""
+    print(f"[harvest] Starting tool documentation harvester")
     writer = CodeVaultWriter(device=kwargs.get("device", "cpu"))
-    return harvest_tool_docs(writer)
+    result = harvest_tool_docs(writer)
+    print(f"[harvest] Tools complete: +{result} documents")
+    return result
 
 
 if __name__ == "__main__":
