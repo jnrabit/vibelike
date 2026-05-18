@@ -6,9 +6,16 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from vibelike.sandbox.models import Sandbox
-from vibelike.tools.registry import ToolRegistry
-from vibelike.tools.cache import ToolCache
+try:
+    from sandbox.models import Sandbox
+    from tools.registry import ToolRegistry
+    from tools.cache import ToolCache
+    from tools.models import Tool
+except ImportError:
+    from vibelike.sandbox.models import Sandbox
+    from vibelike.tools.registry import ToolRegistry
+    from vibelike.tools.cache import ToolCache
+    from vibelike.tools.models import Tool
 
 
 class SandboxManager:

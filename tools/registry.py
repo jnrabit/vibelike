@@ -6,8 +6,12 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Optional, Any
 
-from vibelike.tools.models import Tool, TripleTemplate
-from vibelike.tools.cache import ToolCache
+try:
+    from tools.models import Tool, TripleTemplate
+    from tools.cache import ToolCache
+except ImportError:
+    from vibelike.tools.models import Tool, TripleTemplate
+    from vibelike.tools.cache import ToolCache
 
 
 class ToolRegistry:

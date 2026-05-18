@@ -7,15 +7,42 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from vibelike.models.request import Request
-from vibelike.sandbox.manager import SandboxManager
-from vibelike.tools.registry import ToolRegistry
-from vibelike.tools.cache import ToolCache
-from vibelike.reqqueue.manager import RequestQueue
-from vibelike.reqqueue.reminders import ReminderManager
-from vibelike.reqqueue.health import HealthCheck
-from vibelike.logdb.db import LogDB
-from ossifikat.store import OssifikatStore
+try:
+    from models.request import Request
+    from sandbox.manager import SandboxManager
+    from sandbox.models import Sandbox
+    from tools.registry import ToolRegistry
+    from tools.cache import ToolCache
+    from tools.models import Tool
+    from reqqueue.manager import RequestQueue
+    from reqqueue.reminders import ReminderManager
+    from reqqueue.health import HealthCheck
+    from logdb.db import LogDB
+except ImportError:
+    from vibelike.models.request import Request
+    from vibelike.sandbox.manager import SandboxManager
+    from vibelike.sandbox.models import Sandbox
+    from vibelike.tools.registry import ToolRegistry
+    from vibelike.tools.cache import ToolCache
+    from vibelike.tools.models import Tool
+    from vibelike.reqqueue.manager import RequestQueue
+    from vibelike.reqqueue.reminders import ReminderManager
+    from vibelike.reqqueue.health import HealthCheck
+    from vibelike.logdb.db import LogDB
+
+try:
+    from ossifikat.store import OssifikatStore
+except ImportError:
+    OssifikatStore = None
+
+try:
+    from adapters import HarvestAdapter, ToolsAdapter
+except ImportError:
+    try:
+        from vibelike.adapters import HarvestAdapter, ToolsAdapter
+    except ImportError:
+        HarvestAdapter = None
+        ToolsAdapter = None
 
 
 class RequestWorker:
@@ -44,7 +71,7 @@ class RequestWorker:
         # Initialisiere Komponenten
         self.queue = RequestQueue(queue_db_path)
         self.log_db = LogDB(log_db_path)
-        self.ossifikat_store = OssifikatStore(ossifikat_db_path)  # Feste Connection!
+        self.ossifikat_store = OssifikatStore(ossifikat_db_path) if OssifikatStore else None  # Feste Connection!
         self.sandbox_manager = SandboxManager(
             sandbox_base=Path("/sandbox"),
             tools_dir=tools_dir,
@@ -58,6 +85,10 @@ class RequestWorker:
         self.health_check = HealthCheck(queue_db_path=queue_db_path)
         self.results_dir = results_dir
         self.running = False
+
+        # Adapter für Knowledge-Graph
+        self.harvest_adapter = HarvestAdapter(ossifikat_db_path=ossifikat_db_path) if HarvestAdapter else None
+        self.tools_adapter = ToolsAdapter(ossifikat_db_path=ossifikat_db_path) if ToolsAdapter else None
 
         # Signal-Handler für sauberes Beenden
         signal.signal(signal.SIGINT, self._handle_signal)
@@ -358,6 +389,19 @@ class RequestWorker:
                 except Exception as e:
                     import logging
                     logging.error(f"Failed to add triple to ossifikat: {e}")
+
+        # Speichere Tool-Informationen in Adapter (wenn erfolgreich)
+        if tool and self.tools_adapter and request.status == "completed" and request.exit_code == 0:
+            try:
+                # Speichere als Tool-Sektor (für Knowledge-Graph)
+                self.tools_adapter.store_tool_relationship(
+                    tool_a=tool.name,
+                    relationship="executed_by",
+                    tool_b=f"request_{request.req_id[:8]}"
+                )
+            except Exception as e:
+                import logging
+                logging.error(f"Failed to store tool relationship: {e}")
 
         # Queue aktualisieren
         if request.status == "failed":
