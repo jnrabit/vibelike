@@ -198,25 +198,23 @@ class CodeRetriever:
                 lorenz_state = self.protocol.get_lorenz_params()
                 self.chaos_retrieval.warp.update(lorenz_state)
 
-                # Chaos-basierte Suche
+                # Chaos-basierte Suche — returnt [(doc_id, distance), ...]
                 results = self.chaos_retrieval.search(query_vec, top_k=k * 2)
 
                 # Dokumente auflösen
                 docs = []
                 archive_index = {str(d.get("id", "")): d for d in self.protocol.archive}
-                for idx, score in enumerate(results[:k]):
-                    if idx < len(self.protocol._id_map):
-                        doc_id = self.protocol._id_map[idx]
-                        doc = archive_index.get(str(doc_id))
-                        if doc:
-                            docs.append({
-                                "id": doc_id,
-                                "content": doc.get("text", doc.get("content", "")),
-                                "title": doc.get("title", ""),
-                                "source": doc.get("source", "code-vault"),
-                                "score": float(score),
-                                "retrieval_method": "chaos",
-                            })
+                for doc_id, distance in results[:k]:
+                    doc = archive_index.get(str(doc_id))
+                    if doc:
+                        docs.append({
+                            "id": doc_id,
+                            "content": doc.get("text", doc.get("content", "")),
+                            "title": doc.get("title", ""),
+                            "source": doc.get("source", "code-vault"),
+                            "distance": float(distance),
+                            "retrieval_method": "chaos",
+                        })
             except Exception as e:
                 print(f"[WARN] Chaos Retrieval fehlgeschlagen, fallback zu raw_search: {e}")
                 results = self.protocol.raw_search(query_vec, density=1.0)
