@@ -24,14 +24,14 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / "ossifikat"))
 
-from terminal import QwenCoder
-import subprocess
-
 
 class WorkflowAgent:
     """5-Phasen Workflow Agent mit Qwen2.5-Coder."""
 
     def __init__(self):
+        # Import QwenCoder locally to avoid circular imports
+        from terminal import QwenCoder
+
         self.qwen = QwenCoder()
         self.root = Path(__file__).parent
         self.workflow_log = self.root / "logs" / "workflows.jsonl"
