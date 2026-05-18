@@ -662,7 +662,7 @@ def _fetch_url(url: str, timeout: int = 30) -> str:
         return None
 
 
-def harvest_tool_docs(writer: CodeVaultWriter):
+def harvest_tool_docs(writer: "CodeVaultWriter"):
     """Sammelt offizielle Dokumentationen für Tools."""
     import random
     added = 0
@@ -910,7 +910,7 @@ def _wiki_fetch(api_url: str, title: str) -> dict:
     return None
 
 
-def harvest_wikipedia_seeds(writer: CodeVaultWriter, seeds: list, lang: str,
+def harvest_wikipedia_seeds(writer: "CodeVaultWriter", seeds: list, lang: str,
                             sector: str, source_tag: str):
     """Pro Seed: Wiki-Extract holen, Doc bauen, in Buffer adden."""
     import random
@@ -988,7 +988,7 @@ def harvest_wikipedia_seeds(writer: CodeVaultWriter, seeds: list, lang: str,
 RFC_URL = "https://www.rfc-editor.org/rfc/rfc{n}.txt"
 
 
-def harvest_rfcs(writer: CodeVaultWriter, rfc_numbers: list):
+def harvest_rfcs(writer: "CodeVaultWriter", rfc_numbers: list):
     added = 0
     skipped = 0
     failed = 0
@@ -1069,7 +1069,7 @@ PEP_NUMBERS = [
     3118, 657,
 ]
 
-def harvest_peps(writer: CodeVaultWriter, pep_numbers: list):
+def harvest_peps(writer: "CodeVaultWriter", pep_numbers: list):
     """Holt PEP-RST-Text von peps.python.org und embeddet ihn als Code-Doc."""
     import random
     base_url = "https://peps.python.org/pep-{:04d}/"
