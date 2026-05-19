@@ -43,6 +43,7 @@ class WorkflowAgent:
         # Import QwenCoder + Modell-Konstanten lokal (circular-import-Schutz)
         from terminal import QwenCoder, VALIDATOR_MODEL, ANALYSIS_MODEL, CodeRetriever
         from validator2 import StaticValidatorV2
+        from task_classifier import TaskClassifier
 
         # Retriever für Code-Vault-Integration in Planning-Phasen
         try:
@@ -74,6 +75,9 @@ class WorkflowAgent:
         self.workflow_log = self.root / "logs" / "workflows.jsonl"
         self.workflow_log.parent.mkdir(parents=True, exist_ok=True)
         self.current_workflow = None
+
+        # Task-Klassifikator (Phase 0) -- nutzt das Reasoning-Modell
+        self.classifier = TaskClassifier(self.analyzer_qwen)
 
         # Modell-Setup zeigen
         print(f"[🧠 Reasoning  : {self.analyzer_qwen.model}]")
@@ -1647,9 +1651,123 @@ Was NICHT zählt:
     # MAIN WORKFLOW
     # =========================================================================
 
+    # =========================================================================
+    # TEMPLATES — Phase-Sequenzen pro Task-Typ
+    # =========================================================================
+
+    def phase_analysis_report(self, briefing: dict) -> dict:
+        """Phase ANALYSE: Finalisiert das Briefing als sauberen Analyse-Report.
+
+        Kein Plan, kein Execute — die Analyse IST das Endprodukt.
+        Speichert Report als Markdown unter logs/analysis-<id>.md.
+        """
+        print("\n" + "="*70)
+        print("PHASE ANALYSIS REPORT — Finalisierung")
+        print("="*70)
+
+        analysis = briefing.get("analysis", "")
+        task = briefing.get("task", "")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+        report_md = f"""# Analyse-Report — {timestamp}
+
+## Aufgabe
+{task}
+
+## Analyse
+{analysis}
+
+## Code-Übersicht (extrahiert)
+```
+{briefing.get("code_overview", "")[:2000]}
+```
+
+---
+*Generiert: {datetime.now().isoformat()}*
+"""
+
+        report_path = self.root / "logs" / f"analysis-{timestamp}.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report_md)
+
+        print(f"\n✅ Analyse-Report gespeichert: {report_path.relative_to(self.root)}")
+        print(f"   Größe: {report_path.stat().st_size:,} bytes\n")
+
+        return {
+            "phase": "ANALYSIS_REPORT",
+            "report_path": str(report_path),
+            "timestamp": datetime.now().isoformat(),
+        }
+
     def run_workflow(self, task: str, iteration: int = 0, max_iterations: int = 3,
                      parent_id: str = None) -> dict:
-        """Laufe Workflow durch. Bei Test-Fail Loop zurück zu Phase 1 (max N Iterationen)."""
+        """Entry-Point: klassifiziert Task, routet zum passenden Template.
+
+        Templates (Stufe 1+2+3 — siehe inkonsistence.md fuer langfristige Vision):
+          - ANALYSIS:       Briefing → Report → END (kein Code-Schreiben)
+          - IMPLEMENTATION: Full 6-Phase Workflow (Brief→Strat→Plan→Exec→Verify→Commit)
+          - BUG_FIX, REFACTOR, EXPLAIN: noch nicht implementiert → fallback IMPLEMENTATION
+        """
+        # PHASE 0: Task-Klassifikation
+        if iteration == 0:  # nur beim ersten Lauf klassifizieren, nicht bei Retries
+            print("\n" + "="*70)
+            print("PHASE 0: TASK-KLASSIFIKATION")
+            print("="*70)
+
+            try:
+                project_files = [p.name for p in sorted(self.root.glob("*.py"))[:15]]
+                classification = self.classifier.classify(task, project_files)
+                from task_classifier import confirm_classification
+                task_type = confirm_classification(classification)
+            except Exception as e:
+                print(f"[WARN] Klassifikation fehlgeschlagen: {e} → fallback IMPLEMENTATION")
+                task_type = "IMPLEMENTATION"
+        else:
+            # Bei Retry: nutze gespeicherten task_type oder default
+            task_type = self.current_workflow.get("task_type", "IMPLEMENTATION") if self.current_workflow else "IMPLEMENTATION"
+
+        # ROUTE: Template-Auswahl
+        if task_type == "ANALYSIS":
+            return self._run_analysis_template(task, iteration, parent_id)
+        elif task_type == "EXPLAIN":
+            return self._run_analysis_template(task, iteration, parent_id)  # gleicher Pfad
+        else:
+            # IMPLEMENTATION, BUG_FIX, REFACTOR → Vollworkflow
+            return self._run_implementation_template(task, task_type, iteration, max_iterations, parent_id)
+
+    def _run_analysis_template(self, task: str, iteration: int, parent_id: str | None) -> dict:
+        """ANALYSIS-Template: Briefing → Report → END."""
+        wf_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.current_workflow = {
+            "id": wf_id,
+            "task": task,
+            "task_type": "ANALYSIS",
+            "iteration": iteration,
+            "parent_id": parent_id,
+            "phases": {},
+        }
+
+        briefing = self.phase_briefing(task)
+        self.current_workflow["phases"]["briefing"] = briefing
+
+        report = self.phase_analysis_report(briefing)
+        self.current_workflow["phases"]["report"] = report
+
+        # Log workflow
+        with open(self.workflow_log, "a") as f:
+            f.write(json.dumps(self.current_workflow, default=str) + "\n")
+
+        print("\n" + "="*70)
+        print("✅ ANALYSE-WORKFLOW ABGESCHLOSSEN")
+        print("="*70)
+        print(f"   Report: {report['report_path']}")
+        print()
+        return self.current_workflow
+
+    def _run_implementation_template(self, task: str, task_type: str,
+                                       iteration: int, max_iterations: int,
+                                       parent_id: str | None) -> dict:
+        """IMPLEMENTATION-Template: Full 6-phase workflow (bisheriges Verhalten)."""
         wf_id = datetime.now().strftime("%Y%m%d-%H%M%S")
         if iteration > 0:
             print("\n" + "█"*70)
@@ -1659,6 +1777,7 @@ Was NICHT zählt:
         self.current_workflow = {
             "id": wf_id,
             "task": task,
+            "task_type": task_type,
             "iteration": iteration,
             "parent_id": parent_id,
             "phases": {}
