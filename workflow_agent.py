@@ -53,9 +53,10 @@ class WorkflowAgent:
         # Foreground: großes Modell für Code-Gen / Planung (siehe terminal.MODEL)
         self.qwen = QwenCoder()
         # Background: kleines Modell für parallelen LLM-Critic.
+        # num_predict niedrig halten — Critic soll kurz sein, nicht den Input echoen.
         self.validator_qwen = QwenCoder(
             model=VALIDATOR_MODEL,
-            num_predict=768,
+            num_predict=350,
             keep_alive="60m",
         )
         # Deterministischer Static-Validator (kein LLM, keine Halluzination).
@@ -82,33 +83,84 @@ KONTEXT:
 ZU REVIEWEN ({phase_name}):
 {output}
 
-REGELN (strikt):
-- Beginne mit GENAU einer Zeile: "🟢" oder "🟡 <ein-Satz-Grund>" oder "🔴 <ein-Satz-Grund>"
-- Danach MAXIMAL 3 konkrete Punkte, je 1-2 Sätze, mit Zitat aus der Ausgabe oder Verweis auf konkrete Stelle
-- VERBOTEN: "✅"-Listen, Wiederholung der Punkte aus der Ausgabe, Bestätigungsfloskeln ("gut implementiert", "korrekt umgesetzt"), allgemeine Best-Practice-Lyrik
-- Wenn du nichts Konkretes findest: NUR "🟢" ausgeben, sonst NICHTS
+HARTE REGELN (Verstoß = Output unbrauchbar):
+1. Erste Zeile: GENAU "🟢" ODER "🟡 <ein-Satz>" ODER "🔴 <ein-Satz>" — sonst NICHTS
+2. Maximal 3 weitere Zeilen, je ein konkreter Kritikpunkt (1-2 Sätze)
+3. Gesamtausgabe < 400 Zeichen
+4. ABSOLUT VERBOTEN: Die Ausgabe oben wiederholen, paraphrasieren, abschreiben, zusammenfassen
+5. ABSOLUT VERBOTEN: "✅"-Listen, "gut/korrekt/implementiert"-Floskeln, PEP-8/Best-Practice-Lyrik
+6. Wenn nichts Konkretes: NUR "🟢" — keine Erklärung, keine Höflichkeit
+7. Wenn du den Plan/Code abschreibst → STOP, lösche das, gib nur "🟢" aus
 
-Beispiele für GUTE Punkte:
-- "Annahme dass GitHub API ohne Auth nutzbar — bei >60 req/h hard limit, Plan erwähnt keinen Token"
-- "Plan überspringt was passiert wenn README binary ist (UnicodeDecodeError in Zeile X)"
-- "Tests behaupten 'race conditions abgedeckt' aber kein einziger Concurrency-Test im Plan"
+GUTE Kritikpunkte (so):
+- "Annahme dass GitHub API ohne Auth nutzbar — bei >60 req/h hard limit"
+- "Plan erwähnt 'vibelike.py' aber Datei existiert nicht im Projekt"
+- "Tests behaupten 'race conditions abgedeckt' aber kein Concurrency-Test im Plan"
 
-Beispiele für SCHLECHTE Punkte (nicht so):
-- "Implementiert Error-Handling mit try-except"
-- "Folgt PEP 8 Style"
-- "Tests decken die Logik ab"
+SCHLECHTE Kritikpunkte (nicht so):
+- "Implementiert Error-Handling mit try-except"   ← Beschreibung, keine Kritik
+- "### PLAN: 1. Dateien... 2. Tests..."          ← Plan abgeschrieben, sofort STOP
+- "Folgt PEP 8 Style"                            ← Floskel
 """
             return self.validator_qwen.generate(validator_prompt, temperature=0.4)
 
         return self._executor.submit(_run)
 
-    def _render_validation(self, validation_future: concurrent.futures.Future) -> str:
-        """Holt Validator-Ergebnis ab und rendert es."""
+    def _strip_regurgitation(self, validator_output: str, reviewed: str) -> str:
+        """Schneidet den Validator-Output ab, wenn er den Input wieder abschreibt.
+
+        Heuristik: jede Zeile ab dem ersten Vorkommen einer ≥80-Zeichen-Subsequenz
+        aus dem Input wird abgeschnitten. Plus: Header-Patterns ("### "/"## "/"## "+input)
+        triggern Abbruch.
+        """
+        if not validator_output or not reviewed:
+            return validator_output
+
+        # 1. Header-Heuristik: erste Markdown-Header-Zeile nach Zeile 1 → abbrechen
+        lines = validator_output.splitlines()
+        cleaned = []
+        for i, line in enumerate(lines):
+            # Erste Zeile (Verdict) immer behalten
+            if i == 0:
+                cleaned.append(line)
+                continue
+            stripped = line.lstrip()
+            # Markdown-Header (von Plan-Output) → Echo erkannt, abbrechen
+            if stripped.startswith(("### ", "## ", "#### ", "**")):
+                break
+            cleaned.append(line)
+
+        partial = "\n".join(cleaned)
+
+        # 2. Substring-Heuristik: ≥80-Zeichen-Block aus Input gefunden → abschneiden
+        reviewed_chunks = [
+            reviewed[i:i+80] for i in range(0, max(0, len(reviewed) - 80), 40)
+        ]
+        for chunk in reviewed_chunks:
+            chunk = chunk.strip()
+            if len(chunk) >= 80 and chunk in partial:
+                partial = partial.split(chunk)[0].rstrip()
+                break
+
+        # 3. Hart auf 800 Zeichen kappen (defensive)
+        if len(partial) > 800:
+            partial = partial[:800] + "\n[... gekürzt — Validator-Echo unterdrückt]"
+
+        return partial.strip() or "🟢"
+
+    def _render_validation(self, validation_future: concurrent.futures.Future,
+                             reviewed: str = "") -> str:
+        """Holt Validator-Ergebnis ab, filtert Regurgitation, rendert es."""
         print("\n[🔍 Validator läuft parallel...]")
         try:
             result = validation_future.result(timeout=300)
         except Exception as e:
             result = f"[Validator-Fehler: {e}]"
+
+        # Post-Filter: Validator-Echo unterdrücken
+        if reviewed and result and not result.startswith("[Validator-Fehler"):
+            result = self._strip_regurgitation(result, reviewed)
+
         print("\n" + "─"*70)
         print("🔍 PARALLELE VALIDIERUNG (unabhängiger Critic)")
         print("─"*70)
@@ -256,7 +308,7 @@ Sei präzise und technisch. Zitiere echten Code wo möglich."""
         validation_future = self._start_validation("BRIEFING", analysis, f"AUFGABE: {task}")
 
         # Validation einsammeln (User-Lesezeit überlappt mit Validator-Run)
-        validation = self._render_validation(validation_future)
+        validation = self._render_validation(validation_future, reviewed=analysis)
 
         result = {
             "phase": "BRIEFING",
@@ -335,7 +387,7 @@ Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS u
                 strategy,
                 f"BRIEFING-ANALYSE:\n{briefing['analysis']}"
             )
-            validation = self._render_validation(validation_future)
+            validation = self._render_validation(validation_future, reviewed=strategy)
 
             previous_strategy = strategy
 
@@ -450,7 +502,7 @@ Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
                 plan,
                 f"AUFGABE: {briefing['task']}\n\nGENEHMIGTE STRATEGIE:\n{strategy['strategy']}"
             )
-            validation = self._render_validation(validation_future)
+            validation = self._render_validation(validation_future, reviewed=plan)
 
             # Deterministischer Plan-Check (Struktur + Spezifität)
             plan_report = self.static_validator.validate_plan(plan, plan_kind="detail")

@@ -336,11 +336,74 @@ class StaticValidatorV2(StaticValidator):
         return report
 
     def validate_plan(self, plan_text: str, plan_kind: str = "detail") -> ExtendedReport:
-        """Validiert Plan-Struktur."""
+        """Validiert Plan-Struktur + Datei-Existenz (Anti-Halluzination)."""
         report = ExtendedReport()
         self._check_plan_structure(plan_text, plan_kind, report)
         self._check_plan_specificity(plan_text, plan_kind, report)
+        self._check_plan_file_existence(plan_text, report)
         return report
+
+    def _check_plan_file_existence(self, plan: str, report: ExtendedReport) -> None:
+        """Findet Dateinamen die der Plan als 'BETROFFENE DATEIEN' deklariert,
+        aber die im Projekt nicht existieren — typische Halluzination.
+
+        Heuristik:
+          1. Section ab "BETROFFENE DATEIEN" / "AFFECTED FILES" suchen
+          2. Bis zur nächsten Section (NEUE DATEIEN, FUNKTIONEN, etc.) lesen
+          3. Alle *.py / *.md / *.toml etc. Dateinamen extrahieren
+          4. Existenz gegen self.root prüfen
+        """
+        import re as regex_module
+
+        # Section "BETROFFENE DATEIEN" extrahieren
+        # Stoppt bei nächstem Section-Header (NEUE/FUNKTIONEN/CODE-FLOW/TESTS/IMPORTS/...)
+        section_pattern = regex_module.compile(
+            r"(?:BETROFFENE\s+DATEIEN|AFFECTED\s+FILES|MODIFIED\s+FILES)"
+            r"(.*?)"
+            r"(?=\n\s*(?:\d+\.\s+)?(?:NEUE\s+DATEIEN|NEW\s+FILES|FUNKTIONEN|FUNCTIONS|"
+            r"CODE-?FLOW|TESTS|IMPORTS|INTEGRATION|ROLLBACK|ESTIMATED|####|###|\Z))",
+            regex_module.IGNORECASE | regex_module.DOTALL,
+        )
+        match = section_pattern.search(plan)
+        if not match:
+            return
+
+        section = match.group(1)
+
+        # Dateinamen extrahieren: *.py, *.md, *.toml, *.json, *.yml, *.yaml
+        # Akzeptiert: **file.py**, `file.py`, file.py, path/to/file.py
+        file_pattern = regex_module.compile(
+            r"(?:[\*\`/\s]|^)([a-zA-Z_][\w/\-\.]*\.(?:py|md|toml|json|yml|yaml|cfg|ini|txt))"
+            r"(?:[\*\`\s:,\)]|$)",
+            regex_module.MULTILINE,
+        )
+
+        seen: set[str] = set()
+        for fmatch in file_pattern.finditer(section):
+            fname = fmatch.group(1).strip()
+            if fname in seen:
+                continue
+            seen.add(fname)
+
+            # Prüfen ob die Datei (relativ zum Projekt-Root) existiert
+            path = self.root / fname
+            if path.exists():
+                continue
+
+            # Auch im Tree suchen (rekursiv, aber nur Filename matchen)
+            base = fname.split("/")[-1]
+            matches = list(self.root.rglob(base))
+            if matches:
+                continue
+
+            # Datei existiert nicht — Halluzination!
+            self._add_finding(
+                report,
+                "high",
+                "plan:hallucinated_file",
+                "<plan>",
+                f"Plan referenziert Datei '{fname}' als BETROFFENE DATEI, aber sie existiert nicht im Projekt"
+            )
 
     def validate_full(self, changes: list[dict], plan_text: str, context: dict | None = None,
                       ossifikat_db: str | None = None) -> ExtendedReport:
