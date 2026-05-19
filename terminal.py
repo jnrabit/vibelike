@@ -46,19 +46,11 @@ from framework.quelibrium.intelligence.resonance import ResonanceField
 # Konfiguration
 # =============================================================================
 
-# Foreground-Modell (Code-Gen, Planung)
-# Default qwen2.5-coder:1.5b: passt komplett in 8 GB VRAM, 100% GPU, schnell.
-# Für stärkeres Code-Reasoning: VIBELIKE_QWEN_MODEL=qwen2.5-coder:latest setzen
-# (Achtung: bei 8 GB VRAM cycelt das mit dem Validator).
-MODEL = os.environ.get("VIBELIKE_QWEN_MODEL", "qwen2.5-coder:1.5b")
-# Background-Modell (Validator, Reviewer). 1.5b ist als Critic schwach,
-# aber qwen3:8b und qwen2.5-coder:latest passen auf 8 GB VRAM nicht
-# koexistent → Eviction-Cycling macht Validator-Calls 30-60s teurer als
-# der eigentliche Workflow. Daher Standard = gleiches Modell wie Foreground;
-# wir kompensieren die Schwäche mit einem aggressiven Anti-Floskel-Prompt.
-# Wer bessere Critic-Qualität braucht und Eviction-Latenz akzeptiert:
-#   VIBELIKE_VALIDATOR_MODEL=qwen3:8b   (oder qwen2.5-coder:latest)
-VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", MODEL)
+# Foreground = 7b coder (4.9 GB, 100% GPU), Validator = 1.5b coder (1.4 GB, 100% GPU).
+# Zusammen ~6.3 GB Modelle + Desktop = ~7.3 GB / 8.5 GB VRAM — passt parallel.
+# StaticValidator fängt die fachliche Schwäche des 1.5b-Critics deterministisch ab.
+MODEL = os.environ.get("VIBELIKE_QWEN_MODEL", "qwen2.5-coder:latest")
+VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", "qwen2.5-coder:1.5b")
 OLLAMA_URL = "http://localhost:11434/api/generate"
 LOG_FILE = os.path.join(ROOT, "logs", "triplets.jsonl")
 
@@ -428,6 +420,58 @@ def review_triples(retriever):
         print(f"[ERR] Review fehlgeschlagen: {e}")
 
 
+def research_mode(retriever):
+    """Deep multi-retrieval mode for exploration without workflow start."""
+    print("\n" + "=" * 60)
+    print("RESEARCH MODE - Tiefe Vault-Exploration")
+    print("=" * 60)
+
+    query = input("\n🔍 Research-Query eingeben: ").strip()
+    if not query:
+        print("❌ Keine Query eingegeben.")
+        return
+
+    # Multi-retrieval: Haupt-Query + Varianten
+    queries = [
+        query,
+        f"how {query}",
+        f"implementation {query}",
+    ]
+
+    all_docs = []
+    for q in queries:
+        try:
+            docs, _, _ = retriever.search(q, k=10)
+            all_docs.extend(docs)
+        except Exception as e:
+            print(f"[WARN] Retrieval für '{q}' fehlgeschlagen: {e}")
+
+    # Deduplicate und sortieren nach distance
+    seen_ids = set()
+    unique_docs = []
+    for doc in sorted(all_docs, key=lambda d: d.get("distance", 999)):
+        doc_id = doc.get("id")
+        if doc_id not in seen_ids:
+            seen_ids.add(doc_id)
+            unique_docs.append(doc)
+
+    if not unique_docs:
+        print("[NO HITS] Keine Dokumente gefunden")
+        return
+
+    print(f"\n[OK] Gefunden: {len(unique_docs)} einzigartige Dokumente\n")
+
+    for i, doc in enumerate(unique_docs[:15], 1):
+        title = doc.get("title", "unknown")
+        distance = doc.get("distance", 0)
+        content = doc.get("content", "")[:800]
+
+        print(f"[{i}] {title}")
+        print(f"    Distance: {distance:.2f}")
+        print(f"    Content: {content}")
+        print("    " + "-" * 56)
+
+
 def start_workflow():
     """Start the 5-phase development workflow."""
     if not WORKFLOW_AVAILABLE:
@@ -482,13 +526,13 @@ def start_workflow():
 
 def main():
     print_header()
-    
+
     # Initialisierung
     print("[INIT] Lade Code-Vault...")
     retriever = CodeRetriever()
     coder = QwenCoder()
     print()
-    
+
     while True:
         try:
             query = input("\n> ").strip()
@@ -520,8 +564,12 @@ def main():
                 start_workflow()
                 continue
 
-            # Workflow via "Briefing:" prefix
-            if query.startswith("Briefing:") or query.startswith("briefing:"):
+            if query.upper() == "R":
+                research_mode(retriever)
+                continue
+
+            # Workflow via "briefing:" prefix
+            if query.startswith("briefing:"):
                 task = query[9:].strip()
                 if task:
                     try:
@@ -530,13 +578,13 @@ def main():
                     except Exception as e:
                         print(f"\n[ERR] Workflow fehlgeschlagen: {e}")
                 else:
-                    print("[ERR] Keine Aufgabe nach 'Briefing:' eingegeben")
+                    print("[ERR] Keine Aufgabe nach 'briefing:' eingegeben")
                 continue
 
             # Suche im Vault
             print("[SEARCH] Suche im Code-Vault...")
             context, _, _ = retriever.search(query, k=5)
-            
+
             if context:
                 print(f"[OK] Gefunden: {len(context)} Dokumente")
                 for i, doc in enumerate(context):

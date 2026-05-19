@@ -40,8 +40,14 @@ class WorkflowAgent:
 
     def __init__(self):
         # Import QwenCoder + Modell-Konstanten lokal (circular-import-Schutz)
-        from terminal import QwenCoder, VALIDATOR_MODEL
+        from terminal import QwenCoder, VALIDATOR_MODEL, CodeRetriever
         from static_validator import StaticValidator
+
+        # Retriever für Code-Vault-Integration in Planning-Phasen
+        try:
+            self.retriever = CodeRetriever()
+        except Exception:
+            self.retriever = None
 
         # Foreground: großes Modell für Code-Gen / Planung (siehe terminal.MODEL)
         self.qwen = QwenCoder()
@@ -109,6 +115,26 @@ Beispiele für SCHLECHTE Punkte (nicht so):
         print("─"*70)
         return result
 
+    def _retrieve(self, query: str, k: int = 3, max_snippet: int = 500) -> str:
+        """Holt relevante Code-Snippets aus dem Vault und formatiert sie kompakt.
+        Bei Fehler oder fehlendem Retriever: leerer String."""
+        if not self.retriever:
+            return ""
+        try:
+            docs, _, _ = self.retriever.search(query, k=k)
+            if not docs:
+                return ""
+            lines = ["RELEVANTE CODE-STELLEN FÜR KONTEXT:"]
+            for i, doc in enumerate(docs, 1):
+                title = doc.get("title", "unknown")
+                distance = doc.get("distance", 0)
+                content = doc.get("content", "")[:max_snippet]
+                lines.append(f"\n[{i}] {title} (dist={distance:.1f}):")
+                lines.append(f"    {content}")
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
     # =========================================================================
     # PHASE 1: BRIEFING
     # =========================================================================
@@ -134,7 +160,7 @@ PROJEKTSTRUKTUR:
 
 Antworte mit einer Analyse:
 1. Verstehen Sie die Aufgabe korrekt?
-2. Welche Komponenten sind betroffen?
+2. Welche Komponenten sind betroffen? (nutze den MITGEBRACHTEN KONTEXT wenn vorhanden)
 3. Wie passt es ins bestehende System?
 4. Gibt es Abhängigkeiten oder Konflikte?
 5. Welche Risiken sehen Sie?
@@ -156,7 +182,7 @@ Sei präzise und technisch."""
             "timestamp": datetime.now().isoformat(),
             "analysis": analysis,
             "validation": validation,
-            "project_info": project_info
+            "project_info": project_info,
         }
         return result
 
@@ -170,10 +196,18 @@ Sei präzise und technisch."""
         print("PHASE 2A: PLANNING - STRATEGIE (Allgemeines Vorgehen)")
         print("="*70)
 
+        # Retrieval: relevante Code-Stellen für Task-Kontext
+        retrieval_ctx = self._retrieve(briefing['task'], k=3)
+        if retrieval_ctx:
+            print("\n[📚 Vault-Retrieval lädt relevant code...]")
+            print(retrieval_ctx)
+
         strategy_prompt = f"""Du bist ein Senior Software-Architekt. Erstelle eine STRATEGISCHE Planung für die Aufgabe.
 
 ANALYSE:
 {briefing['analysis']}
+
+{retrieval_ctx}
 
 Diese Phase ist HIGH-LEVEL - noch KEINE konkreten Dateien/Funktionen.
 
@@ -240,6 +274,13 @@ Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS u
         print("PHASE 2B: PLANNING - DETAILPLAN (Konkrete Durchführung)")
         print("="*70)
 
+        # Retrieval: präzisere Query mit Task + Strategie-Anfang
+        retrieval_query = f"{briefing['task']} {strategy['strategy'][:200]}"
+        retrieval_ctx = self._retrieve(retrieval_query, k=3)
+        if retrieval_ctx:
+            print("\n[📚 Vault-Retrieval für Detail-Plan...]")
+            print(retrieval_ctx)
+
         detail_prompt = f"""Du bist ein Senior Software Engineer. Erstelle den DETAILLIERTEN Durchführungsplan
 basierend auf der genehmigten Strategie.
 
@@ -248,6 +289,8 @@ ORIGINALAUFGABE:
 
 GENEHMIGTE STRATEGIE:
 {strategy['strategy']}
+
+{retrieval_ctx}
 
 Diese Phase ist KONKRET - jetzt das WIE.
 
@@ -398,6 +441,22 @@ Generiere kompletten, lauffähigen Code."""
         # LLM-Code-Review einsammeln (paralleles Reasoning oben drauf)
         review = self._render_code_review(review_future)
 
+        # Self-Healing: bei StaticValidator 🔴 die problematischen Files
+        # automatisch neu generieren lassen (max 2 Mikro-Cycles).
+        heal_log = []
+        if static_report.verdict == "🔴":
+            planned_changes, static_report, heal_log = self._self_heal_execution(
+                planned_changes, plan, briefing, static_report, review
+            )
+            if heal_log:
+                final = "🟢" if static_report.verdict == "🟢" else (
+                    "🟡" if static_report.verdict == "🟡" else "🔴 (Heal hat nicht geholfen)"
+                )
+                print(f"\n🔧 Self-Heal abgeschlossen — Verdict: {final}")
+                print(f"\n📦 ÄNDERUNGEN NACH HEAL ({len(planned_changes)} Dateien):")
+                print("="*70)
+                self._show_diff(planned_changes, full=False)
+
         result = {
             "phase": "EXECUTION",
             "code": code,
@@ -411,6 +470,7 @@ Generiere kompletten, lauffähigen Code."""
                     for f in static_report.findings
                 ],
             },
+            "self_heal": heal_log,
             "timestamp": datetime.now().isoformat(),
             "files_written": [],
             "approved": False,
@@ -543,10 +603,22 @@ Sei knapp, kein Fließtext."""
             # Fallback: ganzen Analyse-Text als Task verwenden
             followup_task = f"Fix Test-Failure aus vorheriger Iteration:\n{analysis[:500]}"
 
+        # Ampel aus Analyse extrahieren (erste 🟢/🟡/🔴 nach AMPEL-Zeile)
+        traffic_light = "🟡"  # konservativer Default
+        for line in analysis.splitlines():
+            l = line.strip()
+            if "🟢" in l:
+                traffic_light = "🟢"; break
+            if "🔴" in l:
+                traffic_light = "🔴"; break
+            if "🟡" in l:
+                traffic_light = "🟡"; break
+
         result = {
             "phase": "FAILURE_ANALYSIS",
             "analysis": analysis,
             "followup_task": followup_task,
+            "traffic_light": traffic_light,
             "timestamp": datetime.now().isoformat(),
         }
 
@@ -764,6 +836,230 @@ Regeln:
             "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
         }
 
+    def _self_heal_test_failure(self, briefing, plan, execution, verification,
+                                  failure, max_cycles: int = 2):
+        """Mikro-Heal-Loop für Test-Failures mit 🟢-Ampel: 7b patcht die
+        geänderten Files basierend auf Test-Output, schreibt direkt, re-verifiziert.
+        Kein User-Gate (selbstheilend). Max N Cycles.
+
+        Returns: (final_verification, heal_log, success_bool).
+        """
+        heal_log = []
+        files_changed = list(execution.get("files_written", []))
+        if not files_changed:
+            return verification, [{"status": "skipped",
+                                   "reason": "keine files_written"}], False
+
+        current_verification = verification
+        current_followup = failure.get("followup_task", "")
+
+        for cycle in range(1, max_cycles + 1):
+            if current_verification.get("tests_passed"):
+                return current_verification, heal_log, True
+
+            print("\n" + "█"*70)
+            print(f"🔧 TEST-FAILURE MIKRO-HEAL CYCLE {cycle}/{max_cycles}")
+            print("█"*70)
+            print(f"Fix-Anweisung: {current_followup[:200]}")
+
+            # Aktuellen Code der geänderten Files lesen
+            current_code_blocks = []
+            for fpath in files_changed:
+                p = Path(fpath)
+                if not p.exists():
+                    continue
+                try:
+                    content = p.read_text()
+                except Exception:
+                    continue
+                current_code_blocks.append(
+                    f"## Datei: {fpath}\n```python\n{content}\n```"
+                )
+            if not current_code_blocks:
+                heal_log.append({"cycle": cycle, "status": "no_readable_files"})
+                break
+
+            files_text = "\n\n".join(current_code_blocks)
+            test_out = (current_verification.get("output", "") +
+                        "\n" + current_verification.get("stderr", ""))[-2000:]
+
+            fix_prompt = f"""Du bist Senior Engineer. Tests sind nach einer Änderung fehlgeschlagen.
+PATCHE DEN CODE — schreib NUR die Files neu die wirklich repariert werden müssen.
+
+ORIGINALAUFGABE:
+{briefing['task']}
+
+FIX-ANWEISUNG aus Failure-Analyse:
+{current_followup}
+
+TEST-OUTPUT (letzte Zeilen):
+{test_out}
+
+DERZEITIGER CODE:
+{files_text}
+
+ANWEISUNG:
+- Fix den konkreten Bug der die Tests bricht
+- Behalte den Rest des Codes unverändert
+- Output-Format: ## Datei: <absoluter pfad> + ```python``` Block für JEDES geänderte File
+- Kein Fließtext, keine Erklärung — nur Code
+"""
+            print("\n[🤖 7b-Foreground patcht Code...]\n")
+            fix_code = self.qwen.generate(fix_prompt, temperature=0.0, stream=True)
+
+            fixed = self._parse_code(fix_code)
+            if not fixed:
+                heal_log.append({"cycle": cycle, "status": "no_files_parsed"})
+                break
+
+            # Sicherheit: nur Files schreiben die schon in files_changed waren
+            allowed = {str(Path(p).resolve()) for p in files_changed}
+            safe_changes = [c for c in fixed
+                            if str(Path(c["path"]).resolve()) in allowed]
+            if not safe_changes:
+                heal_log.append({"cycle": cycle, "status": "no_safe_paths",
+                                 "rejected": [c["path"] for c in fixed]})
+                break
+
+            written = self._write_code(safe_changes)
+            print(f"\n✅ {len(written)} File(s) gepatcht:")
+            for f in written:
+                print(f"   - {f}")
+
+            # Tests erneut laufen lassen
+            print("\n[🧪 Re-Verification nach Patch...]")
+            new_verification = self.phase_verification(execution)
+
+            heal_log.append({
+                "cycle": cycle,
+                "files_patched": written,
+                "tests_passed": new_verification.get("tests_passed", False),
+            })
+
+            current_verification = new_verification
+            if new_verification.get("tests_passed"):
+                return new_verification, heal_log, True
+
+            # Wenn weiterer Cycle nötig: neue Failure-Analyse für gezielte Anweisung
+            if cycle < max_cycles:
+                new_failure = self.phase_failure_analysis(
+                    briefing, execution, new_verification
+                )
+                current_followup = new_failure.get("followup_task", current_followup)
+                # Wenn die neue Ampel nicht mehr 🟢 ist → Mikro-Heal abbrechen,
+                # damit der Makro-Loop übernehmen kann.
+                if new_failure.get("traffic_light") != "🟢":
+                    heal_log.append({"cycle": cycle, "status": "escalated",
+                                     "new_traffic_light": new_failure.get("traffic_light")})
+                    break
+
+        return current_verification, heal_log, False
+
+    def _self_heal_execution(self, planned_changes, plan, briefing,
+                              static_report, review, max_cycles: int = 2):
+        """Mikro-Heal-Loop: bei StaticValidator 🔴 die betroffenen Files vom 7b
+        neu generieren lassen, re-validieren. Max N Cycles.
+
+        Returns: (new_planned_changes, new_static_report, heal_log).
+        """
+        heal_log = []
+        current_changes = list(planned_changes)
+        current_static = static_report
+
+        for cycle in range(1, max_cycles + 1):
+            if current_static.verdict != "🔴":
+                break
+
+            high = [f for f in current_static.findings if f.severity == "high"]
+            medium = [f for f in current_static.findings if f.severity == "medium"]
+
+            affected: set = set()
+            for f in high + medium:
+                loc = (f.location or "").split(":")[0].strip()
+                if loc and loc.lower() != "plan":
+                    affected.add(loc)
+
+            if not affected:
+                heal_log.append({"cycle": cycle, "status": "skipped",
+                                 "reason": "findings ohne File-Lokalisierung"})
+                break
+
+            print("\n" + "█"*70)
+            print(f"🔧 SELF-HEAL CYCLE {cycle}/{max_cycles}")
+            print("█"*70)
+            print(f"Probleme in: {sorted(affected)}")
+
+            affected_changes = [
+                c for c in current_changes
+                if any(str(c["path"]).endswith(p) or p in str(c["path"])
+                       for p in affected)
+            ]
+            if not affected_changes:
+                heal_log.append({"cycle": cycle, "status": "skipped",
+                                 "reason": "keine planned_changes zu Findings-Pfaden"})
+                break
+
+            findings_text = "\n".join(
+                f"- [{f.severity.upper()}] {f.check} @ {f.location}: {f.message}"
+                for f in high + medium
+            )
+            review_hint = ""
+            if review and "🔴" in review:
+                review_hint = f"\n\nZUSÄTZLICHE LLM-CRITIC HINWEISE:\n{review[:800]}"
+
+            files_to_fix = "\n\n".join(
+                f"## Datei: {c['path']}\n```python\n{c['content']}\n```"
+                for c in affected_changes
+            )
+            fix_prompt = f"""Du bist Senior Engineer. Im generierten Code wurden Probleme gefunden.
+SCHREIBE NUR DIE BETROFFENEN FILES NEU.
+
+ORIGINALAUFGABE:
+{briefing['task']}
+
+GEFUNDENE PROBLEME (deterministischer Static-Validator):
+{findings_text}{review_hint}
+
+DERZEITIGER CODE DER BETROFFENEN FILES:
+{files_to_fix}
+
+ANWEISUNG:
+- Fix JEDES gelistete Problem (insbesondere severity HIGH)
+- Behalte den Rest des Codes — gib NUR die betroffenen Files zurück
+- Output-Format: ## Datei: <path> + ```python``` Block
+- Kein Fließtext, keine Erklärungen
+"""
+            print("\n[🤖 7b-Foreground heilt Code...]\n")
+            fix_code = self.qwen.generate(fix_prompt, temperature=0.0, stream=True)
+
+            fixed = self._parse_code(fix_code)
+            if not fixed:
+                heal_log.append({"cycle": cycle, "status": "no_files_parsed"})
+                break
+
+            fixed_paths = {c["path"] for c in fixed}
+            current_changes = [c for c in current_changes
+                               if c["path"] not in fixed_paths] + fixed
+
+            new_static = self.static_validator.validate_code(
+                current_changes, plan.get("plan", "")
+            )
+            print("\n" + "─"*70)
+            print(f"🔧 STATIC VALIDATOR nach Heal-Cycle {cycle}")
+            print("─"*70)
+            print(new_static.render())
+            print("─"*70)
+
+            heal_log.append({
+                "cycle": cycle,
+                "old_verdict": current_static.verdict,
+                "new_verdict": new_static.verdict,
+                "files_rewritten": sorted(fixed_paths),
+            })
+            current_static = new_static
+
+        return current_changes, current_static, heal_log
+
     def _parse_code(self, code: str) -> list:
         """Parse Code-Output, gibt Liste von {path, content, exists} zurück. SCHREIBT NICHT."""
         changes = []
@@ -965,9 +1261,30 @@ Was NICHT zählt:
             failure = self.phase_failure_analysis(briefing, execution, verification)
             self.current_workflow["phases"]["failure_analysis"] = failure
 
+            # Mikro-Heal bei 🟢-Ampel: direkt patchen statt Macro-Loop
+            if failure.get("traffic_light") == "🟢":
+                new_verification, micro_log, healed = self._self_heal_test_failure(
+                    briefing, planning, execution, verification, failure
+                )
+                self.current_workflow["phases"]["test_failure_self_heal"] = {
+                    "success": healed,
+                    "cycles": micro_log,
+                }
+                if healed:
+                    # Verification ersetzen, weiter zu Phase 5
+                    verification = new_verification
+                    self.current_workflow["phases"]["verification"] = verification
+                    print("\n🟢 Mikro-Heal erfolgreich — Workflow läuft normal weiter.\n")
+                else:
+                    # Mikro-Heal hat nicht geholfen → in Makro-Loop fallen
+                    print("\n🟡 Mikro-Heal hat nicht gereicht — eskaliere zu Macro-Loop.\n")
+
             # Workflow-Log schreiben (auch die abgebrochene Iteration)
             with open(self.workflow_log, "a") as f:
                 f.write(json.dumps(self.current_workflow, default=str) + "\n")
+
+        # Wenn Mikro-Heal die Tests fixen konnte, NICHT in den Macro-Loop fallen
+        if not verification.get("tests_passed"):
 
             if iteration + 1 >= max_iterations:
                 print(f"\n🔴 Max Iterationen ({max_iterations}) erreicht. Workflow abgebrochen.\n")
