@@ -12,8 +12,10 @@ Orchestriert den kompletten Development Workflow:
 4b. FAILURE-ANALYSIS    - Bei Test-Fail: Root-Cause →      Loop zurück zu Phase 1
 5.  COMMIT              - Per Teilschritt aus Detail-Plan  ein eigener Git-Commit
 
-Plan-Phasen (1, 2a, 2b) bekommen parallel einen kritischen Validator.
-Execution bekommt parallel einen Code-Reviewer + Dry-Run-Diff-Anzeige.
+Plan-Phasen (1, 2a, 2b) bekommen parallel einen kritischen LLM-Validator.
+Detail-Plan + Execution bekommen ZUSÄTZLICH einen deterministischen
+Static-Validator (siehe static_validator.py) — der findet Syntax-Bugs,
+Imports, Security-Patterns, Plan/Code-Drift ohne LLM-Halluzination.
 Test-Fail → Qwen formuliert Korrektur-Task → neue Iteration (max 3).
 Commit-Phase splittet Änderungen in logische Teilschritte (Per-Step-Commits).
 
@@ -39,17 +41,18 @@ class WorkflowAgent:
     def __init__(self):
         # Import QwenCoder + Modell-Konstanten lokal (circular-import-Schutz)
         from terminal import QwenCoder, VALIDATOR_MODEL
+        from static_validator import StaticValidator
 
         # Foreground: großes Modell für Code-Gen / Planung (siehe terminal.MODEL)
         self.qwen = QwenCoder()
-        # Background: kleines Modell für parallelen Critic/Reviewer.
-        # Eigene HTTP-Session, kleinerer num_predict (Reviews sind kurz),
-        # keep_alive lang damit Modell nicht zwischen Aufrufen entlädt.
+        # Background: kleines Modell für parallelen LLM-Critic.
         self.validator_qwen = QwenCoder(
             model=VALIDATOR_MODEL,
             num_predict=768,
             keep_alive="60m",
         )
+        # Deterministischer Static-Validator (kein LLM, keine Halluzination).
+        self.static_validator = StaticValidator(project_root=Path(__file__).parent)
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
         self.root = Path(__file__).parent
@@ -271,13 +274,30 @@ Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
             f"AUFGABE: {briefing['task']}\n\nGENEHMIGTE STRATEGIE:\n{strategy['strategy']}"
         )
 
-        # Validation einsammeln
+        # Validation einsammeln (LLM-Critic)
         validation = self._render_validation(validation_future)
+
+        # Deterministischer Plan-Check (Struktur + Spezifität)
+        plan_report = self.static_validator.validate_plan(plan, plan_kind="detail")
+        if plan_report.findings:
+            print("\n" + "─"*70)
+            print("🔧 STATIC PLAN-CHECK (deterministisch)")
+            print("─"*70)
+            print(plan_report.render())
+            print("─"*70)
 
         result = {
             "phase": "PLANNING_DETAILED",
             "plan": plan,
             "validation": validation,
+            "static_validation": {
+                "verdict": plan_report.verdict,
+                "findings": [
+                    {"severity": f.severity, "check": f.check,
+                     "location": f.location, "message": f.message}
+                    for f in plan_report.findings
+                ],
+            },
             "strategy_ref": strategy.get("strategy", ""),
             "timestamp": datetime.now().isoformat(),
             "approved": False
@@ -357,7 +377,7 @@ Generiere kompletten, lauffähigen Code."""
         # Parse OHNE zu schreiben (Dry-Run)
         planned_changes = self._parse_code(code)
 
-        # Parallel: Code-Reviewer startet (nach Stream-Ende)
+        # Parallel: LLM-Code-Reviewer startet (nach Stream-Ende)
         review_future = self._start_code_review(code, plan, briefing['task'])
 
         # Strukturierter Diff
@@ -365,7 +385,17 @@ Generiere kompletten, lauffähigen Code."""
         print("="*70)
         self._show_diff(planned_changes, full=False)
 
-        # Code-Review einsammeln
+        # Deterministischer Static-Validator — läuft sofort, keine LLM-Halluzination
+        static_report = self.static_validator.validate_code(
+            planned_changes, plan.get("plan", "")
+        )
+        print("\n" + "─"*70)
+        print("🔧 STATIC VALIDATOR (deterministisch)")
+        print("─"*70)
+        print(static_report.render())
+        print("─"*70)
+
+        # LLM-Code-Review einsammeln (paralleles Reasoning oben drauf)
         review = self._render_code_review(review_future)
 
         result = {
@@ -373,6 +403,14 @@ Generiere kompletten, lauffähigen Code."""
             "code": code,
             "planned_changes": [{"path": c["path"], "exists": c["exists"], "lines": len(c["content"].splitlines())} for c in planned_changes],
             "code_review": review,
+            "static_validation": {
+                "verdict": static_report.verdict,
+                "findings": [
+                    {"severity": f.severity, "check": f.check,
+                     "location": f.location, "message": f.message}
+                    for f in static_report.findings
+                ],
+            },
             "timestamp": datetime.now().isoformat(),
             "files_written": [],
             "approved": False,
