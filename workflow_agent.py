@@ -170,20 +170,27 @@ Erstelle die {kind} NEU unter strikter Beachtung des Feedbacks.
 """
 
     def _retrieve(self, query: str, k: int = 3, max_snippet: int = 500) -> str:
-        """Holt relevante Code-Snippets aus dem Vault und formatiert sie kompakt.
-        Bei Fehler oder fehlendem Retriever: leerer String."""
+        """Holt allgemeine CS-Konzepte aus dem Vault (Wikipedia/RFCs/PEPs).
+
+        ⚠️  Der Vault enthält KEIN Projekt-Code — nur Enzyklopädie-Wissen.
+        Für Projekt-Code: _extract_code_overview() / _read_focused_files() nutzen.
+        """
         if not self.retriever:
             return ""
         try:
             docs, _, _ = self.retriever.search(query, k=k)
             if not docs:
                 return ""
-            lines = ["RELEVANTE CODE-STELLEN FÜR KONTEXT:"]
+            lines = [
+                "📚 ALLGEMEINES CS-WISSEN (Wikipedia/RFCs/PEPs — kein Projektcode!):",
+                "(Nutze nur als Konzept-Refresh, NICHT als Quelle für Datei-/Funktionsnamen)",
+            ]
             for i, doc in enumerate(docs, 1):
                 title = doc.get("title", "unknown")
+                source = doc.get("source", "?")
                 distance = doc.get("distance", 0)
                 content = doc.get("content", "")[:max_snippet]
-                lines.append(f"\n[{i}] {title} (dist={distance:.1f}):")
+                lines.append(f"\n[{i}] {title} (src={source}, dist={distance:.1f}):")
                 lines.append(f"    {content}")
             return "\n".join(lines)
         except Exception:
@@ -194,34 +201,55 @@ Erstelle die {kind} NEU unter strikter Beachtung des Feedbacks.
     # =========================================================================
 
     def phase_briefing(self, task: str) -> dict:
-        """Phase 1: Analyse der Aufgabe + Projektstruktur."""
+        """Phase 1: Analyse der Aufgabe + ECHTER PROJEKTCODE."""
         print("\n" + "="*70)
         print("PHASE 1: BRIEFING")
         print("="*70)
         print(f"\n📝 Aufgabe: {task}\n")
 
-        # Sammle Projektinfo
+        # Sammle Projektinfo + ECHTEN CODE (gegen Halluzinationen)
         project_info = self._gather_project_info()
+        print("[📂 Lese Projektcode...]")
+        code_overview = self._extract_code_overview()
+        focused_files = self._read_focused_files(task)
+        print(f"   Übersicht: {code_overview.count('📄')} Dateien strukturiert")
+        print(f"   Volle Inhalte: {focused_files.count('═══')//2} Dateien gelesen\n")
 
         # Qwen analysiert
-        analysis_prompt = f"""Du bist ein Senior Code-Architekt. Analysiere diese Aufgabe und das Projekt:
+        analysis_prompt = f"""Du bist ein Senior Code-Architekt. Analysiere diese Aufgabe und das ECHTE Projekt:
 
 AUFGABE:
 {task}
 
-PROJEKTSTRUKTUR:
+PROJEKTSTRUKTUR (Metadata):
 {json.dumps(project_info, indent=2, default=str)}
+
+═══════════════════════════════════════════════════════════════════
+📋 CODE-ÜBERSICHT (alle .py-Dateien, AST-extrahiert — NICHT erfinden!):
+═══════════════════════════════════════════════════════════════════
+{code_overview}
+
+═══════════════════════════════════════════════════════════════════
+📄 VOLLER CODE der task-relevanten Dateien (verbindlich, NICHT erfinden!):
+═══════════════════════════════════════════════════════════════════
+{focused_files}
+
+═══════════════════════════════════════════════════════════════════
+
+WICHTIG:
+- Nur Dateien/Funktionen/Klassen erwähnen, die OBEN tatsächlich auftauchen.
+- Wenn die Aufgabe sich auf "vibelike.py" o.ä. bezieht, das aber NICHT in der Übersicht steht — explizit darauf hinweisen.
 
 Antworte mit einer Analyse:
 1. Verstehen Sie die Aufgabe korrekt?
-2. Welche Komponenten sind betroffen? (nutze den MITGEBRACHTEN KONTEXT wenn vorhanden)
-3. Wie passt es ins bestehende System?
+2. Welche KONKRETEN Dateien/Komponenten aus der Übersicht oben sind betroffen?
+3. Wie passt es ins bestehende System? (mit Verweisen auf konkrete Klassen/Funktionen)
 4. Gibt es Abhängigkeiten oder Konflikte?
 5. Welche Risiken sehen Sie?
 
-Sei präzise und technisch."""
+Sei präzise und technisch. Zitiere echten Code wo möglich."""
 
-        print("[🤖 Qwen analysiert...]\n")
+        print("[🤖 Qwen analysiert (mit ECHTEM Code)...]\n")
         analysis = self.qwen.generate(analysis_prompt, temperature=0.3, stream=True)
 
         # Parallel: Validator startet, nachdem Stream fertig ist
@@ -237,6 +265,8 @@ Sei präzise und technisch."""
             "analysis": analysis,
             "validation": validation,
             "project_info": project_info,
+            "code_overview": code_overview,
+            "focused_files": focused_files,
         }
         return result
 
@@ -253,11 +283,14 @@ Sei präzise und technisch."""
         print("PHASE 2A: PLANNING - STRATEGIE (Allgemeines Vorgehen)")
         print("="*70)
 
-        # Retrieval: relevante Code-Stellen für Task-Kontext (einmalig)
+        # Retrieval: allgemeine CS-Konzepte (Vault hat kein Projektcode!)
         retrieval_ctx = self._retrieve(briefing['task'], k=3)
         if retrieval_ctx:
-            print("\n[📚 Vault-Retrieval lädt relevant code...]")
+            print("\n[📚 Vault-Retrieval (allgemeines CS-Wissen)...]")
             print(retrieval_ctx)
+
+        # Echter Projektcode aus Briefing (gegen Halluzinationen)
+        code_overview = briefing.get("code_overview", "")
 
         feedback_history: list[str] = []
         previous_strategy = ""
@@ -273,9 +306,13 @@ Sei präzise und technisch."""
 ANALYSE:
 {briefing['analysis']}
 
+📋 ECHTE PROJEKT-CODE-ÜBERSICHT (AST-extrahiert, verbindlich):
+{code_overview}
+
 {retrieval_ctx}
 
 Diese Phase ist HIGH-LEVEL - noch KEINE konkreten Dateien/Funktionen.
+WICHTIG: Beziehe dich nur auf Dateien/Klassen die in der Übersicht oben tatsächlich existieren.
 
 Beantworte:
 1. ANSATZ: Welche grundsätzliche Strategie? (z.B. neuer Service, Erweiterung, Refactoring)
@@ -346,12 +383,16 @@ Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS u
         print("PHASE 2B: PLANNING - DETAILPLAN (Konkrete Durchführung)")
         print("="*70)
 
-        # Retrieval: präzisere Query mit Task + Strategie-Anfang (einmalig)
+        # Retrieval: allgemeine CS-Konzepte (Vault hat kein Projektcode!)
         retrieval_query = f"{briefing['task']} {strategy['strategy'][:200]}"
         retrieval_ctx = self._retrieve(retrieval_query, k=3)
         if retrieval_ctx:
-            print("\n[📚 Vault-Retrieval für Detail-Plan...]")
+            print("\n[📚 Vault-Retrieval für Detail-Plan (allgemeines CS-Wissen)...]")
             print(retrieval_ctx)
+
+        # Echter Projektcode aus Briefing (gegen Halluzinationen)
+        code_overview = briefing.get("code_overview", "")
+        focused_files = briefing.get("focused_files", "")
 
         feedback_history: list[str] = []
         previous_plan = ""
@@ -371,9 +412,20 @@ ORIGINALAUFGABE:
 GENEHMIGTE STRATEGIE:
 {strategy['strategy']}
 
+📋 ECHTE PROJEKT-CODE-ÜBERSICHT (AST-extrahiert, verbindlich — NICHT erfinden!):
+{code_overview}
+
+📄 VOLLER CODE relevanter Dateien (verbindliche Quelle):
+{focused_files}
+
 {retrieval_ctx}
 
 Diese Phase ist KONKRET - jetzt das WIE.
+
+WICHTIG:
+- Nur Dateien planen, die in der Übersicht oben existieren (für Modifikationen) ODER explizit als NEU markieren.
+- Zeilen-Nummern nur angeben wenn aus dem vollen Code oben verifizierbar.
+- Keine erfundenen Pfade wie "vibelike.py" wenn nicht existent.
 
 Erstelle einen Plan mit:
 1. BETROFFENE DATEIEN (exakte Pfade, ggf. mit Zeilen-Nummern)
@@ -950,11 +1002,99 @@ Regeln:
         """Sammle Projektstruktur-Info (alle Pfade als str für JSON-Serialisierung)."""
         return {
             "root": str(self.root),
-            "main_files": [p.name for p in sorted(self.root.glob("*.py"))[:10]],
+            "main_files": [p.name for p in sorted(self.root.glob("*.py"))[:20]],
             "has_tests": (self.root / "tests").exists(),
             "has_git": (self.root / ".git").exists(),
             "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
         }
+
+    def _extract_code_overview(self, max_files: int = 25) -> str:
+        """AST-basierte Übersicht aller .py Dateien (Modul-Docstring + Klassen + Funktionen)."""
+        import ast as _ast
+
+        py_files = sorted(self.root.glob("*.py"))[:max_files]
+        sections = []
+
+        for f in py_files:
+            try:
+                src = f.read_text()
+                tree = _ast.parse(src)
+            except Exception:
+                continue
+
+            items: list[str] = []
+            doc = _ast.get_docstring(tree)
+            if doc:
+                first_line = doc.strip().splitlines()[0][:130]
+                items.append(f'  """{first_line}"""')
+
+            for node in tree.body:
+                if isinstance(node, _ast.ClassDef):
+                    methods = [
+                        m.name for m in node.body
+                        if isinstance(m, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                    ]
+                    items.append(
+                        f"  class {node.name}: {', '.join(methods[:8])}"
+                        + (f" (+{len(methods)-8})" if len(methods) > 8 else "")
+                    )
+                elif isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                    args = [a.arg for a in node.args.args if a.arg != "self"]
+                    items.append(f"  def {node.name}({', '.join(args)})")
+
+            if items:
+                size_kb = f.stat().st_size / 1024
+                sections.append(f"\n📄 {f.name} ({size_kb:.1f} KB):")
+                sections.extend(items[:20])
+                if len(items) > 20:
+                    sections.append(f"  ... +{len(items)-20} weitere")
+
+        return "\n".join(sections) if sections else "(kein Python-Code gefunden)"
+
+    def _read_focused_files(self, task: str, max_files: int = 4,
+                            max_chars: int = 5000) -> str:
+        """Liest volle Inhalte der task-relevanten Dateien.
+
+        Heuristik: Filenamen im Task-Text erwähnt + core-files als Fallback.
+        """
+        core_files = ["terminal.py", "workflow_agent.py", "validator2.py",
+                      "ossifikat_audit_bridge.py"]
+
+        # 1. Im Task explizit erwähnte Dateien
+        mentioned: list[str] = []
+        task_lower = task.lower()
+        for p in self.root.glob("*.py"):
+            if p.name.lower() in task_lower or p.stem.lower() in task_lower:
+                mentioned.append(p.name)
+
+        # 2. Bei /vibelike, /quelibrium, /ossifikat → entsprechende Dateien priorisieren
+        if "/vibelike" in task_lower or "vibelike" in task_lower:
+            mentioned.extend(["terminal.py", "workflow_agent.py"])
+        if "validator" in task_lower:
+            mentioned.append("validator2.py")
+        if "ossifikat" in task_lower:
+            mentioned.append("ossifikat_audit_bridge.py")
+
+        # 3. Dedupe + Fallback
+        selected = list(dict.fromkeys(mentioned + core_files))[:max_files]
+
+        sections = []
+        for fname in selected:
+            f = self.root / fname
+            if not f.exists():
+                continue
+            try:
+                content = f.read_text()
+            except Exception:
+                continue
+
+            total = len(content)
+            if total > max_chars:
+                content = content[:max_chars] + f"\n... [gekürzt — Datei hat insgesamt {total:,} chars]"
+
+            sections.append(f"\n═══ {fname} ═══\n{content}")
+
+        return "\n".join(sections) if sections else ""
 
     def _self_heal_test_failure(self, briefing, plan, execution, verification,
                                   failure, max_cycles: int = 2):
