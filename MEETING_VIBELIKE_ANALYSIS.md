@@ -62,6 +62,193 @@ VRAM-Constraint: 8 GB → Ollama swappt Reasoning↔Coder zwischen Phasen (~5-10
 
 ---
 
+## 2a. Quelibrium — Detailbild
+
+**Was es ist:** Eigenständiges Retrieval-Framework mit chaos-basiertem Suchverfahren.
+Lebt in `framework/quelibrium/` (~950 LOC). Eigenständig nutzbar, aber tief in
+Vibelike integriert über die `CodeRetriever`-Klasse in `terminal.py`.
+
+**Architektur:**
+
+```
+framework/quelibrium/
+├── core/
+│   ├── vault.py      (86 LOC)  — Verschlüsselter Storage-Container
+│   ├── protocol.py   (272 LOC) — Doc-Storage + raw_search Interface
+│   └── paths.py      (24 LOC)  — Pfad-Konstanten
+└── intelligence/
+    ├── resonance.py  (283 LOC) — ResonanceField (Lorenz-State-Warp)
+    └── retrieval.py  (285 LOC) — ChaosRetrieval (chaos-augmented search)
+```
+
+**Distinktives Merkmal:** "Chaos Retrieval" — die Suche wird durch ein Lorenz-
+Attractor-System "verzerrt" (Warp), das eine sich kontinuierlich ändernde
+Bias-Funktion in die Vector-Search einbringt. Die Idee: gleiche Query gibt zu
+unterschiedlichen Zeiten unterschiedliche (aber konsistent verwandte) Ergebnisse.
+
+**Datenbasis (aktuell):**
+- `data/code_archive.monolith` — verschlüsselter Vault, 882 Dokumente
+- `data/code_embedding_cache.pkl` — Embedding-Cache
+- Embedding-Modell: `paraphrase-multilingual-MiniLM-L12-v2` (CUDA wenn verfügbar)
+
+**Inhaltliche Realität:** 882 Docs verteilen sich auf:
+- 164× WIKI_CS_TOOLS, 103× WIKI_CS_ADVANCED, 100× WIKI_CS_BASICS, …
+- 70× IETF_RFC, 43× PYTHON_PEP, 4× RUST_OFFICIAL, …
+- **0× Projekt-spezifischer Code**
+
+→ Heißt: Quelibrium hat eine **allgemeine CS-Enzyklopädie**, aber keinen Vibelike-Code.
+Das macht das Retrieval für Workflow-Phasen weitgehend nutzlos (Wikipedia-Artikel
+über "Cross-site scripting" beim XSS-Check-Task — formal verwandt, praktisch irrelevant).
+
+**Integration in Vibelike:**
+
+```python
+# terminal.py: CodeRetriever
+self.protocol = Protocol(vault_file=CODE_VAULT_FILE, ...)
+self.encoder = SentenceTransformer(EMBEDDING_MODEL, ...)
+self.resonance_field = ResonanceField()
+self.chaos_retrieval = ChaosRetrieval(protocol=self.protocol, field=self.resonance_field)
+
+# workflow_agent.py: _retrieve() wird in jeder Planning-Phase aufgerufen
+retrieval_ctx = self._retrieve(query, k=3)
+```
+
+**Status:** Funktioniert technisch (15-20ms pro Query), aber inhaltlich verfehlt.
+Im Workflow wird Retrieval-Output klar gelabelt als "ALLGEMEINES CS-WISSEN
+(kein Projektcode)" — damit Qwen nicht halluziniert.
+
+**Offene Punkte (Quelibrium-spezifisch):**
+
+| ID | Frage |
+|----|-------|
+| Q1 | Sollen wir einen lokalen Code-Harvester bauen damit Vault tatsächlich Projekt-Code enthält? |
+| Q2 | Macht "Chaos Retrieval" für deterministische Code-Suche überhaupt Sinn, oder ist klassische Cosine-Search hier passender? |
+| Q3 | ResonanceField-Mechanik (Lorenz-Warp) — Forschungs-Spielwiese oder produktives Feature? |
+| Q4 | Quelibrium als eigenständiges OSS-Projekt veröffentlichen, oder Sub-Modul von Vibelike behalten? |
+| Q5 | Embedding-Modell-Update — `paraphrase-multilingual-MiniLM-L12-v2` ist 2021, neuere Modelle könnten besser sein |
+
+---
+
+## 2b. Ossifikat — Detailbild
+
+**Was es ist:** Knowledge-Triple-Store mit "Staging Ossification" — neue Fakten
+landen im Staging, brauchen menschliche Bestätigung, ossifizieren dann in den
+Hauptstore. Eigenständiges Modul in `ossifikat/` (~2468 LOC inkl. Tests).
+
+**Architektur:**
+
+```
+ossifikat/
+├── ossifikat/
+│   ├── store.py             — OssifikatStore (SQLite + staging/confirmed)
+│   ├── extractor.py         — Triple-Extraktion aus Text
+│   ├── schema.py            — Triple-Schema, Funktionalitäts-Constraints
+│   ├── cli.py               — `ossifikat review` Command
+│   └── audit/
+│       ├── view.py          — AuditView (Read-only Query Interface)
+│       ├── finding.py       — AuditFinding-Dataclass
+│       └── checks/
+│           ├── orphan_retracts.py            (34 LOC)
+│           ├── functional_conflicts.py       (74 LOC)
+│           └── unclassified_predicates.py    (64 LOC)
+└── tests/                   — 1149 LOC Tests
+```
+
+**Distinktives Merkmal:** "Staging Ossification" — jede Behauptung muss erst
+bestätigt werden, bevor sie als Wahrheit gilt. Triples die zurückgezogen
+(retracted) werden ohne dass sie je bestätigt wurden = "orphan_retracts" —
+ein Audit-Signal.
+
+**Audit-Checks (das ist was Vibelike nutzt):**
+
+| Check | Was findet er | Confidence |
+|-------|---------------|------------|
+| `orphan_retract` | Triple zurückgezogen ohne je bestätigt zu sein | 0.5–1.0 |
+| `functional_conflict` | Funktionale Prädikate mit widersprüchlichen Werten | 1.0 |
+| `unclassified_predicate` | Prädikate ohne semantische Klassifikation | 0.4 |
+
+**Integration in Vibelike:**
+
+```python
+# ossifikat_audit_bridge.py (~161 LOC)
+from ossifikat.audit import AuditView, find_orphan_retracts, \
+    find_functional_predicate_conflicts, find_unclassified_predicates
+
+bridge = OssifikatAuditBridge(ossifikat_db_path)
+report = bridge.run_all_audits()  # → ExtendedReport mit Findings
+
+# In validator2.py: validate_full() kombiniert mit Code+Plan
+report = validator.validate_full(changes, plan, ossifikat_db=db_path)
+# → 3-Layer-Report (Code + Plan + Knowledge-Graph)
+```
+
+**Datenbasis (aktuell):**
+- `ossifikat/data/ossifikat.db` — SQLite mit staging/confirmed Triples
+- Wird von Vibelike-Tests gefüllt (TerminalAdapter, HarvestAdapter)
+
+**Status:** Funktional sehr solide. Eigene Test-Suite (1149 LOC) deckt
+extractor, store, audit ab. Die Bridge in Vibelike ist getestet im
+`test_ossifikat_pipeline.py` (alle 3-Part-Tests bestehen).
+
+**Distinktive Position:** Ossifikat ist **das einzige Modul** das schon einen
+"Truth/Consistency"-Mechanismus hat — die Audit-Checks sind genau das was
+das `inkonsistence.md`-Konzept als "Widerspruchs-Signal" beschreibt.
+
+**Offene Punkte (Ossifikat-spezifisch):**
+
+| ID | Frage |
+|----|-------|
+| O1 | Soll der Workflow Triples AUTOMATISCH ins Staging schreiben, oder bleibt's manuell? |
+| O2 | Self-Healing-Loop: könnte Audit-Findings als Trigger für Plan-Revision nutzen — aktuell nur Read-Only-Reports |
+| O3 | Ossifikat als unabhängiges OSS-Projekt veröffentlichen? (eigener `pyproject.toml`, eigene Tests, eigene README sind da) |
+| O4 | Verbindung zu inkonsistence-Konzept: Healthpoint als Triple, Audits als Gate-Trigger — ist das der natürliche Pfad? |
+| O5 | TerminalAdapter / HarvestAdapter — wo gehören die hin? Aktuell in `adapters/`, könnte aber `ossifikat/integrations/` sein |
+
+---
+
+## 2c. Beziehungen zwischen Vibelike, Quelibrium, Ossifikat
+
+```
+                ┌─────────────────────────────────────────────────┐
+                │           VIBELIKE WORKFLOW                     │
+                │  (workflow_agent.py, terminal.py, validator2)   │
+                └────┬──────────────────────┬───────────────┬─────┘
+                     │                      │               │
+                     │ nutzt                │ nutzt         │ nutzt
+                     ↓                      ↓               ↓
+       ┌─────────────────────┐  ┌──────────────────┐  ┌──────────────┐
+       │    QUELIBRIUM       │  │    OSSIFIKAT     │  │   ADAPTERS   │
+       │  Chaos Retrieval    │  │ Triple-Store +   │  │ (Brücke zw.  │
+       │  + Vault            │  │ Audit-Checks     │  │  vibelike +  │
+       │                     │  │                  │  │  ossifikat)  │
+       │  framework/         │  │  ossifikat/      │  │  adapters/   │
+       │  quelibrium/        │  │  (eigene Tests + │  │              │
+       │  (eigenständig      │  │   eigene README) │  │              │
+       │   nutzbar)          │  │                  │  │              │
+       └─────────────────────┘  └──────────────────┘  └──────────────┘
+                                                              │
+                                                              │ enthält
+                                                              ↓
+                                                  ┌───────────────────────┐
+                                                  │ TerminalAdapter       │
+                                                  │ HarvestAdapter        │
+                                                  │ ToolsAdapter          │
+                                                  └───────────────────────┘
+```
+
+**Wichtig:** Quelibrium und Ossifikat sind beide **eigenständige Module mit
+eigenen Tests und APIs**. Vibelike ist eine **Integrations-Schicht** darüber —
+die Workflow-Orchestrierung kombiniert sie mit LLM-Calls.
+
+Das wirft eine strategische Frage auf:
+
+**Sind das DREI Projekte oder EINES?**
+
+- Argument für eines: enge Integration, geteilte Daten, gemeinsame UX
+- Argument für drei: Quelibrium und Ossifikat sind generisch nutzbar; Vibelike-spezifische Integration steht im Weg ihrer Wiederverwendung in anderen Projekten
+
+---
+
 ## 3. Komponenten-Status
 
 | Komponente | Größe | Status | Bemerkung |
@@ -121,8 +308,10 @@ Implementation-Pipeline" — fundamentaler als ursprünglich gedacht.
 | ID | Problem | Status |
 |----|---------|--------|
 | P1 | **1.5b Critic ist zu schwach** — echoed Input, leakt Prompt-Templates | Hardening (Filter) statt Lösung |
-| P2 | **Vault enthält 0 Projekt-Code** — 882 docs sind nur Wikipedia/RFC/PEP | Workaround durch direct file read; harvester für Projekt-Code fehlt |
-| P3 | **2 konkurrierende Validatoren** — static_validator.py vs validator2.py vs static_validator_v2.py | Aufräumen: einen behalten, andere entfernen |
+| P2 | **Quelibrium-Vault enthält 0 Projekt-Code** — 882 docs sind nur Wikipedia/RFC/PEP | Workaround durch direct file read; lokaler Code-Harvester fehlt |
+| P3 | **2-3 konkurrierende Validatoren** — static_validator.py vs validator2.py vs static_validator_v2.py | Aufräumen: einen behalten, andere entfernen |
+| P12 | **Templates bestimmen nur Phase-Routing, nicht Prompt-Inhalt** — IMPLEMENTATION-Briefing fragt wie ANALYSIS | Task-Type-Aware Prompts pro Phase nötig |
+| P13 | **Ossifikat-Audits sind Read-Only** — Audit-Findings triggern keine automatische Plan-Revision im Workflow | Self-Heal-Loop könnte Audit-Findings als Signal nutzen |
 
 ### 5.2 🟡 Architektur-Schulden
 
@@ -175,13 +364,28 @@ Gemessen am `test_complete_stack_integration.py` + `test_ossifikat_pipeline.py`:
 
 **Frage:** Konsolidieren oder einer als Migrations-Brücke?
 
-### Entscheidung 2: Vault-Strategie
+### Entscheidung 2: Quelibrium-Vault-Strategie
 - Aktuell: 882 Wikipedia/RFC/PEP-Docs für Code-Retrieval = mostly noise
 - Option A: Lokaler Code-Harvester (Projekt-Files in Vault einbetten)
 - Option B: Vault nur für CS-Konzepte, lokaler Code via direct read (aktuell)
 - Option C: Vault loswerden für Workflow, beibehalten für Quelibrium-Standalone
+- Option D: Quelibrium komplett aus Workflow rausnehmen, Chaos-Retrieval bleibt
+  Standalone-Feature für andere Use-Cases
 
 **Frage:** Welcher Weg? Code-Harvester wäre ~200 LOC + Embedding-Run.
+
+### Entscheidung 2a: Modul-Grenzen — drei Projekte oder eins?
+
+Quelibrium und Ossifikat haben **eigene** README, eigene Tests, eigene pyproject.toml.
+Sie sind in `vibelike/` eingebettet (framework/quelibrium, ossifikat/) aber
+funktional **unabhängig nutzbar**.
+
+- Option A: Bleiben Sub-Module von Vibelike (status quo) — einfach, gekoppelt
+- Option B: Als eigenständige OSS-Projekte rauslösen, Vibelike als Konsument
+- Option C: Hybrid — Vibelike-Repo + git-subtree zu separaten Repos
+
+**Frage:** Strategische Frage für die nächsten 6 Monate — wenn Vibelike wächst,
+wo soll der "Reuse Boundary" liegen?
 
 ### Entscheidung 3: Critic-Strategie
 - Aktuell: qwen2.5-coder:1.5b → zu schwach, echoed
@@ -248,6 +452,10 @@ gehört es in ein separates Projekt?
   zu früh / nicht passend für den Workflow?
 - Single-Healthpoint vs. verteilte Goals — welcher Style passt zu LLM-Workflows?
 - **Quelibrium**-Integration: nur als Retriever oder tiefer (Embeddings im Workflow)?
+- **Ossifikat**-Integration: Read-Only-Audits (aktuell) vs. Write-Path
+  (Workflow speichert Triples + reagiert auf Konflikte)?
+- **Drei-Projekt-Frage:** Vibelike als Mono-Repo vs. Vibelike+Quelibrium+Ossifikat
+  als separate OSS-Projekte mit Vibelike als Konsument?
 
 ### Modell-Strategie
 - Local-only oder hybrid local+cloud?
