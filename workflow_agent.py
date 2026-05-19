@@ -41,7 +41,7 @@ class WorkflowAgent:
     def __init__(self):
         # Import QwenCoder + Modell-Konstanten lokal (circular-import-Schutz)
         from terminal import QwenCoder, VALIDATOR_MODEL, CodeRetriever
-        from static_validator import StaticValidator
+        from validator2 import StaticValidatorV2
 
         # Retriever für Code-Vault-Integration in Planning-Phasen
         try:
@@ -58,7 +58,7 @@ class WorkflowAgent:
             keep_alive="60m",
         )
         # Deterministischer Static-Validator (kein LLM, keine Halluzination).
-        self.static_validator = StaticValidator(project_root=Path(__file__).parent)
+        self.static_validator = StaticValidatorV2()
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
         self.root = Path(__file__).parent
