@@ -146,7 +146,29 @@ SCHLECHTE Kritikpunkte (nicht so):
         if len(partial) > 800:
             partial = partial[:800] + "\n[... gekürzt — Validator-Echo unterdrückt]"
 
-        return partial.strip() or "🟢"
+        partial = partial.strip() or "🟢"
+
+        # 4. Emoji-Normalisierung: erste Zeile MUSS mit 🟢/🟡/🔴 starten
+        lines = partial.splitlines()
+        if lines:
+            first = lines[0].strip()
+            if not first.startswith(("🟢", "🟡", "🔴")):
+                # Mappe häufige Falsch-Emojis auf passende Ampel
+                negative = ("❌", "✗", "x", "X", "🚫", "⛔", "💥")
+                warning = ("⚠️", "⚠", "❗", "❓", "?")
+                positive = ("✅", "✓", "✔", "👍")
+                if any(first.startswith(s) for s in negative):
+                    lines[0] = "🔴 " + first.lstrip("❌✗xX🚫⛔💥 ").strip() or "🔴 Validator-Output unverständlich (Format-Verstoß)"
+                elif any(first.startswith(s) for s in warning):
+                    lines[0] = "🟡 " + first.lstrip("⚠️⚠❗❓? ").strip() or "🟡 Validator unsicher"
+                elif any(first.startswith(s) for s in positive):
+                    lines[0] = "🟢"
+                else:
+                    # Komplett unbekanntes Format → 🟡 als safe default
+                    lines[0] = f"🟡 Validator-Format unklar: {first[:80]}"
+            partial = "\n".join(lines)
+
+        return partial
 
     def _render_validation(self, validation_future: concurrent.futures.Future,
                              reviewed: str = "") -> str:
@@ -264,11 +286,21 @@ Erstelle die {kind} NEU unter strikter Beachtung des Feedbacks.
         print("[📂 Lese Projektcode...]")
         code_overview = self._extract_code_overview()
         focused_files = self._read_focused_files(task)
+        authoritative = self._authoritative_file_list()
         print(f"   Übersicht: {code_overview.count('📄')} Dateien strukturiert")
         print(f"   Volle Inhalte: {focused_files.count('═══')//2} Dateien gelesen\n")
 
-        # Qwen analysiert
-        analysis_prompt = f"""Du bist ein Senior Code-Architekt. Analysiere diese Aufgabe und das ECHTE Projekt:
+        # Qwen analysiert — Authoritative File List ZUERST + ZULETZT (Sandwich)
+        analysis_prompt = f"""Du bist ein Senior Code-Architekt. Analysiere diese Aufgabe.
+
+═══════════════════════════════════════════════════════════════════
+🚨 VERBINDLICHE DATEILISTE — DAS SIND DIE EINZIGEN EXISTIERENDEN .py DATEIEN:
+═══════════════════════════════════════════════════════════════════
+{authoritative}
+
+⚠️  Jeder andere Dateiname (z.B. "workflow_manager.py", "vibelike.py", "plugin_manager.py")
+    ist eine HALLUZINATION und macht deine Analyse unbrauchbar.
+═══════════════════════════════════════════════════════════════════
 
 AUFGABE:
 {task}
@@ -276,30 +308,25 @@ AUFGABE:
 PROJEKTSTRUKTUR (Metadata):
 {json.dumps(project_info, indent=2, default=str)}
 
-═══════════════════════════════════════════════════════════════════
-📋 CODE-ÜBERSICHT (alle .py-Dateien, AST-extrahiert — NICHT erfinden!):
-═══════════════════════════════════════════════════════════════════
+CODE-ÜBERSICHT (AST-extrahiert):
 {code_overview}
 
-═══════════════════════════════════════════════════════════════════
-📄 VOLLER CODE der task-relevanten Dateien (verbindlich, NICHT erfinden!):
-═══════════════════════════════════════════════════════════════════
+VOLLER CODE relevanter Dateien:
 {focused_files}
 
 ═══════════════════════════════════════════════════════════════════
-
-WICHTIG:
-- Nur Dateien/Funktionen/Klassen erwähnen, die OBEN tatsächlich auftauchen.
-- Wenn die Aufgabe sich auf "vibelike.py" o.ä. bezieht, das aber NICHT in der Übersicht steht — explizit darauf hinweisen.
+🚨 ERINNERUNG — verwende NUR diese Dateinamen:
+{authoritative}
+═══════════════════════════════════════════════════════════════════
 
 Antworte mit einer Analyse:
 1. Verstehen Sie die Aufgabe korrekt?
-2. Welche KONKRETEN Dateien/Komponenten aus der Übersicht oben sind betroffen?
-3. Wie passt es ins bestehende System? (mit Verweisen auf konkrete Klassen/Funktionen)
+2. Welche KONKRETEN Dateien (aus der Liste oben!) sind betroffen?
+3. Wie passt es ins bestehende System? (echte Klassen/Funktionen aus der Übersicht)
 4. Gibt es Abhängigkeiten oder Konflikte?
 5. Welche Risiken sehen Sie?
 
-Sei präzise und technisch. Zitiere echten Code wo möglich."""
+Sei präzise. Wenn du eine Datei nennst die nicht in der Liste oben steht — STOP, prüfe nochmal."""
 
         print("[🤖 Qwen analysiert (mit ECHTEM Code)...]\n")
         analysis = self.qwen.generate(analysis_prompt, temperature=0.3, stream=True)
@@ -309,6 +336,16 @@ Sei präzise und technisch. Zitiere echten Code wo möglich."""
 
         # Validation einsammeln (User-Lesezeit überlappt mit Validator-Run)
         validation = self._render_validation(validation_future, reviewed=analysis)
+
+        # Anti-Halluzinations-Check: erfundene Dateinamen in der Analyse?
+        hallucinated = self._detect_hallucinated_files(analysis)
+        if hallucinated:
+            print("\n" + "🔴"*35)
+            print("🔴 HALLUZINATIONS-WARNUNG: Briefing erwähnt nicht-existente Dateien:")
+            for fname in hallucinated:
+                print(f"🔴   - {fname}")
+            print("🔴 → Bei nächster Phase mit 'änderungen' korrigieren lassen!")
+            print("🔴"*35)
 
         result = {
             "phase": "BRIEFING",
@@ -343,6 +380,7 @@ Sei präzise und technisch. Zitiere echten Code wo möglich."""
 
         # Echter Projektcode aus Briefing (gegen Halluzinationen)
         code_overview = briefing.get("code_overview", "")
+        authoritative = self._authoritative_file_list()
 
         feedback_history: list[str] = []
         previous_strategy = ""
@@ -354,17 +392,25 @@ Sei präzise und technisch. Zitiere echten Code wo möglich."""
             )
 
             strategy_prompt = f"""Du bist ein Senior Software-Architekt. Erstelle eine STRATEGISCHE Planung für die Aufgabe.
+
+═══════════════════════════════════════════════════════════════════
+🚨 VERBINDLICHE DATEILISTE — DAS SIND DIE EINZIGEN EXISTIERENDEN .py DATEIEN:
+═══════════════════════════════════════════════════════════════════
+{authoritative}
+
+⚠️  Jeder andere Dateiname (z.B. "workflow_manager.py", "vibelike.py") = HALLUZINATION.
+═══════════════════════════════════════════════════════════════════
 {feedback_block}
-ANALYSE:
+ANALYSE (aus Briefing):
 {briefing['analysis']}
 
-📋 ECHTE PROJEKT-CODE-ÜBERSICHT (AST-extrahiert, verbindlich):
+CODE-ÜBERSICHT:
 {code_overview}
 
 {retrieval_ctx}
 
 Diese Phase ist HIGH-LEVEL - noch KEINE konkreten Dateien/Funktionen.
-WICHTIG: Beziehe dich nur auf Dateien/Klassen die in der Übersicht oben tatsächlich existieren.
+WICHTIG: Wenn du Dateinamen erwähnst, ausschließlich aus der Liste oben.
 
 Beantworte:
 1. ANSATZ: Welche grundsätzliche Strategie? (z.B. neuer Service, Erweiterung, Refactoring)
@@ -388,6 +434,16 @@ Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS u
                 f"BRIEFING-ANALYSE:\n{briefing['analysis']}"
             )
             validation = self._render_validation(validation_future, reviewed=strategy)
+
+            # Anti-Halluzinations-Check
+            hallucinated = self._detect_hallucinated_files(strategy)
+            if hallucinated:
+                print("\n" + "🔴"*35)
+                print("🔴 HALLUZINATIONS-WARNUNG: Strategie erwähnt nicht-existente Dateien:")
+                for fname in hallucinated:
+                    print(f"🔴   - {fname}")
+                print("🔴 → Empfehlung: 'änderungen' mit Hinweis auf echte Dateinamen")
+                print("🔴"*35)
 
             previous_strategy = strategy
 
@@ -445,6 +501,7 @@ Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS u
         # Echter Projektcode aus Briefing (gegen Halluzinationen)
         code_overview = briefing.get("code_overview", "")
         focused_files = briefing.get("focused_files", "")
+        authoritative = self._authoritative_file_list()
 
         feedback_history: list[str] = []
         previous_plan = ""
@@ -457,6 +514,15 @@ Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS u
 
             detail_prompt = f"""Du bist ein Senior Software Engineer. Erstelle den DETAILLIERTEN Durchführungsplan
 basierend auf der genehmigten Strategie.
+
+═══════════════════════════════════════════════════════════════════
+🚨 VERBINDLICHE DATEILISTE — DAS SIND DIE EINZIGEN EXISTIERENDEN .py DATEIEN:
+═══════════════════════════════════════════════════════════════════
+{authoritative}
+
+⚠️  Modifikationen → NUR diese Dateien. Neue Dateien → mit Begründung anlegen.
+⚠️  Jeder andere als-existierend behauptete Dateiname = HALLUZINATION.
+═══════════════════════════════════════════════════════════════════
 {feedback_block}
 ORIGINALAUFGABE:
 {briefing['task']}
@@ -512,6 +578,16 @@ Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
                 print("─"*70)
                 print(plan_report.render())
                 print("─"*70)
+
+            # Anti-Halluzinations-Check
+            hallucinated = self._detect_hallucinated_files(plan)
+            if hallucinated:
+                print("\n" + "🔴"*35)
+                print("🔴 HALLUZINATIONS-WARNUNG: Detail-Plan erwähnt nicht-existente Dateien:")
+                for fname in hallucinated:
+                    print(f"🔴   - {fname}")
+                print("🔴 → Empfehlung: 'änderungen' mit Hinweis auf echte Dateinamen")
+                print("🔴"*35)
 
             previous_plan = plan
 
@@ -1059,6 +1135,26 @@ Regeln:
             "has_git": (self.root / ".git").exists(),
             "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
         }
+
+    def _authoritative_file_list(self) -> str:
+        """Liste ALLER .py-Dateien im Projekt-Root — als verbindliche Quelle der Wahrheit."""
+        files = sorted(p.name for p in self.root.glob("*.py"))
+        return "\n".join(f"  - {f}" for f in files)
+
+    def _detect_hallucinated_files(self, text: str) -> list[str]:
+        """Findet *.py Namen im Text, die NICHT im Projekt existieren."""
+        import re as _re
+
+        existing = {p.name for p in self.root.glob("*.py")}
+        existing.update(p.name for p in self.root.rglob("*.py"))
+
+        # Findet Patterns wie: workflow_manager.py, **plugin.py**, `vibelike.py`, foo.py...
+        pattern = _re.compile(r"\b([a-zA-Z_][\w\-]*\.py)\b")
+        mentioned = set()
+        for m in pattern.finditer(text):
+            mentioned.add(m.group(1))
+
+        return sorted(mentioned - existing)
 
     def _extract_code_overview(self, max_files: int = 25) -> str:
         """AST-basierte Übersicht aller .py Dateien (Modul-Docstring + Klassen + Funktionen)."""
