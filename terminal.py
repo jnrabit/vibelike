@@ -51,6 +51,9 @@ from framework.quelibrium.intelligence.resonance import ResonanceField
 # StaticValidator fängt die fachliche Schwäche des 1.5b-Critics deterministisch ab.
 MODEL = os.environ.get("VIBELIKE_QWEN_MODEL", "qwen2.5-coder:latest")
 VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", "qwen2.5-coder:1.5b")
+# Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder für Analyse).
+# Empfehlung: qwen3:8b (bestes Reasoning) oder qwen2.5:3b (parallel-fit).
+ANALYSIS_MODEL = os.environ.get("VIBELIKE_ANALYSIS_MODEL", "qwen3:8b")
 OLLAMA_URL = "http://localhost:11434/api/generate"
 LOG_FILE = os.path.join(ROOT, "logs", "triplets.jsonl")
 

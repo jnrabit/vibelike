@@ -41,7 +41,7 @@ class WorkflowAgent:
 
     def __init__(self):
         # Import QwenCoder + Modell-Konstanten lokal (circular-import-Schutz)
-        from terminal import QwenCoder, VALIDATOR_MODEL, CodeRetriever
+        from terminal import QwenCoder, VALIDATOR_MODEL, ANALYSIS_MODEL, CodeRetriever
         from validator2 import StaticValidatorV2
 
         # Retriever für Code-Vault-Integration in Planning-Phasen
@@ -50,8 +50,15 @@ class WorkflowAgent:
         except Exception:
             self.retriever = None
 
-        # Foreground: großes Modell für Code-Gen / Planung (siehe terminal.MODEL)
+        # Foreground: Coder-Modell für Code-Gen (Execution + Self-Heal).
         self.qwen = QwenCoder()
+        # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder).
+        # Wechselt mit `qwen` bei Bedarf in/aus VRAM (Ollama swap).
+        self.analyzer_qwen = QwenCoder(
+            model=ANALYSIS_MODEL,
+            num_predict=2048,
+            keep_alive="30m",
+        )
         # Background: kleines Modell für parallelen LLM-Critic.
         # num_predict niedrig halten — Critic soll kurz sein, nicht den Input echoen.
         self.validator_qwen = QwenCoder(
@@ -67,6 +74,11 @@ class WorkflowAgent:
         self.workflow_log = self.root / "logs" / "workflows.jsonl"
         self.workflow_log.parent.mkdir(parents=True, exist_ok=True)
         self.current_workflow = None
+
+        # Modell-Setup zeigen
+        print(f"[🧠 Reasoning  : {self.analyzer_qwen.model}]")
+        print(f"[💻 Code-Gen   : {self.qwen.model}]")
+        print(f"[🔍 Critic     : {self.validator_qwen.model}]")
 
     # =========================================================================
     # PARALLELE VALIDIERUNG (Critic)
@@ -329,7 +341,7 @@ Antworte mit einer Analyse:
 Sei präzise. Wenn du eine Datei nennst die nicht in der Liste oben steht — STOP, prüfe nochmal."""
 
         print("[🤖 Qwen analysiert (mit ECHTEM Code)...]\n")
-        analysis = self.qwen.generate(analysis_prompt, temperature=0.3, stream=True)
+        analysis = self.analyzer_qwen.generate(analysis_prompt, temperature=0.3, stream=True)
 
         # Parallel: Validator startet, nachdem Stream fertig ist
         validation_future = self._start_validation("BRIEFING", analysis, f"AUFGABE: {task}")
@@ -425,7 +437,7 @@ Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS u
 
             label = f"Strategie (Iter {iteration}, NEU mit Feedback)" if feedback_history else "Strategie"
             print(f"\n[🤖 Qwen entwickelt {label}...]\n")
-            strategy = self.qwen.generate(strategy_prompt, temperature=0.3, stream=True)
+            strategy = self.analyzer_qwen.generate(strategy_prompt, temperature=0.3, stream=True)
 
             # Parallel: Validator startet
             validation_future = self._start_validation(
@@ -560,7 +572,7 @@ Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
 
             label = f"Detail-Plan (Iter {iteration}, NEU mit Feedback)" if feedback_history else "Detail-Plan"
             print(f"\n[🤖 Qwen erstellt {label}...]\n")
-            plan = self.qwen.generate(detail_prompt, temperature=0.2, stream=True)
+            plan = self.analyzer_qwen.generate(detail_prompt, temperature=0.2, stream=True)
 
             # Parallel: Validator startet
             validation_future = self._start_validation(
@@ -889,7 +901,7 @@ Liefere:
 Sei knapp, kein Fließtext."""
 
         print("[🤖 Qwen analysiert Test-Failure...]\n")
-        analysis = self.qwen.generate(analysis_prompt, temperature=0.3, stream=True)
+        analysis = self.analyzer_qwen.generate(analysis_prompt, temperature=0.3, stream=True)
 
         # Korrektur-Aufgabe extrahieren (suche nach "Fix:" Zeile)
         followup_task = None
