@@ -428,14 +428,50 @@ Generiere kompletten, lauffähigen Code."""
         print("="*70)
         self._show_diff(planned_changes, full=False)
 
-        # Deterministischer Static-Validator — läuft sofort, keine LLM-Halluzination
-        static_report = self.static_validator.validate_code(
-            planned_changes, plan.get("plan", "")
+        # 3-Schichten Validierung: Code + Plan + Knowledge-Graph (Ossifikat Audits)
+        # Layer 1 & 2: Code + Plan Validierung
+        # Layer 3: Ossifikat Triple-Audits (optional, fallback wenn DB fehlt)
+        ossifikat_db_path = None
+        try:
+            ossifikat_db_path = str(self.root / "ossifikat" / "data" / "ossifikat.db")
+            if not (self.root / "ossifikat" / "data" / "ossifikat.db").exists():
+                ossifikat_db_path = None
+        except Exception:
+            pass
+
+        static_report = self.static_validator.validate_full(
+            planned_changes,
+            plan.get("plan", ""),
+            ossifikat_db=ossifikat_db_path
         )
+
         print("\n" + "─"*70)
-        print("🔧 STATIC VALIDATOR (deterministisch)")
+        print("🔧 3-SCHICHTEN VALIDATOR (Code + Plan + Knowledge-Graph)")
         print("─"*70)
-        print(static_report.render())
+
+        # Zeige Findings gruppiert nach Layer
+        if static_report.findings:
+            code_findings = [f for f in static_report.findings if not f.check.startswith("audit:")]
+            audit_findings = [f for f in static_report.findings if f.check.startswith("audit:")]
+
+            if code_findings:
+                print(f"\n  Layer 1+2 (Code & Plan): {len(code_findings)} findings")
+                for f in code_findings[:5]:
+                    severity_symbol = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(f.severity, "⚪")
+                    print(f"    {severity_symbol} {f.check:30s} @ {f.location}")
+                if len(code_findings) > 5:
+                    print(f"    ... (+{len(code_findings)-5} more)")
+
+            if audit_findings:
+                print(f"\n  Layer 3 (Knowledge-Graph Audits): {len(audit_findings)} findings")
+                for f in audit_findings[:5]:
+                    severity_symbol = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(f.severity, "⚪")
+                    print(f"    {severity_symbol} {f.check:30s} @ {f.location}")
+                if len(audit_findings) > 5:
+                    print(f"    ... (+{len(audit_findings)-5} more)")
+        else:
+            print("  ✅ Keine Findings (sauberer Code & Knowledge-Graph)")
+
         print("─"*70)
 
         # LLM-Code-Review einsammeln (paralleles Reasoning oben drauf)
