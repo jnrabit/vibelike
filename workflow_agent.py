@@ -23,6 +23,7 @@ Start: python workflow_agent.py
 """
 
 import os
+import re
 import sys
 import json
 import subprocess
@@ -115,6 +116,59 @@ Beispiele für SCHLECHTE Punkte (nicht so):
         print("─"*70)
         return result
 
+    # =========================================================================
+    # USER-INTERAKTION (Approval + Feedback-basiertes Regenerieren)
+    # =========================================================================
+
+    def _ask_approval(self, what: str) -> dict:
+        """Fragt User nach Approval. Unterstützt inline-Feedback: 'änderungen: <text>'.
+
+        Returns dict with action: 'approve' | 'reject' | 'change' (+ 'changes' on change).
+        """
+        while True:
+            raw = input(f"\n👤 {what} ok? (ja/nein/änderungen): ").strip()
+            low = raw.lower()
+
+            if low in ["ja", "yes", "y", "j"]:
+                return {"action": "approve"}
+            if low in ["nein", "no", "n"]:
+                return {"action": "reject"}
+
+            # 'änderungen', 'änderung', 'ä', 'a' (mit optionalem inline-Text nach ':' oder ' ')
+            m = re.match(r"^(änderung\w*|ä|a)\s*[:.\s]\s*(.*)$", raw, re.IGNORECASE)
+            if low.startswith("änder") or low in ("ä", "a") or (m and m.group(1)):
+                inline = m.group(2).strip() if m else ""
+                if inline:
+                    return {"action": "change", "changes": inline}
+                changes = input(f"Welche Änderungen an der {what}? ").strip()
+                if changes:
+                    return {"action": "change", "changes": changes}
+                print("Keine Änderungen angegeben.")
+                continue
+
+            print("Bitte 'ja', 'nein' oder 'änderungen' eingeben (oder 'änderungen: <text>').")
+
+    def _build_feedback_block(self, feedback_history: list[str], previous_output: str, kind: str) -> str:
+        """Baut Feedback-Block fürs Re-Generieren von Strategie/Plan."""
+        if not feedback_history:
+            return ""
+
+        feedback_lines = "\n".join(f"- {fb}" for fb in feedback_history)
+        prev = previous_output[:3000] + ("...[gekürzt]" if len(previous_output) > 3000 else "")
+        return f"""
+═══════════════════════════════════════════════════════════════════
+🔴 USER-FEEDBACK ZUR VORHERIGEN {kind.upper()} (UNBEDINGT BEACHTEN!):
+{feedback_lines}
+
+VORHERIGE {kind.upper()} (war unzureichend):
+---
+{prev}
+---
+
+Erstelle die {kind} NEU unter strikter Beachtung des Feedbacks.
+═══════════════════════════════════════════════════════════════════
+"""
+
     def _retrieve(self, query: str, k: int = 3, max_snippet: int = 500) -> str:
         """Holt relevante Code-Snippets aus dem Vault und formatiert sie kompakt.
         Bei Fehler oder fehlendem Retriever: leerer String."""
@@ -191,19 +245,31 @@ Sei präzise und technisch."""
     # =========================================================================
 
     def phase_planning_strategy(self, briefing: dict) -> dict:
-        """Phase 2a: Strategische Planung - allgemeines Vorgehen (User-Genehmigung)."""
+        """Phase 2a: Strategische Planung - allgemeines Vorgehen (User-Genehmigung).
+
+        Bei 'änderungen' wird die Strategie mit User-Feedback NEU generiert (max 3 Iterationen).
+        """
         print("\n" + "="*70)
         print("PHASE 2A: PLANNING - STRATEGIE (Allgemeines Vorgehen)")
         print("="*70)
 
-        # Retrieval: relevante Code-Stellen für Task-Kontext
+        # Retrieval: relevante Code-Stellen für Task-Kontext (einmalig)
         retrieval_ctx = self._retrieve(briefing['task'], k=3)
         if retrieval_ctx:
             print("\n[📚 Vault-Retrieval lädt relevant code...]")
             print(retrieval_ctx)
 
-        strategy_prompt = f"""Du bist ein Senior Software-Architekt. Erstelle eine STRATEGISCHE Planung für die Aufgabe.
+        feedback_history: list[str] = []
+        previous_strategy = ""
+        max_iterations = 3
 
+        for iteration in range(1, max_iterations + 1):
+            feedback_block = self._build_feedback_block(
+                feedback_history, previous_strategy, "Strategie"
+            )
+
+            strategy_prompt = f"""Du bist ein Senior Software-Architekt. Erstelle eine STRATEGISCHE Planung für die Aufgabe.
+{feedback_block}
 ANALYSE:
 {briefing['analysis']}
 
@@ -222,45 +288,48 @@ Beantworte:
 
 Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS und WARUM, noch nicht auf das WIE."""
 
-        print("[🤖 Qwen entwickelt Strategie...]\n")
-        strategy = self.qwen.generate(strategy_prompt, temperature=0.3, stream=True)
+            label = f"Strategie (Iter {iteration}, NEU mit Feedback)" if feedback_history else "Strategie"
+            print(f"\n[🤖 Qwen entwickelt {label}...]\n")
+            strategy = self.qwen.generate(strategy_prompt, temperature=0.3, stream=True)
 
-        # Parallel: Validator startet
-        validation_future = self._start_validation(
-            "PLANNING-STRATEGIE",
-            strategy,
-            f"BRIEFING-ANALYSE:\n{briefing['analysis']}"
-        )
+            # Parallel: Validator startet
+            validation_future = self._start_validation(
+                "PLANNING-STRATEGIE",
+                strategy,
+                f"BRIEFING-ANALYSE:\n{briefing['analysis']}"
+            )
+            validation = self._render_validation(validation_future)
 
-        # Validation einsammeln
-        validation = self._render_validation(validation_future)
+            previous_strategy = strategy
 
-        result = {
-            "phase": "PLANNING_STRATEGY",
-            "strategy": strategy,
-            "validation": validation,
-            "timestamp": datetime.now().isoformat(),
-            "approved": False
-        }
+            result = {
+                "phase": "PLANNING_STRATEGY",
+                "strategy": strategy,
+                "validation": validation,
+                "iteration": iteration,
+                "feedback_history": feedback_history.copy(),
+                "timestamp": datetime.now().isoformat(),
+                "approved": False,
+            }
 
-        print("\n" + "-"*70)
+            print("\n" + "-"*70)
 
-        # User-Genehmigung der Strategie
-        while True:
-            approval = input("\n👤 Strategie ok? (ja/nein/änderungen): ").strip().lower()
-            if approval in ["ja", "yes", "y"]:
+            decision = self._ask_approval("Strategie")
+            if decision["action"] == "approve":
                 result["approved"] = True
                 print("\n✅ Strategie genehmigt! Starte Detail-Planung...\n")
-                break
-            elif approval in ["nein", "no", "n"]:
+                return result
+            if decision["action"] == "reject":
                 print("\n❌ Strategie nicht genehmigt. Workflow abgebrochen.\n")
                 return None
-            elif approval.startswith("änder"):
-                changes = input("Welche Änderungen an der Strategie? ")
-                print(f"[Info] Änderungswunsch notiert: {changes}")
-                result["change_request"] = changes
-            else:
-                print("Bitte 'ja', 'nein' oder 'änderungen' eingeben.")
+            if decision["action"] == "change":
+                feedback_history.append(decision["changes"])
+                if iteration < max_iterations:
+                    print(f"\n[🔁 Generiere Strategie neu mit Feedback (Iter {iteration+1}/{max_iterations})...]")
+                else:
+                    print(f"\n⚠️  Max Iterationen ({max_iterations}) erreicht.")
+                    result["change_request"] = decision["changes"]
+                    return result
 
         return result
 
@@ -269,21 +338,33 @@ Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS u
     # =========================================================================
 
     def phase_planning_detailed(self, briefing: dict, strategy: dict) -> dict:
-        """Phase 2b: Detail-Planung - konkrete Durchführung (User-Genehmigung)."""
+        """Phase 2b: Detail-Planung - konkrete Durchführung (User-Genehmigung).
+
+        Bei 'änderungen' wird der Plan mit User-Feedback NEU generiert (max 3 Iterationen).
+        """
         print("\n" + "="*70)
         print("PHASE 2B: PLANNING - DETAILPLAN (Konkrete Durchführung)")
         print("="*70)
 
-        # Retrieval: präzisere Query mit Task + Strategie-Anfang
+        # Retrieval: präzisere Query mit Task + Strategie-Anfang (einmalig)
         retrieval_query = f"{briefing['task']} {strategy['strategy'][:200]}"
         retrieval_ctx = self._retrieve(retrieval_query, k=3)
         if retrieval_ctx:
             print("\n[📚 Vault-Retrieval für Detail-Plan...]")
             print(retrieval_ctx)
 
-        detail_prompt = f"""Du bist ein Senior Software Engineer. Erstelle den DETAILLIERTEN Durchführungsplan
-basierend auf der genehmigten Strategie.
+        feedback_history: list[str] = []
+        previous_plan = ""
+        max_iterations = 3
 
+        for iteration in range(1, max_iterations + 1):
+            feedback_block = self._build_feedback_block(
+                feedback_history, previous_plan, "Detail-Plan"
+            )
+
+            detail_prompt = f"""Du bist ein Senior Software Engineer. Erstelle den DETAILLIERTEN Durchführungsplan
+basierend auf der genehmigten Strategie.
+{feedback_block}
 ORIGINALAUFGABE:
 {briefing['task']}
 
@@ -307,63 +388,66 @@ Erstelle einen Plan mit:
 
 Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
 
-        print("[🤖 Qwen erstellt Detail-Plan...]\n")
-        plan = self.qwen.generate(detail_prompt, temperature=0.2, stream=True)
+            label = f"Detail-Plan (Iter {iteration}, NEU mit Feedback)" if feedback_history else "Detail-Plan"
+            print(f"\n[🤖 Qwen erstellt {label}...]\n")
+            plan = self.qwen.generate(detail_prompt, temperature=0.2, stream=True)
 
-        # Parallel: Validator startet
-        validation_future = self._start_validation(
-            "PLANNING-DETAIL",
-            plan,
-            f"AUFGABE: {briefing['task']}\n\nGENEHMIGTE STRATEGIE:\n{strategy['strategy']}"
-        )
+            # Parallel: Validator startet
+            validation_future = self._start_validation(
+                "PLANNING-DETAIL",
+                plan,
+                f"AUFGABE: {briefing['task']}\n\nGENEHMIGTE STRATEGIE:\n{strategy['strategy']}"
+            )
+            validation = self._render_validation(validation_future)
 
-        # Validation einsammeln (LLM-Critic)
-        validation = self._render_validation(validation_future)
+            # Deterministischer Plan-Check (Struktur + Spezifität)
+            plan_report = self.static_validator.validate_plan(plan, plan_kind="detail")
+            if plan_report.findings:
+                print("\n" + "─"*70)
+                print("🔧 STATIC PLAN-CHECK (deterministisch)")
+                print("─"*70)
+                print(plan_report.render())
+                print("─"*70)
 
-        # Deterministischer Plan-Check (Struktur + Spezifität)
-        plan_report = self.static_validator.validate_plan(plan, plan_kind="detail")
-        if plan_report.findings:
-            print("\n" + "─"*70)
-            print("🔧 STATIC PLAN-CHECK (deterministisch)")
-            print("─"*70)
-            print(plan_report.render())
-            print("─"*70)
+            previous_plan = plan
 
-        result = {
-            "phase": "PLANNING_DETAILED",
-            "plan": plan,
-            "validation": validation,
-            "static_validation": {
-                "verdict": plan_report.verdict,
-                "findings": [
-                    {"severity": f.severity, "check": f.check,
-                     "location": f.location, "message": f.message}
-                    for f in plan_report.findings
-                ],
-            },
-            "strategy_ref": strategy.get("strategy", ""),
-            "timestamp": datetime.now().isoformat(),
-            "approved": False
-        }
+            result = {
+                "phase": "PLANNING_DETAILED",
+                "plan": plan,
+                "validation": validation,
+                "static_validation": {
+                    "verdict": plan_report.verdict,
+                    "findings": [
+                        {"severity": f.severity, "check": f.check,
+                         "location": f.location, "message": f.message}
+                        for f in plan_report.findings
+                    ],
+                },
+                "strategy_ref": strategy.get("strategy", ""),
+                "iteration": iteration,
+                "feedback_history": feedback_history.copy(),
+                "timestamp": datetime.now().isoformat(),
+                "approved": False,
+            }
 
-        print("\n" + "-"*70)
+            print("\n" + "-"*70)
 
-        # User-Genehmigung des Detail-Plans
-        while True:
-            approval = input("\n👤 Detail-Plan ok? (ja/nein/änderungen): ").strip().lower()
-            if approval in ["ja", "yes", "y"]:
+            decision = self._ask_approval("Detail-Plan")
+            if decision["action"] == "approve":
                 result["approved"] = True
                 print("\n✅ Detail-Plan genehmigt! Starte Execution...\n")
-                break
-            elif approval in ["nein", "no", "n"]:
+                return result
+            if decision["action"] == "reject":
                 print("\n❌ Detail-Plan nicht genehmigt. Workflow abgebrochen.\n")
                 return None
-            elif approval.startswith("änder"):
-                changes = input("Welche Änderungen am Detail-Plan? ")
-                print(f"[Info] Änderungswunsch notiert: {changes}")
-                result["change_request"] = changes
-            else:
-                print("Bitte 'ja', 'nein' oder 'änderungen' eingeben.")
+            if decision["action"] == "change":
+                feedback_history.append(decision["changes"])
+                if iteration < max_iterations:
+                    print(f"\n[🔁 Generiere Detail-Plan neu mit Feedback (Iter {iteration+1}/{max_iterations})...]")
+                else:
+                    print(f"\n⚠️  Max Iterationen ({max_iterations}) erreicht.")
+                    result["change_request"] = decision["changes"]
+                    return result
 
         return result
 
