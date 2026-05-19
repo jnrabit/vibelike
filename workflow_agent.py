@@ -592,7 +592,7 @@ Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
                 print("─"*70)
 
             # Anti-Halluzinations-Check
-            hallucinated = self._detect_hallucinated_files(plan)
+            hallucinated = self._detect_hallucinated_files(plan, exclude_new_section=True)
             if hallucinated:
                 print("\n" + "🔴"*35)
                 print("🔴 HALLUZINATIONS-WARNUNG: Detail-Plan erwähnt nicht-existente Dateien:")
@@ -1153,17 +1153,35 @@ Regeln:
         files = sorted(p.name for p in self.root.glob("*.py"))
         return "\n".join(f"  - {f}" for f in files)
 
-    def _detect_hallucinated_files(self, text: str) -> list[str]:
-        """Findet *.py Namen im Text, die NICHT im Projekt existieren."""
+    def _detect_hallucinated_files(self, text: str, exclude_new_section: bool = False) -> list[str]:
+        """Findet *.py Namen im Text, die NICHT im Projekt existieren.
+
+        Args:
+            text: Text der durchsucht wird
+            exclude_new_section: Wenn True, ignoriert Dateinamen aus 'NEUE DATEIEN' Sektion
+                (für Detail-Plan, wo neue Dateien legitim sind)
+        """
         import re as _re
 
         existing = {p.name for p in self.root.glob("*.py")}
         existing.update(p.name for p in self.root.rglob("*.py"))
 
+        search_text = text
+        if exclude_new_section:
+            # Schneide die "NEUE DATEIEN" Section raus — dort sind Files legitim neu
+            # Sucht ab "NEUE DATEIEN" bis zur nächsten Section
+            new_section_pattern = _re.compile(
+                r"(?:NEUE\s+DATEIEN|NEW\s+FILES)(.*?)"
+                r"(?=\n\s*(?:\d+\.\s+)?(?:FUNKTIONEN|FUNCTIONS|"
+                r"CODE-?FLOW|TESTS|IMPORTS|INTEGRATION|ROLLBACK|ESTIMATED|####|###|\Z))",
+                _re.IGNORECASE | _re.DOTALL,
+            )
+            search_text = new_section_pattern.sub("[NEUE_DATEIEN_AUSGEBLENDET]", text)
+
         # Findet Patterns wie: workflow_manager.py, **plugin.py**, `vibelike.py`, foo.py...
         pattern = _re.compile(r"\b([a-zA-Z_][\w\-]*\.py)\b")
         mentioned = set()
-        for m in pattern.finditer(text):
+        for m in pattern.finditer(search_text):
             mentioned.add(m.group(1))
 
         return sorted(mentioned - existing)
