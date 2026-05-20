@@ -164,27 +164,61 @@ SCHLECHTE Kritikpunkte (nicht so):
 
         partial = partial.strip() or "🟢"
 
-        # 4. Emoji-Normalisierung: erste Zeile MUSS mit 🟢/🟡/🔴 starten
+        # 4. Emoji-Normalisierung via `choose` — Predicate-Eskalation
         lines = partial.splitlines()
         if lines:
-            first = lines[0].strip()
-            if not first.startswith(("🟢", "🟡", "🔴")):
-                # Mappe häufige Falsch-Emojis auf passende Ampel
-                negative = ("❌", "✗", "x", "X", "🚫", "⛔", "💥")
-                warning = ("⚠️", "⚠", "❗", "❓", "?")
-                positive = ("✅", "✓", "✔", "👍")
-                if any(first.startswith(s) for s in negative):
-                    lines[0] = "🔴 " + first.lstrip("❌✗xX🚫⛔💥 ").strip() or "🔴 Validator-Output unverständlich (Format-Verstoß)"
-                elif any(first.startswith(s) for s in warning):
-                    lines[0] = "🟡 " + first.lstrip("⚠️⚠❗❓? ").strip() or "🟡 Validator unsicher"
-                elif any(first.startswith(s) for s in positive):
-                    lines[0] = "🟢"
-                else:
-                    # Komplett unbekanntes Format → 🟡 als safe default
-                    lines[0] = f"🟡 Validator-Format unklar: {first[:80]}"
+            classification = self._classify_validator_first_line(lines[0].strip())
+            lines[0] = self._normalize_first_line(lines[0].strip(), classification)
             partial = "\n".join(lines)
 
         return partial
+
+    # ─── choose-basierte Critic-Emoji-Klassifikation ─────────────────────────
+    # Erste Integration des `choose`-Atoms: Predicate-Eskalation statt if/elif.
+    # Vorteile: deterministisch, testbar isoliert, Undecidable-Case explizit.
+
+    _NEGATIVE_PREFIXES = ("❌", "✗", "🚫", "⛔", "💥")
+    _WARNING_PREFIXES = ("⚠️", "⚠", "❗", "❓", "?")
+    _POSITIVE_PREFIXES = ("✅", "✓", "✔", "👍")
+    _TRAFFIC_LIGHT_PREFIXES = ("🟢", "🟡", "🔴")
+
+    def _classify_validator_first_line(self, line: str) -> str:
+        """Klassifiziert via choose-Atom. Return: predicate-name oder 'unknown'."""
+        from choose import choose, Predicate, PredicateBundle, Verdict, Decided
+
+        def _accepts(prefixes):
+            return lambda candidate: (
+                Verdict.ACCEPT if candidate.startswith(prefixes) else Verdict.DEFER
+            )
+
+        predicates = [
+            # Wenn schon korrekt formatiert: cheap erst raussortieren
+            Predicate(name="traffic_light", evaluate=_accepts(self._TRAFFIC_LIGHT_PREFIXES), cost_hint=1),
+            Predicate(name="positive",      evaluate=_accepts(self._POSITIVE_PREFIXES),      cost_hint=10),
+            Predicate(name="negative",      evaluate=_accepts(self._NEGATIVE_PREFIXES),      cost_hint=10),
+            Predicate(name="warning",       evaluate=_accepts(self._WARNING_PREFIXES),       cost_hint=10),
+        ]
+        bundle = PredicateBundle(predicates)
+        result = choose(bundle, candidates=[line])
+
+        if isinstance(result.outcome, Decided):
+            return result.deciding_predicate
+        return "unknown"
+
+    def _normalize_first_line(self, line: str, classification: str) -> str:
+        """Transformiert die erste Validator-Zeile in 🟢/🟡/🔴-Format."""
+        if classification == "traffic_light":
+            return line  # schon korrekt
+        if classification == "positive":
+            return "🟢"
+        if classification == "negative":
+            stripped = line.lstrip("❌✗🚫⛔💥 ").strip()
+            return f"🔴 {stripped}" if stripped else "🔴 Validator-Output unverständlich (Format-Verstoß)"
+        if classification == "warning":
+            stripped = line.lstrip("⚠️⚠❗❓? ").strip()
+            return f"🟡 {stripped}" if stripped else "🟡 Validator unsicher"
+        # unknown — Undecidable-Pfad
+        return f"🟡 Validator-Format unklar: {line[:80]}"
 
     def _render_validation(self, validation_future: concurrent.futures.Future,
                              reviewed: str = "") -> str:
