@@ -482,17 +482,18 @@ VOLLER CODE relevanter Dateien:
 {authoritative}
 ═══════════════════════════════════════════════════════════════════
 
-Antworte mit einer Analyse:
+Antworte mit einer Analyse in ZWEI Teilen. BEIDE Teile sind PFLICHT — die
+Detailanalyse (Teil A) MUSS vor der Synthese (Teil B) stehen.
+
+## TEIL A — DETAILANALYSE (5 Sektionen, alle ausfüllen)
+
 1. Verstehen Sie die Aufgabe korrekt?
 2. Welche KONKRETEN Dateien (aus der Liste oben!) sind betroffen?
 3. Wie passt es ins bestehende System? (echte Klassen/Funktionen aus der Übersicht)
 4. Gibt es Abhängigkeiten oder Konflikte?
 5. Welche Risiken sehen Sie?
 
-═══════════════════════════════════════════════════════════════════
-6. ERKENNTNISSE & NÄCHSTE SCHRITTE (PFLICHT — schreibe AM ENDE):
-
-Schließe deine Analyse ab mit einer Sektion, die genau so beginnt:
+## TEIL B — Schließe AM ENDE mit GENAU dieser Header-Zeile ab:
 
 ## ERKENNTNISSE
 
@@ -500,8 +501,8 @@ Schließe deine Analyse ab mit einer Sektion, die genau so beginnt:
 - [3-5 Stichpunkte mit den wichtigsten Befunden, je 1 Zeile]
 
 **Kernerkenntnisse:**
-[Was ist konkret und nicht-offensichtlich? Keine Floskeln. Wenn etwas
-auffällt das die Aufgabe nicht direkt anging, aber wichtig wirkt — hier rein.]
+[Was ist konkret und nicht-offensichtlich? Keine Floskeln. Was über die
+Detailanalyse oben hinaus auffiel.]
 
 **Empfohlene nächste Schritte:**
 - [konkrete, umsetzbare Actions — keine "sorgfältig prüfen"-Floskeln]
@@ -510,9 +511,11 @@ auffällt das die Aufgabe nicht direkt anging, aber wichtig wirkt — hier rein.
 **Offene Fragen:**
 - [was konntest du nicht beantworten? Welche Info fehlt?]
 
-═══════════════════════════════════════════════════════════════════
+---
 
-Sei präzise. Wenn du eine Datei nennst die nicht in der Liste oben steht — STOP, prüfe nochmal."""
+WICHTIG: Beide Teile A und B liefern. Teil A zuerst (alle 5 Sektionen),
+dann Teil B mit "## ERKENNTNISSE" als Header.
+Wenn du eine Datei nennst die nicht in der Liste oben steht — STOP, prüfe nochmal."""
 
         print("[🤖 Qwen analysiert (mit ECHTEM Code)...]\n")
         analysis = self.analyzer_qwen.generate(analysis_prompt, temperature=0.3, stream=True)
@@ -1941,15 +1944,19 @@ Was NICHT zählt:
 
         Returns: (main_analysis, synthesis_block)  — synthesis_block ist '' wenn fehlt.
         """
-        # Suche '## ERKENNTNISSE' Header (case-insensitive, mit oder ohne #)
-        match = re.search(r"\n#{1,3}\s*ERKENNTNISSE\s*\n", analysis, re.IGNORECASE)
+        # Suche '## ERKENNTNISSE' Header — auch wenn am Start des Strings (kein newline davor)
+        match = re.search(r"(?:^|\n)#{1,3}\s*ERKENNTNISSE\s*(?:\n|$)", analysis, re.IGNORECASE)
         if not match:
-            # Alternative Schreibweisen
-            match = re.search(r"\n\*\*ERKENNTNISSE.*?\*\*\s*\n", analysis, re.IGNORECASE)
+            # Alternative Schreibweisen: **ERKENNTNISSE** als Header
+            match = re.search(r"(?:^|\n)\*\*ERKENNTNISSE.*?\*\*\s*(?:\n|$)", analysis, re.IGNORECASE)
         if not match:
             return analysis, ""
 
-        return analysis[:match.start()].rstrip(), analysis[match.start():].strip()
+        # match.start() ist position des newline (oder 0 wenn am Anfang)
+        cut = match.start()
+        if analysis[cut:cut+1] == "\n":
+            cut += 1  # newline ueberspringen
+        return analysis[:cut].rstrip(), analysis[cut:].strip()
 
     def phase_analysis_report(self, briefing: dict, classification: dict | None = None) -> dict:
         """Phase ANALYSE: Finalisiert das Briefing als strukturierten Analyse-Report.
@@ -2038,16 +2045,20 @@ Diese Hinweise sollten kritisch überprüft werden.
                                 "produziert. Die Detailanalyse unten enthält die Befunde, "
                                 "aber keine destillierte Synthese.\n\n---\n\n")
 
+        # Detailanalyse-Block (skip wenn leer — z.B. wenn Modell NUR Synthese lieferte)
+        if main_analysis.strip():
+            detail_block = f"## Detailanalyse\n\n{main_analysis}\n\n"
+        else:
+            detail_block = ("## ⚠️ Detailanalyse fehlt\n\nDas Briefing-Modell hat "
+                            "direkt mit der Synthese begonnen — keine strukturierte "
+                            "Detailanalyse vorhanden.\n\n")
+
         report_md = f"""# Analyse-Report — {timestamp}
 
 ## Aufgabe
 > {task}
 
-{classification_block}{synthesis_block}{meta_block}## Detailanalyse
-
-{main_analysis}
-
-{validator_block}{hallu_block}---
+{classification_block}{synthesis_block}{meta_block}{detail_block}{validator_block}{hallu_block}---
 
 ## Anhang A: Code-Übersicht (AST-extrahiert)
 
