@@ -123,53 +123,89 @@ SCHLECHTE Kritikpunkte (nicht so):
         return self._executor.submit(_run)
 
     def _strip_regurgitation(self, validator_output: str, reviewed: str) -> str:
-        """Schneidet den Validator-Output ab, wenn er den Input wieder abschreibt.
+        """Erkennt Echo (Validator schreibt Input ab) und ersetzt durch Verdict + Marker.
 
-        Heuristik: jede Zeile ab dem ersten Vorkommen einer ≥80-Zeichen-Subsequenz
-        aus dem Input wird abgeschnitten. Plus: Header-Patterns ("### "/"## "/"## "+input)
-        triggern Abbruch.
+        Whitespace-normalisierte Substring-Suche. Bei Echo:
+          - Behalte ersten Satz (bis . ! ?) als Verdict-Zeile
+          - Ersetze Rest mit '[Echo unterdrückt]'
         """
         if not validator_output or not reviewed:
             return validator_output
 
-        # 1. Header-Heuristik: erste Markdown-Header-Zeile nach Zeile 1 → abbrechen
+        # Echo-Detection (Whitespace + Markdown normalisiert) UND Wort-Overlap.
+        # Substring-Check fängt exakte Echos, Wort-Overlap fängt leicht
+        # paraphrasierte Echos (1.5b-Modell entfernt manchmal **/`*` etc).
+        def normalize_strict(s):
+            """Whitespace, Markdown-Symbole, Backticks weg."""
+            s = re.sub(r"[*`_~]", "", s)
+            s = re.sub(r"\s+", " ", s).strip()
+            return s
+
+        def significant_words(s):
+            """Wörter ≥5 Zeichen ODER *.py-Dateinamen (case-insensitive)."""
+            return set(re.findall(r"\w+\.py|\w{5,}", s.lower()))
+
+        reviewed_norm = normalize_strict(reviewed)
+        val_norm = normalize_strict(validator_output)
+
+        echo_detected = False
+
+        # 1. Substring-Check auf normalisiertem Text (≥60 chars Chunk)
+        if len(reviewed_norm) >= 60:
+            for i in range(0, len(reviewed_norm) - 60, 30):
+                chunk = reviewed_norm[i:i+60]
+                if chunk in val_norm:
+                    echo_detected = True
+                    break
+
+        # 2. Wort-Overlap (fängt paraphrasierte Echos)
+        if not echo_detected:
+            val_words = significant_words(val_norm)
+            if len(val_words) >= 5:  # nur prüfen bei genug Wörtern
+                rev_words = significant_words(reviewed_norm)
+                overlap = len(val_words & rev_words) / len(val_words)
+                if overlap > 0.6:  # >60% bedeutender Wörter aus reviewed
+                    echo_detected = True
+
+        # 3. Markdown-Header in Folge-Zeilen → Plan-Echo
         lines = validator_output.splitlines()
-        cleaned = []
-        for i, line in enumerate(lines):
-            # Erste Zeile (Verdict) immer behalten
-            if i == 0:
-                cleaned.append(line)
-                continue
-            stripped = line.lstrip()
-            # Markdown-Header (von Plan-Output) → Echo erkannt, abbrechen
-            if stripped.startswith(("### ", "## ", "#### ", "**")):
-                break
-            cleaned.append(line)
+        if not echo_detected:
+            for line in lines[1:]:
+                stripped = line.lstrip()
+                if stripped.startswith(("### ", "## ", "#### ", "**")) and len(stripped) > 8:
+                    echo_detected = True
+                    break
 
-        partial = "\n".join(cleaned)
+        def first_sentence(text: str, max_chars: int = 200) -> str:
+            """Erste Sinneinheit: bis zum ersten . ! ? (mindestens 20 chars rein)."""
+            text = text.strip()
+            for sep in [". ", "! ", "? ", ".\n", "!\n", "?\n"]:
+                idx = text.find(sep)
+                if 20 < idx < max_chars:
+                    return text[:idx + 1].rstrip()
+            # Fallback: harter Cut an Wortgrenze
+            if len(text) <= max_chars:
+                return text
+            cut = text.rfind(" ", 20, max_chars)
+            return text[:cut].rstrip() if cut > 20 else text[:max_chars].rstrip()
 
-        # 2. Substring-Heuristik: ≥80-Zeichen-Block aus Input gefunden → abschneiden
-        reviewed_chunks = [
-            reviewed[i:i+80] for i in range(0, max(0, len(reviewed) - 80), 40)
-        ]
-        for chunk in reviewed_chunks:
-            chunk = chunk.strip()
-            if len(chunk) >= 80 and chunk in partial:
-                partial = partial.split(chunk)[0].rstrip()
-                break
-
-        # 3. Hart auf 800 Zeichen kappen (defensive)
-        if len(partial) > 800:
-            partial = partial[:800] + "\n[... gekürzt — Validator-Echo unterdrückt]"
+        if echo_detected:
+            # Verdict-Zeile + Echo-Marker statt halber Text
+            partial = f"{first_sentence(validator_output, 200)} [Echo unterdrückt]"
+        else:
+            # Kein Echo — gesamten Output behalten, nur Defensive-Cap bei 800
+            partial = validator_output.strip()
+            if len(partial) > 800:
+                partial = first_sentence(partial, 800) + " [... gekürzt]"
 
         partial = partial.strip() or "🟢"
 
-        # 4. Emoji-Normalisierung via `choose` — Predicate-Eskalation
-        lines = partial.splitlines()
-        if lines:
-            classification = self._classify_validator_first_line(lines[0].strip())
-            lines[0] = self._normalize_first_line(lines[0].strip(), classification)
-            partial = "\n".join(lines)
+        # Emoji-Normalisierung via `choose` — Predicate-Eskalation
+        out_lines = partial.splitlines()
+        if out_lines:
+            classification = self._classify_validator_first_line(out_lines[0].strip())
+            out_lines[0] = self._normalize_first_line(out_lines[0].strip(), classification)
+            partial = "\n".join(out_lines)
 
         return partial
 
