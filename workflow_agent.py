@@ -244,24 +244,69 @@ SCHLECHTE Kritikpunkte (nicht so):
     # USER-INTERAKTION (Approval + Feedback-basiertes Regenerieren)
     # =========================================================================
 
+    # ─── choose-basierte Approval-Klassifikation ─────────────────────────────
+    # Predicate-Eskalation für User-Input. ACCEPT/REJECT/DEFER ist hier
+    # explizit: 'unknown' (alle Defer) führt zur Wiederholung, nicht zu
+    # stillem Default.
+
+    _APPROVE_VARIANTS = frozenset({"ja", "yes", "y", "j"})
+    _REJECT_VARIANTS = frozenset({"nein", "no", "n"})
+    _CHANGE_PATTERN = re.compile(r"^(änderung\w*|ä|a)([:.\s]|$)", re.IGNORECASE)
+    _CHANGE_EXTRACT = re.compile(r"^(änderung\w*|ä|a)\s*[:.\s]\s*(.*)$", re.IGNORECASE)
+
+    def _classify_approval_input(self, raw: str) -> str:
+        """Klassifiziert User-Approval-Input via choose.
+
+        Returns: 'approve' | 'reject' | 'change' | 'unknown'
+        """
+        from choose import choose, Predicate, PredicateBundle, Verdict, Decided
+
+        low = raw.lower().strip()
+
+        def _exact_match(values):
+            return lambda candidate: (
+                Verdict.ACCEPT if candidate in values else Verdict.DEFER
+            )
+
+        def _change_match(candidate):
+            return Verdict.ACCEPT if self._CHANGE_PATTERN.match(candidate) else Verdict.DEFER
+
+        predicates = [
+            # Cheap exact-string-matches zuerst
+            Predicate(name="approve", evaluate=_exact_match(self._APPROVE_VARIANTS), cost_hint=1),
+            Predicate(name="reject",  evaluate=_exact_match(self._REJECT_VARIANTS),  cost_hint=1),
+            # Teurer: regex-basierte Change-Erkennung
+            Predicate(name="change",  evaluate=_change_match, cost_hint=10),
+        ]
+        bundle = PredicateBundle(predicates)
+        result = choose(bundle, candidates=[low])
+
+        if isinstance(result.outcome, Decided):
+            return result.deciding_predicate
+        return "unknown"
+
+    def _extract_change_text(self, raw: str) -> str:
+        """Extrahiert Inline-Text nach 'änderungen:' (Original-Case bewahrt)."""
+        m = self._CHANGE_EXTRACT.match(raw)
+        return m.group(2).strip() if m else ""
+
     def _ask_approval(self, what: str) -> dict:
         """Fragt User nach Approval. Unterstützt inline-Feedback: 'änderungen: <text>'.
 
         Returns dict with action: 'approve' | 'reject' | 'change' (+ 'changes' on change).
+        Nutzt `choose` für die Eingabe-Klassifikation: ACCEPT/REJECT/DEFER,
+        Undecidable führt zur expliziten Wiederholung (kein silent fallthrough).
         """
         while True:
             raw = input(f"\n👤 {what} ok? (ja/nein/änderungen): ").strip()
-            low = raw.lower()
+            action = self._classify_approval_input(raw)
 
-            if low in ["ja", "yes", "y", "j"]:
+            if action == "approve":
                 return {"action": "approve"}
-            if low in ["nein", "no", "n"]:
+            if action == "reject":
                 return {"action": "reject"}
-
-            # 'änderungen', 'änderung', 'ä', 'a' (mit optionalem inline-Text nach ':' oder ' ')
-            m = re.match(r"^(änderung\w*|ä|a)\s*[:.\s]\s*(.*)$", raw, re.IGNORECASE)
-            if low.startswith("änder") or low in ("ä", "a") or (m and m.group(1)):
-                inline = m.group(2).strip() if m else ""
+            if action == "change":
+                inline = self._extract_change_text(raw)
                 if inline:
                     return {"action": "change", "changes": inline}
                 changes = input(f"Welche Änderungen an der {what}? ").strip()
@@ -270,6 +315,7 @@ SCHLECHTE Kritikpunkte (nicht so):
                 print("Keine Änderungen angegeben.")
                 continue
 
+            # Undecidable — explizite Wiederholung statt stillem Default
             print("Bitte 'ja', 'nein' oder 'änderungen' eingeben (oder 'änderungen: <text>').")
 
     def _build_feedback_block(self, feedback_history: list[str], previous_output: str, kind: str) -> str:
