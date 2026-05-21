@@ -1237,38 +1237,84 @@ Regeln:
         files = sorted(p.name for p in self.root.glob("*.py"))
         return "\n".join(f"  - {f}" for f in files)
 
+    # ─── choose-basierte Halluzinations-Detektion ─────────────────────────────
+    # Per-Datei Predicate-Eskalation: in_root → in_tree → declared_new → REJECT.
+    # Undecidable bedeutet hier "hallucinated".
+
+    _NEW_FILES_SECTION_PATTERN = re.compile(
+        r"(?:NEUE\s+DATEIEN|NEW\s+FILES)(.*?)"
+        r"(?=\n\s*(?:\d+\.\s+)?(?:FUNKTIONEN|FUNCTIONS|"
+        r"CODE-?FLOW|TESTS|IMPORTS|INTEGRATION|ROLLBACK|ESTIMATED|####|###|\Z))",
+        re.IGNORECASE | re.DOTALL,
+    )
+    _FILE_MENTION_PATTERN = re.compile(r"\b([a-zA-Z_][\w\-]*\.py)\b")
+
+    def _classify_file_mention(self, fname: str, root_files: frozenset,
+                                 tree_files: frozenset,
+                                 declared_new: frozenset) -> str:
+        """Klassifiziert einen Datei-Namen via choose.
+
+        Returns: 'in_root' | 'in_tree' | 'declared_new' | 'hallucinated'
+        """
+        from choose import choose, Predicate, PredicateBundle, Verdict, Decided
+
+        def _accepts_in(values):
+            return lambda candidate: (
+                Verdict.ACCEPT if candidate in values else Verdict.DEFER
+            )
+
+        predicates = [
+            # cheap: direkt im Projekt-Root
+            Predicate(name="in_root",      evaluate=_accepts_in(root_files),    cost_hint=1),
+            # cheap: irgendwo im Baum (rglob)
+            Predicate(name="in_tree",      evaluate=_accepts_in(tree_files),    cost_hint=2),
+            # context-aware: als "NEUE DATEIEN" deklariert
+            Predicate(name="declared_new", evaluate=_accepts_in(declared_new), cost_hint=10),
+        ]
+        bundle = PredicateBundle(predicates)
+        result = choose(bundle, candidates=[fname])
+
+        if isinstance(result.outcome, Decided):
+            return result.deciding_predicate
+        return "hallucinated"  # Undecidable → Halluzination
+
     def _detect_hallucinated_files(self, text: str, exclude_new_section: bool = False) -> list[str]:
         """Findet *.py Namen im Text, die NICHT im Projekt existieren.
 
+        Nutzt `choose` für die Per-Datei-Klassifikation:
+        in_root / in_tree / declared_new / hallucinated.
+
         Args:
             text: Text der durchsucht wird
-            exclude_new_section: Wenn True, ignoriert Dateinamen aus 'NEUE DATEIEN' Sektion
-                (für Detail-Plan, wo neue Dateien legitim sind)
+            exclude_new_section: Wenn True, in NEUE-DATEIEN-Section erwähnte
+                Dateien gelten als 'declared_new' (nicht halluziniert).
         """
-        import re as _re
+        root_files = frozenset(p.name for p in self.root.glob("*.py"))
+        tree_files = frozenset(p.name for p in self.root.rglob("*.py"))
 
-        existing = {p.name for p in self.root.glob("*.py")}
-        existing.update(p.name for p in self.root.rglob("*.py"))
-
-        search_text = text
+        # Optional: NEUE-DATEIEN-Section erkennen (für Detail-Plan)
+        declared_new: frozenset[str] = frozenset()
         if exclude_new_section:
-            # Schneide die "NEUE DATEIEN" Section raus — dort sind Files legitim neu
-            # Sucht ab "NEUE DATEIEN" bis zur nächsten Section
-            new_section_pattern = _re.compile(
-                r"(?:NEUE\s+DATEIEN|NEW\s+FILES)(.*?)"
-                r"(?=\n\s*(?:\d+\.\s+)?(?:FUNKTIONEN|FUNCTIONS|"
-                r"CODE-?FLOW|TESTS|IMPORTS|INTEGRATION|ROLLBACK|ESTIMATED|####|###|\Z))",
-                _re.IGNORECASE | _re.DOTALL,
+            new_section_match = self._NEW_FILES_SECTION_PATTERN.search(text)
+            if new_section_match:
+                declared_new = frozenset(
+                    m.group(1)
+                    for m in self._FILE_MENTION_PATTERN.finditer(new_section_match.group(1))
+                )
+
+        # Alle Datei-Erwähnungen im Text finden
+        mentioned = {m.group(1) for m in self._FILE_MENTION_PATTERN.finditer(text)}
+
+        # Per Datei klassifizieren via choose
+        hallucinated = []
+        for fname in sorted(mentioned):
+            classification = self._classify_file_mention(
+                fname, root_files, tree_files, declared_new
             )
-            search_text = new_section_pattern.sub("[NEUE_DATEIEN_AUSGEBLENDET]", text)
+            if classification == "hallucinated":
+                hallucinated.append(fname)
 
-        # Findet Patterns wie: workflow_manager.py, **plugin.py**, `vibelike.py`, foo.py...
-        pattern = _re.compile(r"\b([a-zA-Z_][\w\-]*\.py)\b")
-        mentioned = set()
-        for m in pattern.finditer(search_text):
-            mentioned.add(m.group(1))
-
-        return sorted(mentioned - existing)
+        return hallucinated
 
     def _extract_code_overview(self, max_files: int = 25) -> str:
         """AST-basierte Übersicht aller .py Dateien (Modul-Docstring + Klassen + Funktionen)."""
