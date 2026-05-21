@@ -205,6 +205,37 @@ SCHLECHTE Kritikpunkte (nicht so):
             return result.deciding_predicate
         return "unknown"
 
+    def _extract_traffic_light(self, text: str) -> str:
+        """Findet die Ampel-Aussage in einem Analyse-Text via choose.
+
+        Multi-Kandidaten: jede Zeile ist ein Kandidat.
+        Predicate-Priorität: 🟢 > 🔴 > 🟡 — die erste Zeile, die das
+        höchst-priorisierte Emoji enthält, gewinnt. Wenn keine Zeile eine
+        Ampel enthält → Undecidable → konservativer Default 🟡.
+
+        Returns: '🟢' | '🟡' | '🔴'
+        """
+        from choose import choose, Predicate, PredicateBundle, Verdict, Decided
+
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        if not lines:
+            return "🟡"
+
+        def _contains(emoji):
+            return lambda line: Verdict.ACCEPT if emoji in line else Verdict.DEFER
+
+        predicates = [
+            Predicate(name="green",  evaluate=_contains("🟢"), cost_hint=1),
+            Predicate(name="red",    evaluate=_contains("🔴"), cost_hint=2),
+            Predicate(name="yellow", evaluate=_contains("🟡"), cost_hint=3),
+        ]
+        bundle = PredicateBundle(predicates)
+        result = choose(bundle, candidates=lines)
+
+        if isinstance(result.outcome, Decided):
+            return {"green": "🟢", "red": "🔴", "yellow": "🟡"}[result.deciding_predicate]
+        return "🟡"  # Undecidable → konservativer Default
+
     def _normalize_first_line(self, line: str, classification: str) -> str:
         """Transformiert die erste Validator-Zeile in 🟢/🟡/🔴-Format."""
         if classification == "traffic_light":
@@ -999,16 +1030,10 @@ Sei knapp, kein Fließtext."""
             # Fallback: ganzen Analyse-Text als Task verwenden
             followup_task = f"Fix Test-Failure aus vorheriger Iteration:\n{analysis[:500]}"
 
-        # Ampel aus Analyse extrahieren (erste 🟢/🟡/🔴 nach AMPEL-Zeile)
-        traffic_light = "🟡"  # konservativer Default
-        for line in analysis.splitlines():
-            l = line.strip()
-            if "🟢" in l:
-                traffic_light = "🟢"; break
-            if "🔴" in l:
-                traffic_light = "🔴"; break
-            if "🟡" in l:
-                traffic_light = "🟡"; break
+        # Ampel aus Analyse extrahieren via choose (Multi-Kandidaten über Zeilen).
+        # Predicate-Priorität: 🟢 > 🔴 > 🟡 (Heal-Optimismus zuerst, Heal-Pessimismus
+        # als zweite Stufe, neutral als drittletzte Option, sonst konservativer 🟡-Default).
+        traffic_light = self._extract_traffic_light(analysis)
 
         result = {
             "phase": "FAILURE_ANALYSIS",
