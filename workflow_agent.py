@@ -485,13 +485,25 @@ VOLLER CODE relevanter Dateien:
 Antworte mit einer Analyse in ZWEI Teilen. BEIDE Teile sind PFLICHT — die
 Detailanalyse (Teil A) MUSS vor der Synthese (Teil B) stehen.
 
-## TEIL A — DETAILANALYSE (5 Sektionen, alle ausfüllen)
+## TEIL A — DETAILANALYSE (6 Sektionen, alle ausfüllen)
 
 1. Verstehen Sie die Aufgabe korrekt?
 2. Welche KONKRETEN Dateien (aus der Liste oben!) sind betroffen?
 3. Wie passt es ins bestehende System? (echte Klassen/Funktionen aus der Übersicht)
 4. Gibt es Abhängigkeiten oder Konflikte?
 5. Welche Risiken sehen Sie?
+6. **Was ist DISTINKT/UNGEWÖHNLICH an diesem Projekt?**
+   - Nicht die offensichtlichen Mainstream-Patterns. Schau gezielt nach:
+     a) Eigenartige Module die nicht-trivial benannt sind
+        (Beispiele: 'choose', 'inkonsistence', 'task_classifier', 'babel_synthesizer',
+        'quelibrium', 'ossifikat' — was bedeuten die KONKRET?)
+     b) Architektur-Patterns die du sonst selten siehst
+        (z.B. Predicate-Eskalation, Triple-Stores mit Staging, Chaos-Retrieval,
+        Multi-Modell-LLM-Setup, Phase-0-Klassifikation)
+     c) Was zeigt der Code, das die Dokumentation nicht zeigt?
+
+   Konkret zitieren, nicht generisch beschreiben. Wenn dir Code-Beispiele
+   in den voll geladenen Dateien aufgefallen sind — nenn sie.
 
 ## TEIL B — Schließe AM ENDE mit GENAU dieser Header-Zeile ab:
 
@@ -1446,14 +1458,28 @@ Regeln:
 
         return "\n".join(sections) if sections else "(kein Python-Code gefunden)"
 
-    def _read_focused_files(self, task: str, max_files: int = 4,
+    def _read_focused_files(self, task: str, max_files: int = 8,
                             max_chars: int = 5000) -> str:
         """Liest volle Inhalte der task-relevanten Dateien.
 
-        Heuristik: Filenamen im Task-Text erwähnt + core-files als Fallback.
+        Heuristik:
+          1. Filenamen im Task-Text erwähnt
+          2. Topic-Keywords (vibelike, validator, ossifikat, ...) → Mapping
+          3. Core-Architecture-Files
+          4. Distinkte/neuere Module (choose, inkonsistence, task_classifier) —
+             damit die Analyse die spezifischen Patterns sieht, nicht nur die
+             "üblichen Verdächtigen"
         """
-        core_files = ["terminal.py", "workflow_agent.py", "validator2.py",
-                      "ossifikat_audit_bridge.py"]
+        # Core: orchestration + main validator + bridges
+        core_files = [
+            "workflow_agent.py", "validator2.py", "terminal.py",
+            "ossifikat_audit_bridge.py",
+        ]
+        # Distinkte/neuere Module — wichtig für ehrliche Analyse von vibelike
+        distinctive_files = [
+            "task_classifier.py", "inkonsistence.py",
+            "choose/atom.py", "choose/predicate.py",
+        ]
 
         # 1. Im Task explizit erwähnte Dateien
         mentioned: list[str] = []
@@ -1462,15 +1488,21 @@ Regeln:
             if p.name.lower() in task_lower or p.stem.lower() in task_lower:
                 mentioned.append(p.name)
 
-        # 2. Bei /vibelike, /quelibrium, /ossifikat → entsprechende Dateien priorisieren
+        # 2. Topic-Keywords → spezifische Dateien
         if "/vibelike" in task_lower or "vibelike" in task_lower:
-            mentioned.extend(["terminal.py", "workflow_agent.py"])
+            mentioned.extend(core_files + distinctive_files)
         if "validator" in task_lower:
             mentioned.append("validator2.py")
         if "ossifikat" in task_lower:
             mentioned.append("ossifikat_audit_bridge.py")
+        if "choose" in task_lower or "predicate" in task_lower:
+            mentioned.extend(["choose/atom.py", "choose/predicate.py"])
+        if "inkonsistence" in task_lower or "healthpoint" in task_lower:
+            mentioned.append("inkonsistence.py")
+        if "template" in task_lower or "classifier" in task_lower:
+            mentioned.append("task_classifier.py")
 
-        # 3. Dedupe + Fallback
+        # 3. Dedupe + Fallback auf Core (deterministisch)
         selected = list(dict.fromkeys(mentioned + core_files))[:max_files]
 
         sections = []
