@@ -489,6 +489,29 @@ Antworte mit einer Analyse:
 4. Gibt es Abhängigkeiten oder Konflikte?
 5. Welche Risiken sehen Sie?
 
+═══════════════════════════════════════════════════════════════════
+6. ERKENNTNISSE & NÄCHSTE SCHRITTE (PFLICHT — schreibe AM ENDE):
+
+Schließe deine Analyse ab mit einer Sektion, die genau so beginnt:
+
+## ERKENNTNISSE
+
+**TL;DR:**
+- [3-5 Stichpunkte mit den wichtigsten Befunden, je 1 Zeile]
+
+**Kernerkenntnisse:**
+[Was ist konkret und nicht-offensichtlich? Keine Floskeln. Wenn etwas
+auffällt das die Aufgabe nicht direkt anging, aber wichtig wirkt — hier rein.]
+
+**Empfohlene nächste Schritte:**
+- [konkrete, umsetzbare Actions — keine "sorgfältig prüfen"-Floskeln]
+- [nenne Datei + Funktion wenn relevant]
+
+**Offene Fragen:**
+- [was konntest du nicht beantworten? Welche Info fehlt?]
+
+═══════════════════════════════════════════════════════════════════
+
 Sei präzise. Wenn du eine Datei nennst die nicht in der Liste oben steht — STOP, prüfe nochmal."""
 
         print("[🤖 Qwen analysiert (mit ECHTEM Code)...]\n")
@@ -1913,6 +1936,21 @@ Was NICHT zählt:
     # TEMPLATES — Phase-Sequenzen pro Task-Typ
     # =========================================================================
 
+    def _split_analysis_synthesis(self, analysis: str) -> tuple[str, str]:
+        """Trennt Haupt-Analyse von der ERKENNTNISSE-Synthese-Section.
+
+        Returns: (main_analysis, synthesis_block)  — synthesis_block ist '' wenn fehlt.
+        """
+        # Suche '## ERKENNTNISSE' Header (case-insensitive, mit oder ohne #)
+        match = re.search(r"\n#{1,3}\s*ERKENNTNISSE\s*\n", analysis, re.IGNORECASE)
+        if not match:
+            # Alternative Schreibweisen
+            match = re.search(r"\n\*\*ERKENNTNISSE.*?\*\*\s*\n", analysis, re.IGNORECASE)
+        if not match:
+            return analysis, ""
+
+        return analysis[:match.start()].rstrip(), analysis[match.start():].strip()
+
     def phase_analysis_report(self, briefing: dict, classification: dict | None = None) -> dict:
         """Phase ANALYSE: Finalisiert das Briefing als strukturierten Analyse-Report.
 
@@ -1931,6 +1969,9 @@ Was NICHT zählt:
         code_overview = briefing.get("code_overview", "")
         focused_files = briefing.get("focused_files", "")
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+        # Erkenntnisse-Section aus Analyse extrahieren (PFLICHT-Section vom Briefing-Prompt)
+        main_analysis, synthesis = self._split_analysis_synthesis(analysis)
 
         # Halluzinations-Check auf Analyse-Text
         hallucinated_files = self._detect_hallucinated_files(analysis)
@@ -1982,14 +2023,29 @@ Diese Hinweise sollten kritisch überprüft werden.
 
 """
 
+        # Synthesis-Block prominent oben (TL;DR + Erkenntnisse + Next Steps)
+        if synthesis:
+            synthesis_block = f"""## 🎯 Erkenntnisse & nächste Schritte
+
+{synthesis}
+
+---
+
+"""
+        else:
+            synthesis_block = ("## ⚠️ Hinweis\n\n"
+                                "Das Briefing-Modell hat keine **ERKENNTNISSE**-Sektion "
+                                "produziert. Die Detailanalyse unten enthält die Befunde, "
+                                "aber keine destillierte Synthese.\n\n---\n\n")
+
         report_md = f"""# Analyse-Report — {timestamp}
 
 ## Aufgabe
 > {task}
 
-{classification_block}{meta_block}## Analyse
+{classification_block}{synthesis_block}{meta_block}## Detailanalyse
 
-{analysis}
+{main_analysis}
 
 {validator_block}{hallu_block}---
 
