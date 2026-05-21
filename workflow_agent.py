@@ -1877,10 +1877,12 @@ Was NICHT zählt:
     # TEMPLATES — Phase-Sequenzen pro Task-Typ
     # =========================================================================
 
-    def phase_analysis_report(self, briefing: dict) -> dict:
-        """Phase ANALYSE: Finalisiert das Briefing als sauberen Analyse-Report.
+    def phase_analysis_report(self, briefing: dict, classification: dict | None = None) -> dict:
+        """Phase ANALYSE: Finalisiert das Briefing als strukturierten Analyse-Report.
 
         Kein Plan, kein Execute — die Analyse IST das Endprodukt.
+        Inhalt: Klassifikation, Analyse-Text, Validator-Critique, Halluzinations-Check.
+        Code-Übersicht als Anhang am Ende (nicht als Hauptinhalt).
         Speichert Report als Markdown unter logs/analysis-<id>.md.
         """
         print("\n" + "="*70)
@@ -1888,37 +1890,126 @@ Was NICHT zählt:
         print("="*70)
 
         analysis = briefing.get("analysis", "")
+        validator_critique = briefing.get("validation", "")
         task = briefing.get("task", "")
+        code_overview = briefing.get("code_overview", "")
+        focused_files = briefing.get("focused_files", "")
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+        # Halluzinations-Check auf Analyse-Text
+        hallucinated_files = self._detect_hallucinated_files(analysis)
+
+        # Klassifikations-Block (wenn übergeben)
+        classification_block = ""
+        if classification:
+            classification_block = f"""## Task-Klassifikation
+- **Typ:** {classification.get('type', 'unbekannt')}
+- **Confidence:** {classification.get('confidence', 0):.0%}
+- **Begründung:** {classification.get('reasoning', '—')}
+
+"""
+
+        # Halluzinations-Block
+        hallu_block = ""
+        if hallucinated_files:
+            hallu_block = f"""## ⚠️ Halluzinations-Hinweis
+
+Folgende Dateinamen wurden in der Analyse erwähnt, existieren aber **nicht** im Projekt:
+
+{chr(10).join(f'- `{f}`' for f in hallucinated_files)}
+
+Diese Hinweise sollten kritisch überprüft werden.
+
+"""
+        else:
+            hallu_block = "## ✅ Halluzinations-Check\n\nKeine erfundenen Dateinamen in der Analyse erkannt.\n\n"
+
+        # Validator-Block (kann sehr kurz sein, das ist OK)
+        validator_block = ""
+        if validator_critique and validator_critique != "🟢":
+            validator_block = f"""## Adversarialer Critic-Feedback
+
+{validator_critique}
+
+"""
+        elif validator_critique == "🟢":
+            validator_block = "## Adversarialer Critic-Feedback\n\n🟢 Kein Einspruch.\n\n"
+
+        # Project-Metadata-Block
+        project_files = sorted(p.name for p in self.root.glob("*.py"))
+        meta_block = f"""## Projekt-Metadaten
+
+- **Root:** `{self.root}`
+- **Python-Dateien:** {len(project_files)}
+- **Tests vorhanden:** {(self.root / "tests").exists()}
+- **Git-Repo:** {(self.root / ".git").exists()}
+
+"""
 
         report_md = f"""# Analyse-Report — {timestamp}
 
 ## Aufgabe
-{task}
+> {task}
 
-## Analyse
+{classification_block}{meta_block}## Analyse
+
 {analysis}
 
-## Code-Übersicht (extrahiert)
+{validator_block}{hallu_block}---
+
+## Anhang A: Code-Übersicht (AST-extrahiert)
+
+<details>
+<summary>Strukturelle Übersicht aller .py-Dateien im Projekt (zum Aufklappen)</summary>
+
 ```
-{briefing.get("code_overview", "")[:2000]}
+{code_overview}
 ```
+
+</details>
+
+## Anhang B: Voll geladene Dateien (für Briefing-Kontext)
+
+<details>
+<summary>Inhalte der task-relevanten Dateien (zum Aufklappen)</summary>
+
+```
+{focused_files[:8000]}
+{('... [gekürzt — gesamt ' + str(len(focused_files)) + ' chars]') if len(focused_files) > 8000 else ''}
+```
+
+</details>
 
 ---
 *Generiert: {datetime.now().isoformat()}*
+*Workflow: vibelike Analyse-Template (Briefing → Report → END)*
 """
 
         report_path = self.root / "logs" / f"analysis-{timestamp}.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report_md)
 
+        # Console-Summary statt nur Filename
         print(f"\n✅ Analyse-Report gespeichert: {report_path.relative_to(self.root)}")
-        print(f"   Größe: {report_path.stat().st_size:,} bytes\n")
+        print(f"   Größe: {report_path.stat().st_size:,} bytes")
+        print(f"\n   Inhalt:")
+        print(f"   • Aufgabe + Klassifikation")
+        print(f"   • Projekt-Metadaten ({len(project_files)} Dateien)")
+        print(f"   • Analyse-Text ({len(analysis):,} chars)")
+        if hallucinated_files:
+            print(f"   • ⚠️  Halluzinations-Warnung: {len(hallucinated_files)} erfundene Dateien")
+        else:
+            print(f"   • ✅ Halluzinations-Check: clean")
+        print(f"   • Validator-Critique")
+        print(f"   • Anhang A: AST-Übersicht ({code_overview.count(chr(10).join(['📄']))} Dateien)")
+        print(f"   • Anhang B: Voll-Geladene Files ({focused_files.count('═══')//2} Dateien)\n")
 
         return {
             "phase": "ANALYSIS_REPORT",
             "report_path": str(report_path),
+            "completed": True,  # für Workflow-Summary
             "timestamp": datetime.now().isoformat(),
+            "hallucinated_files": hallucinated_files,
         }
 
     def run_workflow(self, task: str, iteration: int = 0, max_iterations: int = 3,
@@ -1931,6 +2022,7 @@ Was NICHT zählt:
           - BUG_FIX, REFACTOR, EXPLAIN: noch nicht implementiert → fallback IMPLEMENTATION
         """
         # PHASE 0: Task-Klassifikation
+        classification = None
         if iteration == 0:  # nur beim ersten Lauf klassifizieren, nicht bei Retries
             print("\n" + "="*70)
             print("PHASE 0: TASK-KLASSIFIKATION")
@@ -1950,14 +2042,15 @@ Was NICHT zählt:
 
         # ROUTE: Template-Auswahl
         if task_type == "ANALYSIS":
-            return self._run_analysis_template(task, iteration, parent_id)
+            return self._run_analysis_template(task, iteration, parent_id, classification)
         elif task_type == "EXPLAIN":
-            return self._run_analysis_template(task, iteration, parent_id)  # gleicher Pfad
+            return self._run_analysis_template(task, iteration, parent_id, classification)
         else:
             # IMPLEMENTATION, BUG_FIX, REFACTOR → Vollworkflow
             return self._run_implementation_template(task, task_type, iteration, max_iterations, parent_id)
 
-    def _run_analysis_template(self, task: str, iteration: int, parent_id: str | None) -> dict:
+    def _run_analysis_template(self, task: str, iteration: int, parent_id: str | None,
+                                 classification: dict | None = None) -> dict:
         """ANALYSIS-Template: Briefing → Report → END."""
         wf_id = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.current_workflow = {
@@ -1970,9 +2063,11 @@ Was NICHT zählt:
         }
 
         briefing = self.phase_briefing(task)
+        # ANALYSIS-Briefing als "completed" markieren (kein User-Gate noetig)
+        briefing["completed"] = True
         self.current_workflow["phases"]["briefing"] = briefing
 
-        report = self.phase_analysis_report(briefing)
+        report = self.phase_analysis_report(briefing, classification=classification)
         self.current_workflow["phases"]["report"] = report
 
         # Log workflow

@@ -434,11 +434,24 @@ def research_mode(retriever):
         print("❌ Keine Query eingegeben.")
         return
 
-    # Multi-retrieval: Haupt-Query + Varianten
+    # DE->EN Pre-Retrieval Hook (deutsche Queries -> englische Suche)
+    search_query = query
+    try:
+        from query_translator import QueryTranslator
+        translator = QueryTranslator()
+        tx = translator.translate(query)
+        if not tx["skipped"] and tx["translated"] != tx["original"]:
+            search_query = tx["translated"]
+            cache_marker = "📦" if tx["cache_hit"] else "🌐"
+            print(f"  {cache_marker} Translated: \"{search_query}\"  ({tx['duration_ms']:.0f}ms)")
+    except Exception as e:
+        print(f"[WARN] Translation skipped: {e}")
+
+    # Multi-retrieval: Haupt-Query + Varianten (auf der englischen Fassung)
     queries = [
-        query,
-        f"how {query}",
-        f"implementation {query}",
+        search_query,
+        f"how {search_query}",
+        f"implementation {search_query}",
     ]
 
     all_docs = []
@@ -474,6 +487,27 @@ def research_mode(retriever):
         print(f"    Content: {content}")
         print("    " + "-" * 56)
 
+    # Optionale Babel-Synthese (Feynman/Science) ueber die Top-Docs
+    print()
+    synth_choice = input("📚 Synthese-Modus? [f]eynman / [s]cience / [Enter]=keine: ").strip().lower()
+    if synth_choice in ("f", "feynman", "s", "science"):
+        mode = "feynman" if synth_choice.startswith("f") else "science"
+        try:
+            from babel_synthesizer import BabelSynthesizer
+            synth = BabelSynthesizer(default_mode=mode)
+            print(f"\n[BABEL] Synthese laeuft (mode={mode}, model={synth.qwen.model})...")
+            result = synth.synthesize(query, unique_docs)
+            print("\n" + "=" * 60)
+            print(f"BABEL-SYNTHESE ({result['mode'].upper()})")
+            print("=" * 60)
+            print(result["analysis"])
+            print()
+            print(f"[Quellen: {result['source_stats']} | {result['duration_s']}s]")
+        except ImportError as e:
+            print(f"[WARN] babel_synthesizer nicht ladbar: {e}")
+        except Exception as e:
+            print(f"[ERR] Babel-Synthese fehlgeschlagen: {e}")
+
 
 def start_workflow():
     """Start the 5-phase development workflow."""
@@ -507,12 +541,17 @@ def start_workflow():
             "verification":       "4.  VERIFICATION        ",
             "failure_analysis":   "4b. FAILURE-ANALYSIS    ",
             "commit":             "5.  COMMIT              ",
+            "report":             "R.  ANALYSIS-REPORT     ",
         }
+        # Erfolgs-Indikatoren je Phase: approved (User-Gate), tests_passed,
+        # committed, oder completed (für ANALYSIS-Phasen ohne Gate).
+        success_keys = ("approved", "tests_passed", "committed", "completed")
         if workflow.get("iteration"):
             print(f"Iteration: {workflow['iteration']} (parent: {workflow.get('parent_id')})")
         for phase_name, phase_data in workflow.get("phases", {}).items():
             if phase_data:
-                status = "✓" if phase_data.get("approved") or phase_data.get("tests_passed") or phase_data.get("committed") else "✗"
+                ok = any(phase_data.get(k) for k in success_keys)
+                status = "✓" if ok else "✗"
                 label = phase_labels.get(phase_name, phase_name.upper())
                 print(f"{status} {label} {phase_data.get('timestamp', 'N/A')}")
         if workflow.get("phases", {}).get("commit", {}).get("steps"):
