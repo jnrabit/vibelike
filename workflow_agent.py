@@ -1523,16 +1523,74 @@ ANWEISUNG:
 
         return current_verification, heal_log, False
 
+    # ─── choose-basierte Best-Attempt-Auswahl (Multi-Kandidaten) ─────────────
+    # Erste echte Multi-Candidate-Nutzung: aus N Heal-Iterationen die BESTE
+    # picken (statt blind die letzte zu nehmen). Verhindert Regression wenn
+    # ein späterer Heal-Cycle den Code schlechter macht als ein früherer.
+
+    def _choose_best_heal_attempt(self, attempts: list[dict]) -> dict:
+        """Wählt aus N Heal-Iterationen die qualitativ beste via choose.
+
+        Multi-Kandidaten-Pattern: jede Iteration ist ein Kandidat, Predicates
+        eskalieren über Qualitätsstufen. Auf Ties wird der neuere bevorzugt
+        (candidates newest-first sortiert).
+
+        Args:
+            attempts: list von {"changes": [...], "static": Report, "cycle": int}
+
+        Returns: einer der attempts-Dicts (immer ein gültiger).
+        """
+        from choose import choose, Predicate, PredicateBundle, Verdict, Decided, Undecidable
+
+        # Newest-first: bei gleichem Verdict gewinnt der neuere Versuch
+        candidates = list(reversed(attempts))
+
+        def _verdict_is(target):
+            return lambda att: (
+                Verdict.ACCEPT if att["static"].verdict == target else Verdict.DEFER
+            )
+
+        def _no_high_severity(att):
+            return (
+                Verdict.ACCEPT
+                if not any(f.severity == "high" for f in att["static"].findings)
+                else Verdict.DEFER
+            )
+
+        predicates = [
+            Predicate(name="green_verdict",    evaluate=_verdict_is("🟢"),    cost_hint=1),
+            Predicate(name="yellow_verdict",   evaluate=_verdict_is("🟡"),    cost_hint=5),
+            Predicate(name="no_high_severity", evaluate=_no_high_severity, cost_hint=10),
+        ]
+        bundle = PredicateBundle(predicates)
+        result = choose(bundle, candidates=candidates)
+
+        if isinstance(result.outcome, Decided):
+            return result.outcome.candidate
+
+        # Undecidable: alle Attempts haben 🔴 mit high-severity Findings.
+        # Fallback: neuestes (= candidates[0]).
+        return candidates[0]
+
     def _self_heal_execution(self, planned_changes, plan, briefing,
                               static_report, review, max_cycles: int = 2):
         """Mikro-Heal-Loop: bei StaticValidator 🔴 die betroffenen Files vom 7b
         neu generieren lassen, re-validieren. Max N Cycles.
+
+        Nutzt `choose` (Multi-Kandidaten) am Ende: aus allen Iterationen
+        wird die qualitativ beste gewählt — verhindert Regression wenn ein
+        späterer Cycle den Code schlechter macht als ein früherer.
 
         Returns: (new_planned_changes, new_static_report, heal_log).
         """
         heal_log = []
         current_changes = list(planned_changes)
         current_static = static_report
+
+        # Track ALL attempts inkl. Original — für choose-basierte Auswahl am Ende
+        attempts = [{"changes": list(current_changes),
+                     "static": current_static,
+                     "cycle": 0}]
 
         for cycle in range(1, max_cycles + 1):
             if current_static.verdict != "🔴":
@@ -1626,7 +1684,20 @@ ANWEISUNG:
             })
             current_static = new_static
 
-        return current_changes, current_static, heal_log
+            # Diese Iteration als Kandidat für choose-basierte Auswahl tracken
+            attempts.append({"changes": list(current_changes),
+                             "static": current_static,
+                             "cycle": cycle})
+
+        # Multi-Kandidaten-Wahl via choose: beste Iteration über alle Cycles
+        best = self._choose_best_heal_attempt(attempts)
+        if best["cycle"] != attempts[-1]["cycle"]:
+            print(f"\n🎯 choose-Auswahl: Iteration #{best['cycle']} ist besser als "
+                  f"letzte (#{attempts[-1]['cycle']}) — verwende diese")
+            heal_log.append({"chose": best["cycle"],
+                             "rejected_latest": attempts[-1]["cycle"],
+                             "reason": "earlier iteration scored better"})
+        return best["changes"], best["static"], heal_log
 
     def _parse_code(self, code: str) -> list:
         """Parse Code-Output, gibt Liste von {path, content, exists} zurück. SCHREIBT NICHT."""
