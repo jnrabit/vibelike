@@ -300,27 +300,137 @@ def stage_c() -> bool:
         return bool(findings)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# STUFE D — Fixes Praedikat-Schema: constrained extraction
+# ─────────────────────────────────────────────────────────────────────────────
+# Kern-Trick: was in Stufe C ein CROSS-Praedikat-Widerspruch war
+# ("erbt_von X" vs "ist self-contained"), wird hier ein GLEICHES-Praedikat-
+# Wertkonflikt: inheritance_status = "extends:X" -> "none". Das faengt das Audit.
+
+CANONICAL_SUBJECTS = ["StaticValidatorV2", "validator2.py"]
+
+ARCH_SCHEMA = {
+    "inheritance_status":
+        "Erbverhalten einer Klasse. Wert: 'extends:<Basisklasse>' ODER 'none'.",
+    "dependency_static_validator":
+        "Haengt die Datei von static_validator.py ab? Wert: 'yes' ODER 'no'.",
+}
+
+
+def _schema_system_prompt() -> str:
+    pred_lines = "\n".join(f"  - {p}: {desc}" for p, desc in ARCH_SCHEMA.items())
+    return (
+        "Du bist ein Schema-Mapper. Ordne die Aussagen des Textes in ein FESTES "
+        "Schema ein. Du extrahierst NICHT frei, du MAPPST.\n\n"
+        "Erlaubte Praedikate (NUR diese, exakt geschrieben):\n"
+        f"{pred_lines}\n\n"
+        "Regeln:\n"
+        f"- Subjekt: EXAKT einer dieser Namen: {', '.join(CANONICAL_SUBJECTS)}\n"
+        "- Praedikat: NUR aus der Liste oben.\n"
+        "- object: exakt in der vorgegebenen Wertform.\n"
+        "- Aussage die in kein Praedikat passt: WEGLASSEN.\n"
+        "- Antworte AUSSCHLIESSLICH als JSON-Array:\n"
+        '  [{"subject":"...","predicate":"...","object":"...","confidence":0.9}]'
+    )
+
+
+def extract_schema_constrained(extractor, text: str) -> list[dict]:
+    """Constrained extraction: zwingt das Modell in ARCH_SCHEMA."""
+    import requests
+    resp = requests.post(
+        extractor.api_endpoint,
+        json={"model": extractor.model, "system": _schema_system_prompt(),
+              "prompt": f"Mappe diesen Text ins Schema:\n\n{text}", "stream": False},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    triples = extractor._parse_json_response(resp.json().get("response", "").strip())
+    # Hard filter: nur Schema-konforme Praedikate + kanonische Subjekte durchlassen
+    return [t for t in triples
+            if t.get("predicate") in ARCH_SCHEMA
+            and t.get("subject") in CANONICAL_SUBJECTS]
+
+
+def stage_d() -> bool:
+    print("\n" + "=" * 70)
+    print("STUFE D — FIXES SCHEMA: faengt constrained extraction die Veraltung?")
+    print("=" * 70)
+
+    try:
+        from ossifikat.extractor import QwenExtractor
+        extractor = QwenExtractor(model="qwen2.5-coder:7b")
+    except Exception as e:
+        print(f"  [SKIP] Extractor/Ollama nicht verfuegbar: {e}")
+        return False
+
+    with tempfile.TemporaryDirectory() as td:
+        db = str(Path(td) / "stage_d.db")
+        store = OssifikatStore(db)
+        for pred in ARCH_SCHEMA:
+            declare_functional(store, pred)
+
+        print("\n  [Lauf 1] mappe 'vorher' ins Schema...")
+        t1 = extract_schema_constrained(extractor, ANALYSIS_BEFORE)
+        n1 = _stage_and_confirm(store, t1, "schema-run-1")
+        print(f"    {n1} schema-konforme Triples")
+
+        print("\n  [Lauf 2] mappe 'nachher' ins Schema...")
+        t2 = extract_schema_constrained(extractor, ANALYSIS_AFTER)
+        n2 = _stage_and_confirm(store, t2, "schema-run-2")
+        print(f"    {n2} schema-konforme Triples")
+
+        view = AuditView(db)
+        print("\n  Schema-konforme Triples:")
+        for t in view.all_triples():
+            if t.predicate in _META_PREDICATES:
+                continue
+            print(f"    ({t.subject}) --[{t.predicate}]--> ({t.object})")
+
+        findings = find_functional_predicate_conflicts(view)
+        print("\n  Conflict-Audit:")
+        _print_findings(findings)
+        store.close()
+
+        print("\n  ERGEBNIS STUFE D: "
+              + ("✅ Constrained extraction -> gleiches Praedikat, anderer Wert -> Audit feuert"
+                 if findings else
+                 "⚠️  kein Konflikt — selbst ins Schema gezwungen mappt das lokale Modell\n"
+                 "      nicht konsistent genug (hier braucht es ein staerkeres Modell\n"
+                 "      oder einen deterministischen Mapper)"))
+        return bool(findings)
+
+
+_STAGES = {"a": stage_a, "b": stage_b, "c": stage_c, "d": stage_d}
+
+
 if __name__ == "__main__":
+    # Optional: einzelne Stufe via argv (z.B. 'python3 ...py d') fuer schnelle Iteration
+    if len(sys.argv) > 1:
+        for key in sys.argv[1:]:
+            _STAGES[key.lower()]()
+        sys.exit(0)
+
     a_ok = stage_a()
     b_ok = stage_b()
     c_ok = stage_c()
+    d_ok = stage_d()
 
     print("\n" + "=" * 70)
     print("FAZIT")
     print("=" * 70)
-    print(f"  Stufe A (Idee tauglich?):              {'JA' if a_ok else 'NEIN'}")
-    print(f"  Stufe B (rohe lokale Extraktion ok?):  {'JA' if b_ok else 'NEIN'}")
-    print(f"  Stufe C (mit Vokabular-Scaffolding?):  {'JA' if c_ok else 'NEIN'}")
+    print(f"  Stufe A (Idee tauglich?):               {'JA' if a_ok else 'NEIN'}")
+    print(f"  Stufe B (rohe lokale Extraktion?):      {'JA' if b_ok else 'NEIN'}")
+    print(f"  Stufe C (Vokabular-Scaffolding?):       {'JA' if c_ok else 'NEIN'}")
+    print(f"  Stufe D (fixes Schema, constrained?):   {'JA' if d_ok else 'NEIN'}")
     print()
-    if a_ok and not b_ok and c_ok:
-        print("  → DURCHBRUCH: Idee traegt, und Canonicalization-Scaffolding schlaegt")
-        print("    Modellgroesse. Autarkie-treu loesbar — Vokabular-Injektion in den")
-        print("    Extractor + Live-Wiring in den Workflow lohnt sich.")
-    elif a_ok and not b_ok and not c_ok:
-        print("  → Idee traegt, aber selbst mit Vokabular-Scaffolding kanonisiert das")
-        print("    lokale Modell nicht zuverlaessig. HIER wuerde ein staerkeres Modell")
-        print("    (oder ein deterministischer Entity-Linker) den Unterschied machen.")
-    elif a_ok and b_ok:
-        print("  → Idee UND rohe Extraktion tragen schon. Live-Wiring lohnt direkt.")
-    elif not a_ok:
+    if not a_ok:
         print("  → Selbst mit sauberen Claims faengt das Audit nichts. Idee ueberdenken.")
+    elif d_ok:
+        print("  → DURCHBRUCH: fixes Praedikat-Schema schlaegt Modellgroesse. Das")
+        print("    lokale Modell kann ins Schema mappen -> Audit feuert. Autarkie-treu.")
+        print("    Naechster Schritt: Schema-Extractor ins ossifikat-Paket + Live-Wiring.")
+    elif c_ok:
+        print("  → Canonicalization-Scaffolding reicht; fixes Schema waere zusaetzlich sauberer.")
+    else:
+        print("  → Idee traegt, aber lokale Extraktion (auch constrained) ist zu wackelig.")
+        print("    HIER wuerde ein staerkeres Modell oder ein deterministischer Mapper helfen.")
