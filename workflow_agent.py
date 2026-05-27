@@ -79,6 +79,11 @@ class WorkflowAgent:
         # Task-Klassifikator (Phase 0) -- nutzt das Reasoning-Modell
         self.classifier = TaskClassifier(self.analyzer_qwen)
 
+        # Healthpoint: versiegelter Ziel-Anker gegen Phasen-Drift (warn-only).
+        # Pro Workflow neu versiegelt, an Phasengrenzen gegen-geprueft.
+        self.healthpoint = None
+        self.healthpoint_enabled = True
+
         # Modell-Setup zeigen
         print(f"[🧠 Reasoning  : {self.analyzer_qwen.model}]")
         print(f"[💻 Code-Gen   : {self.qwen.model}]")
@@ -2323,6 +2328,34 @@ Diese Hinweise sollten kritisch überprüft werden.
         print()
         return self.current_workflow
 
+    def _check_healthpoint(self, phase_name: str, output: str) -> None:
+        """Warn-only Drift-Check eines Phasen-Outputs gegen den versiegelten Ziel-Anker.
+
+        Unterbricht den Workflow NICHT — meldet Drift sichtbar und loggt das Verdict.
+        Judge ist das Reasoning-Modell (analyzer_qwen).
+        """
+        if not self.healthpoint_enabled or self.healthpoint is None:
+            return
+        try:
+            from healthpoint import check_drift
+            verdict = check_drift(self.healthpoint, phase_name, output or "", self.analyzer_qwen)
+        except Exception as e:
+            print(f"   [Healthpoint-Check übersprungen: {e}]")
+            return
+
+        if self.current_workflow is not None:
+            self.current_workflow.setdefault("healthpoint_checks", []).append(
+                {"phase": phase_name, "aligned": verdict.aligned, "drift": verdict.drift}
+            )
+
+        if verdict.aligned:
+            print(f"\n   🎯 Healthpoint [{phase_name}]: 🟢 am Ziel")
+        else:
+            print("\n" + "🟠" * 35)
+            print(f"🟠 HEALTHPOINT-DRIFT [{phase_name}]: {verdict.drift}")
+            print("🟠 (nur Warnung — Workflow läuft weiter)")
+            print("🟠" * 35)
+
     def _run_implementation_template(self, task: str, task_type: str,
                                        iteration: int, max_iterations: int,
                                        parent_id: str | None) -> dict:
@@ -2346,6 +2379,13 @@ Diese Hinweise sollten kritisch überprüft werden.
         briefing = self.phase_briefing(task, task_type=task_type)
         self.current_workflow["phases"]["briefing"] = briefing
 
+        # Healthpoint versiegeln: das Ziel ist ab hier read-only, alle folgenden
+        # Phasen werden dagegen geprueft (warn-only).
+        if self.healthpoint_enabled and iteration == 0:
+            from healthpoint import Healthpoint
+            self.healthpoint = Healthpoint(goal=task)
+            print(f"\n   🎯 Healthpoint versiegelt: {task[:80]}")
+
         # Phase 2A: PLANNING - STRATEGIE
         # BUG_FIX überspringt das Strategie-Gate — ein lokaler Fix braucht kein
         # separates "allgemeines Vorgehen". Der FIX-ANSATZ aus dem Briefing dient
@@ -2364,6 +2404,8 @@ Diese Hinweise sollten kritisch überprüft werden.
                 print("\n❌ Workflow abgebrochen (Strategie nicht genehmigt).\n")
                 return self.current_workflow
         self.current_workflow["phases"]["planning_strategy"] = strategy
+        if not strategy.get("skipped"):
+            self._check_healthpoint("STRATEGIE", strategy.get("strategy", ""))
 
         # Phase 2B: PLANNING - DETAILPLAN
         planning = self.phase_planning_detailed(briefing, strategy)
@@ -2371,6 +2413,7 @@ Diese Hinweise sollten kritisch überprüft werden.
             print("\n❌ Workflow abgebrochen (Detail-Plan nicht genehmigt).\n")
             return self.current_workflow
         self.current_workflow["phases"]["planning_detailed"] = planning
+        self._check_healthpoint("DETAILPLAN", planning.get("plan", ""))
 
         # Phase 3: EXECUTION (Dry-Run + Code-Review + User-Gate)
         execution = self.phase_execution(briefing, planning)
@@ -2379,6 +2422,11 @@ Diese Hinweise sollten kritisch überprüft werden.
             print("\n❌ Workflow abgebrochen (Code-Änderungen nicht genehmigt).\n")
             self._executor.shutdown(wait=False)
             return self.current_workflow
+
+        # Final Master-Check: dient der erzeugte Code noch dem versiegelten Ziel?
+        _exec_files = ", ".join(c.get("path", "?") for c in execution.get("planned_changes", []))
+        self._check_healthpoint("EXECUTION", f"Geänderte Dateien: {_exec_files}\n\n"
+                                + execution.get("code", "")[:1500])
 
         # Phase 4: VERIFICATION (REFACTOR: Fokus auf Verhaltens-Invarianz)
         verification = self.phase_verification(execution, task_type=task_type)
