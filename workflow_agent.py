@@ -2046,15 +2046,6 @@ Was NICHT zählt:
         print("─"*70)
         return result
 
-    def _parse_and_write_code(self, code: str) -> list:
-        """Legacy-API: parse + write in einem Schritt (für Tests / externe Aufrufer)."""
-        changes = self._parse_code(code)
-        return self._write_code(changes)
-
-    # =========================================================================
-    # MAIN WORKFLOW
-    # =========================================================================
-
     # =========================================================================
     # TEMPLATES — Phase-Sequenzen pro Task-Typ
     # =========================================================================
