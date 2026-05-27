@@ -437,8 +437,114 @@ Erstelle die {kind} NEU unter strikter Beachtung des Feedbacks.
     # PHASE 1: BRIEFING
     # =========================================================================
 
-    def phase_briefing(self, task: str) -> dict:
-        """Phase 1: Analyse der Aufgabe + ECHTER PROJEKTCODE."""
+    # Typ-spezifische Briefing-Framings: jeder Task-Typ kriegt eine eigene
+    # Rolle + Sektionsstruktur + Abschluss-Header. Nur ANALYSIS/EXPLAIN haben
+    # den "## ERKENNTNISSE"-Block (den _split_analysis_synthesis braucht).
+    _BRIEFING_FRAMINGS: dict[str, dict[str, str]] = {
+        "ANALYSIS": {
+            "role": "Du bist ein Senior Code-Architekt. Analysiere diese Aufgabe.",
+            "body": """Antworte mit einer Analyse in ZWEI Teilen. BEIDE Teile sind PFLICHT — die
+Detailanalyse (Teil A) MUSS vor der Synthese (Teil B) stehen.
+
+## TEIL A — DETAILANALYSE (6 Sektionen, alle ausfüllen)
+
+1. Verstehen Sie die Aufgabe korrekt?
+2. Welche KONKRETEN Dateien (aus der Liste oben!) sind betroffen?
+3. Wie passt es ins bestehende System? (echte Klassen/Funktionen aus der Übersicht)
+4. Gibt es Abhängigkeiten oder Konflikte?
+5. Welche Risiken sehen Sie?
+6. **Was ist DISTINKT an diesem Projekt?** Nenne 1-2 Patterns oder Module
+   die du in anderen Codebases selten siehst — mit Code-Zitat aus dem
+   Star-File. Wenn nichts auffällt, schreib "nichts ungewöhnlich".
+
+## TEIL B — Schließe AM ENDE mit GENAU dieser Header-Zeile ab:
+
+## ERKENNTNISSE
+
+**TL;DR:**
+- [3-5 Stichpunkte mit den wichtigsten Befunden, je 1 Zeile]
+
+**Kernerkenntnisse:**
+[Was ist konkret und nicht-offensichtlich? Keine Floskeln.]
+
+**Empfohlene nächste Schritte:**
+- [konkrete, umsetzbare Actions — keine "sorgfältig prüfen"-Floskeln]
+- [nenne Datei + Funktion wenn relevant]
+
+**Offene Fragen:**
+- [was konntest du nicht beantworten? Welche Info fehlt?]
+
+WICHTIG: Teil A zuerst (alle 6 Sektionen), dann Teil B mit "## ERKENNTNISSE".""",
+        },
+        "IMPLEMENTATION": {
+            "role": "Du bist ein Senior Software-Engineer und planst eine CODE-ÄNDERUNG.",
+            "body": """Liefere ein präzises Umsetzungs-Briefing. KEINE Analyse-Synthese,
+KEIN ERKENNTNISSE-Block — du bereitest eine Implementierung vor.
+
+1. **Ziel:** Was genau soll am Ende funktionieren? (1-2 Sätze)
+2. **Betroffene Dateien:** Welche existierenden Dateien (aus der Liste!) werden
+   geändert, welche NEU angelegt? Pro Datei: was ändert sich.
+3. **Einbettung:** An welche existierenden Klassen/Funktionen dockt es an?
+   (echte Namen aus der Übersicht)
+4. **Abhängigkeiten & Konflikte:** Was könnte brechen? Imports, Signaturen, Aufrufer.
+5. **Risiken & Edge-Cases:** Worauf bei der Umsetzung achten?
+
+Schließe mit:
+## UMSETZUNGS-SKIZZE
+- [3-5 konkrete Schritte in Reihenfolge — je Datei:Funktion]""",
+        },
+        "BUG_FIX": {
+            "role": "Du bist ein erfahrener Debugging-Engineer und behebst einen BUG.",
+            "body": """Fokus: Ursache finden, kleinstmöglicher Fix. KEIN neues Feature,
+KEINE Analyse-Synthese, KEINE Umbauten über den Fix hinaus.
+
+1. **Symptom:** Was geht schief? (1 Satz, aus der Aufgabe abgeleitet)
+2. **Vermutete Fehlerstelle:** Welche Datei:Funktion (aus der Liste/Übersicht)?
+   Begründe anhand des geladenen Codes.
+3. **Root-Cause-Hypothese:** WARUM passiert der Fehler? Konkrete Zeile/Logik benennen.
+4. **Minimaler Fix:** Kleinste Änderung die das Symptom behebt.
+5. **Regressions-Risiko:** Was könnte der Fix kaputt machen? Was muss getestet werden?
+
+Schließe mit:
+## FIX-ANSATZ
+- Datei:Funktion + 1-2 Zeilen was konkret geändert wird""",
+        },
+        "REFACTOR": {
+            "role": "Du bist ein Senior-Engineer und planst ein REFACTORING.",
+            "body": """Verhalten bleibt IDENTISCH, nur die Struktur ändert sich.
+KEIN neues Feature, KEINE Verhaltensänderung.
+
+1. **Ist-Struktur:** Wie ist der relevante Code aktuell organisiert? (echte Namen)
+2. **Soll-Struktur:** Was wird extrahiert / zusammengelegt / umbenannt?
+3. **Verhaltens-Invarianten:** Was darf sich NICHT ändern? (öffentliche Signaturen,
+   Rückgabewerte, Seiteneffekte)
+4. **Betroffene Aufrufer:** Wer nutzt den Code? Was muss mitgezogen werden?
+5. **Risiken:** Wo droht versehentliche Verhaltensänderung?
+
+Schließe mit:
+## REFACTOR-SKIZZE
+- [Schritte in sicherer Reihenfolge — je Datei:Funktion]""",
+        },
+    }
+
+    def _briefing_framing(self, task_type: str) -> dict[str, str]:
+        """Wählt Rolle + Sektionsstruktur für den Briefing-Prompt.
+
+        EXPLAIN teilt sich das ANALYSIS-Framing (beide reine Wissens-Outputs),
+        unbekannte Typen fallen auf IMPLEMENTATION zurück.
+        """
+        if task_type == "EXPLAIN":
+            task_type = "ANALYSIS"
+        return self._BRIEFING_FRAMINGS.get(task_type, self._BRIEFING_FRAMINGS["IMPLEMENTATION"])
+
+    def phase_briefing(self, task: str, task_type: str = "IMPLEMENTATION") -> dict:
+        """Phase 1: Analyse der Aufgabe + ECHTER PROJEKTCODE.
+
+        task_type steuert das Briefing-Framing (Rolle + Sektionen + Abschluss):
+        ANALYSIS/EXPLAIN liefern eine Synthese mit ## ERKENNTNISSE, die
+        Code-schreibenden Typen (IMPLEMENTATION/BUG_FIX/REFACTOR) liefern eine
+        umsetzungsorientierte Skizze.
+        """
         print("\n" + "="*70)
         print("PHASE 1: BRIEFING")
         print("="*70)
@@ -453,8 +559,11 @@ Erstelle die {kind} NEU unter strikter Beachtung des Feedbacks.
         print(f"   Übersicht: {code_overview.count('📄')} Dateien strukturiert")
         print(f"   Volle Inhalte: {focused_files.count('═══')//2} Dateien gelesen\n")
 
+        # Typ-spezifisches Framing (Rolle + Sektionen + Abschluss)
+        framing = self._briefing_framing(task_type)
+
         # Qwen analysiert — Authoritative File List ZUERST + ZULETZT (Sandwich)
-        analysis_prompt = f"""Du bist ein Senior Code-Architekt. Analysiere diese Aufgabe.
+        analysis_prompt = f"""{framing['role']}
 
 ═══════════════════════════════════════════════════════════════════
 🚨 VERBINDLICHE DATEILISTE — DAS SIND DIE EINZIGEN EXISTIERENDEN .py DATEIEN:
@@ -482,43 +591,11 @@ VOLLER CODE relevanter Dateien:
 {authoritative}
 ═══════════════════════════════════════════════════════════════════
 
-Antworte mit einer Analyse in ZWEI Teilen. BEIDE Teile sind PFLICHT — die
-Detailanalyse (Teil A) MUSS vor der Synthese (Teil B) stehen.
+{framing['body']}
 
-## TEIL A — DETAILANALYSE (6 Sektionen, alle ausfüllen)
-
-1. Verstehen Sie die Aufgabe korrekt?
-2. Welche KONKRETEN Dateien (aus der Liste oben!) sind betroffen?
-3. Wie passt es ins bestehende System? (echte Klassen/Funktionen aus der Übersicht)
-4. Gibt es Abhängigkeiten oder Konflikte?
-5. Welche Risiken sehen Sie?
-6. **Was ist DISTINKT an diesem Projekt?** Nenne 1-2 Patterns oder Module
-   die du in anderen Codebases selten siehst — mit Code-Zitat aus dem
-   Star-File. Wenn nichts auffällt, schreib "nichts ungewöhnlich".
-
-## TEIL B — Schließe AM ENDE mit GENAU dieser Header-Zeile ab:
-
-## ERKENNTNISSE
-
-**TL;DR:**
-- [3-5 Stichpunkte mit den wichtigsten Befunden, je 1 Zeile]
-
-**Kernerkenntnisse:**
-[Was ist konkret und nicht-offensichtlich? Keine Floskeln. Was über die
-Detailanalyse oben hinaus auffiel.]
-
-**Empfohlene nächste Schritte:**
-- [konkrete, umsetzbare Actions — keine "sorgfältig prüfen"-Floskeln]
-- [nenne Datei + Funktion wenn relevant]
-
-**Offene Fragen:**
-- [was konntest du nicht beantworten? Welche Info fehlt?]
-
----
-
-WICHTIG: Beide Teile A und B liefern. Teil A zuerst (alle 5 Sektionen),
-dann Teil B mit "## ERKENNTNISSE" als Header.
-Wenn du eine Datei nennst die nicht in der Liste oben steht — STOP, prüfe nochmal."""
+═══════════════════════════════════════════════════════════════════
+🚨 Wenn du eine Datei nennst die nicht in der Liste oben steht — STOP, prüfe nochmal.
+═══════════════════════════════════════════════════════════════════"""
 
         print("[🤖 Qwen analysiert (mit ECHTEM Code)...]\n")
         analysis = self.analyzer_qwen.generate(analysis_prompt, temperature=0.3, stream=True)
@@ -973,11 +1050,18 @@ Generiere kompletten, lauffähigen Code."""
     # PHASE 4: VERIFICATION
     # =========================================================================
 
-    def phase_verification(self, execution: dict) -> dict:
-        """Phase 4: Automatische Test-Verifikation."""
+    def phase_verification(self, execution: dict, task_type: str = "IMPLEMENTATION") -> dict:
+        """Phase 4: Automatische Test-Verifikation.
+
+        Bei REFACTOR sind grüne Tests der Beweis für Verhaltens-Invarianz —
+        fehlende Tests bedeuten dann, dass die Invarianz NICHT bewiesen ist.
+        """
         print("\n" + "="*70)
         print("PHASE 4: VERIFICATION")
         print("="*70)
+
+        if task_type == "REFACTOR":
+            print("[🔒 REFACTOR — Tests müssen UNVERÄNDERT grün bleiben (Verhaltens-Invarianz)]")
 
         print("[🧪 Führe Tests aus...]")
 
@@ -1007,9 +1091,15 @@ Generiere kompletten, lauffähigen Code."""
             # Parse Ergebnis
             if "ALL TESTS PASSED" in proc.stdout:
                 result["tests_passed"] = True
-                print("\n✅ ALLE TESTS BESTANDEN (100%)\n")
+                if task_type == "REFACTOR":
+                    print("\n✅ ALLE TESTS BESTANDEN — Verhalten unverändert (Invarianz bewiesen)\n")
+                else:
+                    print("\n✅ ALLE TESTS BESTANDEN (100%)\n")
             else:
-                print("\n⚠️ Tests mit Fehler:\n")
+                if task_type == "REFACTOR":
+                    print("\n🔴 REFACTOR NICHT verhaltensneutral — Tests sind nicht mehr grün:\n")
+                else:
+                    print("\n⚠️ Tests mit Fehler:\n")
                 print(proc.stdout[-1500:])
                 if proc.stderr:
                     print("\nSTDERR:")
@@ -1612,7 +1702,8 @@ ANWEISUNG:
 
             # Tests erneut laufen lassen
             print("\n[🧪 Re-Verification nach Patch...]")
-            new_verification = self.phase_verification(execution)
+            _tt = (self.current_workflow or {}).get("task_type", "IMPLEMENTATION")
+            new_verification = self.phase_verification(execution, task_type=_tt)
 
             heal_log.append({
                 "cycle": cycle,
@@ -1987,13 +2078,17 @@ Was NICHT zählt:
             cut += 1  # newline ueberspringen
         return analysis[:cut].rstrip(), analysis[cut:].strip()
 
-    def phase_analysis_report(self, briefing: dict, classification: dict | None = None) -> dict:
+    def phase_analysis_report(self, briefing: dict, classification: dict | None = None,
+                              write_file: bool = True) -> dict:
         """Phase ANALYSE: Finalisiert das Briefing als strukturierten Analyse-Report.
 
         Kein Plan, kein Execute — die Analyse IST das Endprodukt.
         Inhalt: Klassifikation, Analyse-Text, Validator-Critique, Halluzinations-Check.
         Code-Übersicht als Anhang am Ende (nicht als Hauptinhalt).
         Speichert Report als Markdown unter logs/analysis-<id>.md.
+
+        write_file=False (EXPLAIN): kein persistiertes Report-Artefakt — die
+        Antwort wurde im Briefing-Stream schon ausgegeben, nur Konsolen-Hinweis.
         """
         print("\n" + "="*70)
         print("PHASE ANALYSIS REPORT — Finalisierung")
@@ -2117,6 +2212,20 @@ Diese Hinweise sollten kritisch überprüft werden.
 *Workflow: vibelike Analyse-Template (Briefing → Report → END)*
 """
 
+        # EXPLAIN: kein Datei-Artefakt — Antwort steht schon im Briefing-Stream
+        if not write_file:
+            print("\n✅ EXPLAIN beantwortet (kein Report-File — Antwort siehe oben).")
+            if hallucinated_files:
+                print(f"   ⚠️  Halluzinations-Hinweis: {len(hallucinated_files)} erfundene Dateien")
+            print()
+            return {
+                "phase": "ANALYSIS_REPORT",
+                "report_path": None,
+                "completed": True,
+                "timestamp": datetime.now().isoformat(),
+                "hallucinated_files": hallucinated_files,
+            }
+
         report_path = self.root / "logs" / f"analysis-{timestamp}.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report_md)
@@ -2148,10 +2257,12 @@ Diese Hinweise sollten kritisch überprüft werden.
                      parent_id: str = None) -> dict:
         """Entry-Point: klassifiziert Task, routet zum passenden Template.
 
-        Templates:
-          - ANALYSIS:       Briefing → Report → END (kein Code-Schreiben)
-          - IMPLEMENTATION: Full 6-Phase Workflow (Brief→Strat→Plan→Exec→Verify→Commit)
-          - BUG_FIX, REFACTOR, EXPLAIN: noch nicht implementiert → fallback IMPLEMENTATION
+        Templates (jeder Typ hat eigenes Briefing-Framing + Workflow-Form):
+          - ANALYSIS:       Briefing → Report-Datei → END (kein Code)
+          - EXPLAIN:        Briefing → Konsolen-Antwort → END (kein Report-File)
+          - IMPLEMENTATION: Voller 6-Phasen-Workflow (Brief→Strat→Plan→Exec→Verify→Commit)
+          - BUG_FIX:        wie IMPLEMENTATION, aber OHNE Strategie-Gate (direkt Fix-Plan)
+          - REFACTOR:       wie IMPLEMENTATION, Verify prüft Verhaltens-Invarianz
         """
         # PHASE 0: Task-Klassifikation
         classification = None
@@ -2183,23 +2294,30 @@ Diese Hinweise sollten kritisch überprüft werden.
 
     def _run_analysis_template(self, task: str, iteration: int, parent_id: str | None,
                                  classification: dict | None = None) -> dict:
-        """ANALYSIS-Template: Briefing → Report → END."""
+        """ANALYSIS-Template: Briefing → Report → END.
+
+        EXPLAIN teilt sich diesen Pfad, schreibt aber keine Report-Datei —
+        die Antwort steht bereits im Briefing-Stream.
+        """
+        task_type = (classification or {}).get("type", "ANALYSIS")
+        is_explain = task_type == "EXPLAIN"
         wf_id = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.current_workflow = {
             "id": wf_id,
             "task": task,
-            "task_type": "ANALYSIS",
+            "task_type": task_type,
             "iteration": iteration,
             "parent_id": parent_id,
             "phases": {},
         }
 
-        briefing = self.phase_briefing(task)
-        # ANALYSIS-Briefing als "completed" markieren (kein User-Gate noetig)
+        briefing = self.phase_briefing(task, task_type=task_type)
+        # Briefing als "completed" markieren (kein User-Gate noetig)
         briefing["completed"] = True
         self.current_workflow["phases"]["briefing"] = briefing
 
-        report = self.phase_analysis_report(briefing, classification=classification)
+        report = self.phase_analysis_report(briefing, classification=classification,
+                                             write_file=not is_explain)
         self.current_workflow["phases"]["report"] = report
 
         # Log workflow
@@ -2207,9 +2325,10 @@ Diese Hinweise sollten kritisch überprüft werden.
             f.write(json.dumps(self.current_workflow, default=str) + "\n")
 
         print("\n" + "="*70)
-        print("✅ ANALYSE-WORKFLOW ABGESCHLOSSEN")
+        print(f"✅ {'ERKLÄRUNG' if is_explain else 'ANALYSE'}-WORKFLOW ABGESCHLOSSEN")
         print("="*70)
-        print(f"   Report: {report['report_path']}")
+        if report.get("report_path"):
+            print(f"   Report: {report['report_path']}")
         print()
         return self.current_workflow
 
@@ -2232,15 +2351,27 @@ Diese Hinweise sollten kritisch überprüft werden.
             "phases": {}
         }
 
-        # Phase 1: BRIEFING
-        briefing = self.phase_briefing(task)
+        # Phase 1: BRIEFING (typ-spezifisches Framing: IMPLEMENTATION/BUG_FIX/REFACTOR)
+        briefing = self.phase_briefing(task, task_type=task_type)
         self.current_workflow["phases"]["briefing"] = briefing
 
         # Phase 2A: PLANNING - STRATEGIE
-        strategy = self.phase_planning_strategy(briefing)
-        if not strategy or not strategy.get("approved"):
-            print("\n❌ Workflow abgebrochen (Strategie nicht genehmigt).\n")
-            return self.current_workflow
+        # BUG_FIX überspringt das Strategie-Gate — ein lokaler Fix braucht kein
+        # separates "allgemeines Vorgehen". Der FIX-ANSATZ aus dem Briefing dient
+        # direkt als Strategie-Seed für den Detail-Plan.
+        if task_type == "BUG_FIX":
+            print("\n[⏭️  BUG_FIX: Strategie-Gate übersprungen — direkt zum Fix-Plan]")
+            strategy = {
+                "phase": "PLANNING_STRATEGY",
+                "strategy": briefing.get("analysis", "") or "Direkter Fix laut Briefing.",
+                "approved": True,
+                "skipped": True,
+            }
+        else:
+            strategy = self.phase_planning_strategy(briefing)
+            if not strategy or not strategy.get("approved"):
+                print("\n❌ Workflow abgebrochen (Strategie nicht genehmigt).\n")
+                return self.current_workflow
         self.current_workflow["phases"]["planning_strategy"] = strategy
 
         # Phase 2B: PLANNING - DETAILPLAN
@@ -2258,8 +2389,8 @@ Diese Hinweise sollten kritisch überprüft werden.
             self._executor.shutdown(wait=False)
             return self.current_workflow
 
-        # Phase 4: VERIFICATION
-        verification = self.phase_verification(execution)
+        # Phase 4: VERIFICATION (REFACTOR: Fokus auf Verhaltens-Invarianz)
+        verification = self.phase_verification(execution, task_type=task_type)
         self.current_workflow["phases"]["verification"] = verification
 
         # Bei Test-Fail: Failure-Loop zurück zu Phase 1 (mit Iteration-Cap)
