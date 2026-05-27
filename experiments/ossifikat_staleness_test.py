@@ -184,19 +184,143 @@ def stage_b() -> bool:
         return bool(findings)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# STUFE C — Scaffolding: bekanntes Vokabular vor Lauf 2 injizieren
+# ─────────────────────────────────────────────────────────────────────────────
+
+_META_PREDICATES = {"has_cardinality", "retracted_at", "has_conflict", "is_orphan_retract"}
+
+
+def known_vocabulary(db_path: str) -> tuple[set[str], set[str]]:
+    """Liest die bisher im Graph bekannten Subjekte + Praedikate (ohne Meta)."""
+    view = AuditView(db_path)
+    subjects, predicates = set(), set()
+    for t in view.all_triples():
+        if t.predicate in _META_PREDICATES:
+            continue
+        subjects.add(t.subject)
+        predicates.add(t.predicate)
+    return subjects, predicates
+
+
+def extract_with_vocab(extractor, db_path: str, text: str) -> list[dict]:
+    """Extraktion wie QwenExtractor.extract, aber mit injiziertem Kanon-Vokabular.
+
+    Reproduziert den Ollama-Call selbst (gleicher SYSTEM_PROMPT), haengt aber
+    das bekannte Vokabular an den User-Prompt: "fuer Bekanntes EXAKT diese Namen".
+    """
+    import requests
+
+    subjects, predicates = known_vocabulary(db_path)
+    prompt = f"Extrahiere alle Triples aus diesem Text:\n\n{text}"
+    if subjects or predicates:
+        prompt += (
+            "\n\nWICHTIG — KANONISCHES VOKABULAR:\n"
+            "Wenn du eine BEREITS BEKANNTE Entitaet oder Relation meinst, nutze "
+            "EXAKT diesen Namen (KEINE Varianten wie 'Klasse X', 'Datei X' oder "
+            "synonyme Praedikate):\n"
+            f"  Subjekte:  {', '.join(sorted(subjects))}\n"
+            f"  Praedikate: {', '.join(sorted(predicates))}\n"
+            "Nur fuer wirklich NEUE Dinge fuehre neue Namen ein."
+        )
+
+    resp = requests.post(
+        extractor.api_endpoint,
+        json={"model": extractor.model, "system": extractor.SYSTEM_PROMPT,
+              "prompt": prompt, "stream": False},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return extractor._parse_json_response(resp.json().get("response", "").strip())
+
+
+def _stage_and_confirm(store, triples: list[dict], source: str) -> int:
+    n = 0
+    for tr in triples:
+        try:
+            tid = store.add_staging(subject=tr.get("subject", ""),
+                                    predicate=tr.get("predicate", ""),
+                                    object=tr.get("object", ""),
+                                    source=source, confidence=float(tr.get("confidence", 1.0)))
+            store.confirm(tid, confirmed_by=source, confirmation_type="auto",
+                          note="canon-claim")
+            n += 1
+        except Exception:
+            pass
+    return n
+
+
+def stage_c() -> bool:
+    print("\n" + "=" * 70)
+    print("STUFE C — SCAFFOLDING: schlaegt Vokabular-Injektion die Modellgroesse?")
+    print("=" * 70)
+
+    try:
+        from ossifikat.extractor import QwenExtractor
+        extractor = QwenExtractor(model="qwen2.5-coder:7b")
+    except Exception as e:
+        print(f"  [SKIP] Extractor/Ollama nicht verfuegbar: {e}")
+        return False
+
+    with tempfile.TemporaryDirectory() as td:
+        db = str(Path(td) / "stage_c.db")
+        store = OssifikatStore(db)
+        declare_functional(store, "architecture_is")
+
+        # Lauf 1: noch kein Vokabular bekannt -> normale Extraktion
+        print("\n  [Lauf 1] extrahiere 'vorher' (kein Vokabular bekannt)...")
+        t1 = extract_with_vocab(extractor, db, ANALYSIS_BEFORE)
+        n1 = _stage_and_confirm(store, t1, "canon-run-1")
+        print(f"    {n1} Triples")
+
+        # Lauf 2: bekanntes Vokabular aus Lauf 1 injizieren
+        subs, preds = known_vocabulary(db)
+        print(f"\n  [Lauf 2] injiziere Vokabular ({len(subs)} Subj, {len(preds)} Praed), extrahiere 'nachher'...")
+        t2 = extract_with_vocab(extractor, db, ANALYSIS_AFTER)
+        n2 = _stage_and_confirm(store, t2, "canon-run-2")
+        print(f"    {n2} Triples")
+
+        view = AuditView(db)
+        print("\n  Extrahierte Triples:")
+        for t in view.all_triples():
+            if t.predicate in _META_PREDICATES:
+                continue
+            print(f"    ({t.subject}) --[{t.predicate}]--> ({t.object})")
+
+        findings = find_functional_predicate_conflicts(view)
+        print("\n  Conflict-Audit:")
+        _print_findings(findings)
+        store.close()
+
+        print("\n  ERGEBNIS STUFE C: "
+              + ("✅ Vokabular-Injektion erzeugt konsistente Namen -> Konflikt detektiert"
+                 if findings else
+                 "⚠️  weiterhin kein Konflikt — Canonicalization-Scaffolding reicht nicht,\n"
+                 "      hier haengt es wirklich an Modellfaehigkeit"))
+        return bool(findings)
+
+
 if __name__ == "__main__":
     a_ok = stage_a()
     b_ok = stage_b()
+    c_ok = stage_c()
 
     print("\n" + "=" * 70)
     print("FAZIT")
     print("=" * 70)
-    print(f"  Stufe A (Idee tauglich?):        {'JA' if a_ok else 'NEIN'}")
-    print(f"  Stufe B (lokale Extraktion ok?): {'JA' if b_ok else 'NEIN / nicht gelaufen'}")
-    if a_ok and not b_ok:
-        print("\n  → Die IDEE trägt, aber die lokale Extraktion ist der Engpass.")
-        print("    Genau hier — und nur hier — wuerde ein staerkeres Modell helfen.")
+    print(f"  Stufe A (Idee tauglich?):              {'JA' if a_ok else 'NEIN'}")
+    print(f"  Stufe B (rohe lokale Extraktion ok?):  {'JA' if b_ok else 'NEIN'}")
+    print(f"  Stufe C (mit Vokabular-Scaffolding?):  {'JA' if c_ok else 'NEIN'}")
+    print()
+    if a_ok and not b_ok and c_ok:
+        print("  → DURCHBRUCH: Idee traegt, und Canonicalization-Scaffolding schlaegt")
+        print("    Modellgroesse. Autarkie-treu loesbar — Vokabular-Injektion in den")
+        print("    Extractor + Live-Wiring in den Workflow lohnt sich.")
+    elif a_ok and not b_ok and not c_ok:
+        print("  → Idee traegt, aber selbst mit Vokabular-Scaffolding kanonisiert das")
+        print("    lokale Modell nicht zuverlaessig. HIER wuerde ein staerkeres Modell")
+        print("    (oder ein deterministischer Entity-Linker) den Unterschied machen.")
     elif a_ok and b_ok:
-        print("\n  → Idee UND lokale Extraktion tragen. Live-Wiring in den Workflow lohnt.")
+        print("  → Idee UND rohe Extraktion tragen schon. Live-Wiring lohnt direkt.")
     elif not a_ok:
-        print("\n  → Selbst mit sauberen Claims faengt das Audit nichts. Idee ueberdenken.")
+        print("  → Selbst mit sauberen Claims faengt das Audit nichts. Idee ueberdenken.")
