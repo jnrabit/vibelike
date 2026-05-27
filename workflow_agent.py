@@ -492,18 +492,9 @@ Detailanalyse (Teil A) MUSS vor der Synthese (Teil B) stehen.
 3. Wie passt es ins bestehende System? (echte Klassen/Funktionen aus der Übersicht)
 4. Gibt es Abhängigkeiten oder Konflikte?
 5. Welche Risiken sehen Sie?
-6. **Was ist DISTINKT/UNGEWÖHNLICH an diesem Projekt?**
-   - Nicht die offensichtlichen Mainstream-Patterns. Schau gezielt nach:
-     a) Eigenartige Module die nicht-trivial benannt sind
-        (Beispiele: 'choose', 'inkonsistence', 'task_classifier', 'babel_synthesizer',
-        'quelibrium', 'ossifikat' — was bedeuten die KONKRET?)
-     b) Architektur-Patterns die du sonst selten siehst
-        (z.B. Predicate-Eskalation, Triple-Stores mit Staging, Chaos-Retrieval,
-        Multi-Modell-LLM-Setup, Phase-0-Klassifikation)
-     c) Was zeigt der Code, das die Dokumentation nicht zeigt?
-
-   Konkret zitieren, nicht generisch beschreiben. Wenn dir Code-Beispiele
-   in den voll geladenen Dateien aufgefallen sind — nenn sie.
+6. **Was ist DISTINKT an diesem Projekt?** Nenne 1-2 Patterns oder Module
+   die du in anderen Codebases selten siehst — mit Code-Zitat aus dem
+   Star-File. Wenn nichts auffällt, schreib "nichts ungewöhnlich".
 
 ## TEIL B — Schließe AM ENDE mit GENAU dieser Header-Zeile ab:
 
@@ -893,49 +884,25 @@ Generiere kompletten, lauffähigen Code."""
         print("="*70)
         self._show_diff(planned_changes, full=False)
 
-        # 3-Schichten Validierung: Code + Plan + Knowledge-Graph (Ossifikat Audits)
-        # Layer 1 & 2: Code + Plan Validierung
-        # Layer 3: Ossifikat Triple-Audits (optional, fallback wenn DB fehlt)
-        ossifikat_db_path = None
-        try:
-            ossifikat_db_path = str(self.root / "ossifikat" / "data" / "ossifikat.db")
-            if not (self.root / "ossifikat" / "data" / "ossifikat.db").exists():
-                ossifikat_db_path = None
-        except Exception:
-            pass
-
+        # 2-Schichten Validierung: Code + Plan
         static_report = self.static_validator.validate_full(
             planned_changes,
             plan.get("plan", ""),
-            ossifikat_db=ossifikat_db_path
         )
 
         print("\n" + "─"*70)
-        print("🔧 3-SCHICHTEN VALIDATOR (Code + Plan + Knowledge-Graph)")
+        print("🔧 STATIC VALIDATOR (Code + Plan)")
         print("─"*70)
 
-        # Zeige Findings gruppiert nach Layer
         if static_report.findings:
-            code_findings = [f for f in static_report.findings if not f.check.startswith("audit:")]
-            audit_findings = [f for f in static_report.findings if f.check.startswith("audit:")]
-
-            if code_findings:
-                print(f"\n  Layer 1+2 (Code & Plan): {len(code_findings)} findings")
-                for f in code_findings[:5]:
-                    severity_symbol = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(f.severity, "⚪")
-                    print(f"    {severity_symbol} {f.check:30s} @ {f.location}")
-                if len(code_findings) > 5:
-                    print(f"    ... (+{len(code_findings)-5} more)")
-
-            if audit_findings:
-                print(f"\n  Layer 3 (Knowledge-Graph Audits): {len(audit_findings)} findings")
-                for f in audit_findings[:5]:
-                    severity_symbol = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(f.severity, "⚪")
-                    print(f"    {severity_symbol} {f.check:30s} @ {f.location}")
-                if len(audit_findings) > 5:
-                    print(f"    ... (+{len(audit_findings)-5} more)")
+            print(f"\n  {len(static_report.findings)} findings")
+            for f in static_report.findings[:5]:
+                severity_symbol = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(f.severity, "⚪")
+                print(f"    {severity_symbol} {f.check:30s} @ {f.location}")
+            if len(static_report.findings) > 5:
+                print(f"    ... (+{len(static_report.findings)-5} more)")
         else:
-            print("  ✅ Keine Findings (sauberer Code & Knowledge-Graph)")
+            print("  ✅ Keine Findings (sauberer Code & Plan)")
 
         print("─"*70)
 
@@ -1458,70 +1425,100 @@ Regeln:
 
         return "\n".join(sections) if sections else "(kein Python-Code gefunden)"
 
-    def _read_focused_files(self, task: str, max_files: int = 8,
-                            max_chars: int = 5000) -> str:
-        """Liest volle Inhalte der task-relevanten Dateien.
+    _TOPIC_FILES = {
+        "validator": "validator2.py",
+        "classifier": "task_classifier.py",
+        "template": "task_classifier.py",
+        "terminal": "terminal.py",
+        "ui": "terminal.py",
+        "choose": "choose/atom.py",
+        "predicate": "choose/atom.py",
+        "harvest": "harvest.py",
+    }
 
-        Heuristik:
-          1. Filenamen im Task-Text erwähnt
-          2. Topic-Keywords (vibelike, validator, ossifikat, ...) → Mapping
-          3. Core-Architecture-Files
-          4. Distinkte/neuere Module (choose, inkonsistence, task_classifier) —
-             damit die Analyse die spezifischen Patterns sieht, nicht nur die
-             "üblichen Verdächtigen"
+    def _read_focused_files(self, task: str,
+                            star_budget: int = 6000,
+                            skeleton_budget: int = 1200,
+                            max_supporting: int = 3) -> str:
+        """Ein 'Star-File' in voller Länge + 2-3 Skeleton-Files (Signaturen).
+
+        Topic-Routing: das Schlüsselwort mit dem spezifischsten Treffer wird
+        zum Star, der Rest läuft als AST-Skeleton mit (klasse/def + erster
+        docstring-Zeile). Default-Star: workflow_agent.py.
         """
-        # Core: orchestration + main validator + bridges
-        core_files = [
-            "workflow_agent.py", "validator2.py", "terminal.py",
-            "ossifikat_audit_bridge.py",
-        ]
-        # Distinkte/neuere Module — wichtig für ehrliche Analyse von vibelike
-        distinctive_files = [
-            "task_classifier.py", "inkonsistence.py",
-            "choose/atom.py", "choose/predicate.py",
-        ]
-
-        # 1. Im Task explizit erwähnte Dateien
-        mentioned: list[str] = []
         task_lower = task.lower()
+
+        # 1. Star: explizit erwähnter Filename > Topic-Treffer > Default
+        star: str = "workflow_agent.py"
         for p in self.root.glob("*.py"):
-            if p.name.lower() in task_lower or p.stem.lower() in task_lower:
-                mentioned.append(p.name)
+            if p.stem.lower() in task_lower and len(p.stem) > 3:
+                star = p.name
+                break
+        else:
+            for keyword, fname in self._TOPIC_FILES.items():
+                if keyword in task_lower:
+                    star = fname
+                    break
 
-        # 2. Topic-Keywords → spezifische Dateien
-        if "/vibelike" in task_lower or "vibelike" in task_lower:
-            mentioned.extend(core_files + distinctive_files)
-        if "validator" in task_lower:
-            mentioned.append("validator2.py")
-        if "ossifikat" in task_lower:
-            mentioned.append("ossifikat_audit_bridge.py")
-        if "choose" in task_lower or "predicate" in task_lower:
-            mentioned.extend(["choose/atom.py", "choose/predicate.py"])
-        if "inkonsistence" in task_lower or "healthpoint" in task_lower:
-            mentioned.append("inkonsistence.py")
-        if "template" in task_lower or "classifier" in task_lower:
-            mentioned.append("task_classifier.py")
+        # 2. Supporting (Skeletons): immer workflow_agent + 1-2 topic-matches
+        supporting: list[str] = []
+        for keyword, fname in self._TOPIC_FILES.items():
+            if keyword in task_lower and fname != star and fname not in supporting:
+                supporting.append(fname)
+        for fallback in ("workflow_agent.py", "validator2.py", "terminal.py"):
+            if fallback != star and fallback not in supporting:
+                supporting.append(fallback)
+            if len(supporting) >= max_supporting:
+                break
 
-        # 3. Dedupe + Fallback auf Core (deterministisch)
-        selected = list(dict.fromkeys(mentioned + core_files))[:max_files]
+        sections: list[str] = []
+        star_path = self.root / star
+        if star_path.exists():
+            content = star_path.read_text()
+            if len(content) > star_budget:
+                content = content[:star_budget] + f"\n... [gekürzt — {len(content):,} chars total]"
+            sections.append(f"\n═══ {star} (VOLL) ═══\n{content}")
 
-        sections = []
-        for fname in selected:
+        for fname in supporting:
             f = self.root / fname
             if not f.exists():
                 continue
-            try:
-                content = f.read_text()
-            except Exception:
-                continue
-
-            total = len(content)
-            if total > max_chars:
-                content = content[:max_chars] + f"\n... [gekürzt — Datei hat insgesamt {total:,} chars]"
-
-            sections.append(f"\n═══ {fname} ═══\n{content}")
+            skeleton = self._extract_skeleton(f)
+            if len(skeleton) > skeleton_budget:
+                skeleton = skeleton[:skeleton_budget] + "\n... [skeleton gekürzt]"
+            sections.append(f"\n═══ {fname} (SKELETON) ═══\n{skeleton}")
 
         return "\n".join(sections) if sections else ""
+
+    def _extract_skeleton(self, path: Path) -> str:
+        """AST-basiertes Skeleton: Klassen + Funktionen + erste docstring-Zeile."""
+        try:
+            import ast
+            tree = ast.parse(path.read_text())
+        except Exception:
+            return f"(skeleton extraction failed for {path.name})"
+
+        lines: list[str] = []
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                doc = (ast.get_docstring(node) or "").split("\n", 1)[0]
+                lines.append(f"class {node.name}:" + (f"  # {doc}" if doc else ""))
+                for sub in node.body:
+                    if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        sig = self._format_signature(sub)
+                        sdoc = (ast.get_docstring(sub) or "").split("\n", 1)[0]
+                        lines.append(f"    def {sub.name}{sig}" + (f"  # {sdoc}" if sdoc else ""))
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                sig = self._format_signature(node)
+                doc = (ast.get_docstring(node) or "").split("\n", 1)[0]
+                lines.append(f"def {node.name}{sig}" + (f"  # {doc}" if doc else ""))
+        return "\n".join(lines) if lines else "(no top-level classes/functions)"
+
+    @staticmethod
+    def _format_signature(func) -> str:
+        import ast
+        args = [a.arg for a in func.args.args]
+        return f"({', '.join(args)})"
 
     def _self_heal_test_failure(self, briefing, plan, execution, verification,
                                   failure, max_cycles: int = 2):
@@ -2151,7 +2148,7 @@ Diese Hinweise sollten kritisch überprüft werden.
                      parent_id: str = None) -> dict:
         """Entry-Point: klassifiziert Task, routet zum passenden Template.
 
-        Templates (Stufe 1+2+3 — siehe inkonsistence.md fuer langfristige Vision):
+        Templates:
           - ANALYSIS:       Briefing → Report → END (kein Code-Schreiben)
           - IMPLEMENTATION: Full 6-Phase Workflow (Brief→Strat→Plan→Exec→Verify→Commit)
           - BUG_FIX, REFACTOR, EXPLAIN: noch nicht implementiert → fallback IMPLEMENTATION

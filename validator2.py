@@ -405,36 +405,14 @@ class StaticValidatorV2(StaticValidator):
                 f"Plan referenziert Datei '{fname}' als BETROFFENE DATEI, aber sie existiert nicht im Projekt"
             )
 
-    def validate_full(self, changes: list[dict], plan_text: str, context: dict | None = None,
-                      ossifikat_db: str | None = None) -> ExtendedReport:
-        """Kombiniert Code- + Plan- + Knowledge-Graph-Validierung (3-schichtig).
-
-        Args:
-            changes: Code changes to validate
-            plan_text: Plan text to validate
-            context: Optional additional context
-            ossifikat_db: Optional path to ossifikat.db for triple audit checks
-
-        Returns:
-            ExtendedReport combining all validation layers
-        """
+    def validate_full(self, changes: list[dict], plan_text: str, context: dict | None = None) -> ExtendedReport:
+        """Kombiniert Code- + Plan-Validierung."""
         # Layer 1: Code-Validierung
         report = self.validate_code(changes, plan_text)
 
         # Layer 2: Plan-Validierung
         plan_report = self.validate_plan(plan_text)
         report.add(*plan_report.findings)
-
-        # Layer 3: Knowledge-Graph-Audits (optional, Ossifikat)
-        if ossifikat_db:
-            try:
-                from ossifikat_audit_bridge import OssifikatAuditBridge
-                with OssifikatAuditBridge(ossifikat_db) as bridge:
-                    audit_report = bridge.run_all_audits()
-                    report.add(*audit_report.findings)
-            except Exception as e:
-                # Graceful fallback: Log warning but continue with Layer 1+2 only
-                print(f"[WARN] Ossifikat audit fehlgeschlagen (Layer 3 skipped): {e}")
 
         return report
 
