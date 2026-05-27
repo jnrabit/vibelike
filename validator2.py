@@ -25,33 +25,56 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
-# Import Basisklassen
-try:
-    from static_validator import Finding, Report, StaticValidator
-except ImportError:
-    # Fallback-Mockups
-    @dataclass
-    class Finding:
-        severity: str
-        check: str
-        location: str
-        message: str
 
-    @dataclass
-    class Report:
-        findings: list[Finding] = field(default_factory=list)
+# ─────────────────────────────────────────────────────────────────────────────
+# Findings & Report (vormals static_validator.py — hierher gefaltet)
+# ─────────────────────────────────────────────────────────────────────────────
 
-        def add(self, *findings: Finding) -> None:
-            for f in findings:
-                self.findings.append(f)
+@dataclass(frozen=True)
+class Finding:
+    severity: str        # "high" | "medium" | "low"
+    check: str           # Name des Checks für Gruppierung
+    location: str        # "file.py:42" oder "<plan>" oder ""
+    message: str         # Kurze, konkrete Beschreibung
 
-    class StaticValidator:
-        def __init__(self, project_root: Path | None = None):
-            self.project_root = project_root
-        def _rel(self, path: str) -> str:
-            return str(path)
+
+@dataclass
+class Report:
+    findings: list[Finding] = field(default_factory=list)
+
+    @property
+    def verdict(self) -> str:
+        """🔴/🟡/🟢 basierend auf höchster Severity."""
+        sevs = {f.severity for f in self.findings}
+        if "high" in sevs:
+            return "🔴"
+        if "medium" in sevs or "low" in sevs:
+            return "🟡"
+        return "🟢"
+
+    def add(self, *findings: Finding) -> None:
+        self.findings.extend(findings)
+
+    def extend(self, findings: Iterable[Finding]) -> None:
+        self.findings.extend(findings)
+
+    def render(self) -> str:
+        """Lesbares Render für Konsolen-Output."""
+        if not self.findings:
+            return f"{self.verdict} kein deterministischer Bug gefunden"
+
+        lines = [f"{self.verdict} {len(self.findings)} Befund(e):"]
+        for sev_label in ("high", "medium", "low"):
+            group = [f for f in self.findings if f.severity == sev_label]
+            if not group:
+                continue
+            icon = {"high": "🔴", "medium": "🟡", "low": "🔵"}[sev_label]
+            for f in group:
+                loc = f" ({f.location})" if f.location else ""
+                lines.append(f"  {icon} [{f.check}]{loc} {f.message}")
+        return "\n".join(lines)
 
 
 @dataclass
@@ -269,13 +292,16 @@ class UnifiedASTVisitor(ast.NodeVisitor):
 # Hauptklasse StaticValidatorV2
 # ─────────────────────────────────────────────────────────────────────────────
 
-class StaticValidatorV2(StaticValidator):
-    """Performance-optimierter deterministischer Validator mit Konfigurierbarkeit."""
+class StaticValidatorV2:
+    """Performance-optimierter deterministischer Validator mit Konfigurierbarkeit.
+
+    Self-contained — alle Code- und Plan-Checks sind hier definiert (vormals
+    teilweise in static_validator.py, jetzt zusammengeführt).
+    """
 
     def __init__(self, project_root: Path | None = None,
                  disabled_checks: set | None = None,
                  severity_overrides: dict | None = None):
-        super().__init__(project_root)
         self.root = (project_root or Path(__file__).parent).resolve()
 
         self.disabled_checks = disabled_checks or set()
@@ -285,6 +311,14 @@ class StaticValidatorV2(StaticValidator):
         self.security_engine = RegexPatternEngine(_SECURITY_PATTERNS, "security")
         self.best_practice_engine = RegexPatternEngine(_BEST_PRACTICE_PATTERNS, "quality")
         self.performance_engine = RegexPatternEngine(_PERFORMANCE_PATTERNS, "performance")
+
+    def _rel(self, path: str) -> str:
+        """Relativen Pfad zum Projekt-Root oder Basename."""
+        p = Path(path)
+        try:
+            return str(p.relative_to(self.root))
+        except (ValueError, TypeError):
+            return p.name
 
     def validate_code(self, planned_changes: list[dict], plan_text: str = "") -> ExtendedReport:
         """Validiert Code-Änderungen."""
