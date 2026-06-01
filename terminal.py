@@ -54,6 +54,10 @@ VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", "qwen2.5-coder:1.5b
 # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder für Analyse).
 # Empfehlung: qwen3:8b (bestes Reasoning) oder qwen2.5:3b (parallel-fit).
 ANALYSIS_MODEL = os.environ.get("VIBELIKE_ANALYSIS_MODEL", "qwen3:8b")
+# Code-Gen-Backend: "claude" (Frontier-API, semantische Instruktionstreue) oder
+# "ollama" (lokal, ~7b-Decke). Default claude — fällt auf lokal zurück wenn Key/Paket fehlt.
+CODEGEN_BACKEND = os.environ.get("VIBELIKE_CODEGEN_BACKEND", "claude").lower()
+CODEGEN_MODEL = os.environ.get("VIBELIKE_CODEGEN_MODEL", "claude-sonnet-4-6")
 OLLAMA_URL = "http://localhost:11434/api/generate"
 LOG_FILE = os.path.join(ROOT, "logs", "triplets.jsonl")
 
@@ -175,6 +179,17 @@ class CodeRetriever:
             print(f"[WARN] Ossifikat nicht verfügbar: {e}")
             self.terminal_adapter = None
 
+        # Pre-Retrieval Query-Translator (DE→EN): deutsche Queries treffen sonst
+        # die englischen Wikipedia/RFC/PEP-Docs schlecht. Heuristik + Cache, kein
+        # LLM-Call wenn Query eh englisch.
+        try:
+            from query_translator import QueryTranslator
+            self.query_translator = QueryTranslator()
+            print("[OK] 🌐 Query-Translator (DE→EN) aktiv")
+        except Exception as e:
+            print(f"[WARN] Query-Translator nicht verfügbar: {e}")
+            self.query_translator = None
+
         print(f"[OK] Code-Vault: {len(self.protocol.archive):,} docs, {len(self.protocol._doc_cache):,} vectors")
     
     @staticmethod
@@ -186,58 +201,77 @@ class CodeRetriever:
             return False
     
     def search(self, query: str, k: int = 10) -> tuple:
-        """Such im Code-Vault mit optionalem Chaos Retrieval. Rückgabe: (Dokumente, Hardware-State vor/nach)"""
+        """Such im Code-Vault via ChaosRetrieval. Rückgabe: (Dokumente, State vor/nach).
+
+        ChaosRetrieval ist der primäre und einzige semantisch korrekte Pfad.
+        Der frühere C++ raw_search-Fallback ist ENTFERNT — er lieferte
+        query-unabhängig dieselben Docs mit dist=0 (Engine-Bug). Schlägt
+        ChaosRetrieval fehl, greift ein numpy-Cosine-Fallback auf derselben
+        Doc-Matrix: korrekt, nur ohne Chaos-Warp.
+        """
         if not self.encoder:
             return [], None, None
 
+        # Pre-Retrieval: DE→EN, damit deutsche Queries die englischen Vault-Docs
+        # treffen. Skippt automatisch wenn Query schon englisch ist (Heuristik).
+        search_query = query
+        if self.query_translator is not None:
+            try:
+                tr = self.query_translator.translate(query)
+                search_query = tr.get("translated") or query
+                if not tr.get("skipped") and search_query != query:
+                    print(f"[🌐 Query: '{query[:38]}' → '{search_query[:38]}']")
+            except Exception:
+                search_query = query
+
         # Hardware-State vor Suche
-        state_before = self.hw_logger.log_state(query, "search_start")
+        state_before = self.hw_logger.log_state(search_query, "search_start")
 
         # Query embedden
-        query_vec = self.encoder.encode(query, convert_to_numpy=True).astype(np.float32)
+        query_vec = self.encoder.encode(search_query, convert_to_numpy=True).astype(np.float32)
         if query_vec.ndim > 1:
             query_vec = query_vec[0]
 
-        # Suche mit Chaos Retrieval (wenn verfügbar) oder Standard
+        # ChaosRetrieval primär — returnt [(doc_id, distance), ...]
         if self.use_chaos_retrieval and self.chaos_retrieval:
             try:
                 # Update Warp mit aktuellem Lorenz-State
                 lorenz_state = self.protocol.get_lorenz_params()
                 self.chaos_retrieval.warp.update(lorenz_state)
-
-                # Chaos-basierte Suche — returnt [(doc_id, distance), ...]
                 results = self.chaos_retrieval.search(query_vec, top_k=k * 2)
-
-                # Dokumente auflösen
-                docs = []
-                archive_index = {str(d.get("id", "")): d for d in self.protocol.archive}
-                for doc_id, distance in results[:k]:
-                    doc = archive_index.get(str(doc_id))
-                    if doc:
-                        docs.append({
-                            "id": doc_id,
-                            "content": doc.get("text", doc.get("content", "")),
-                            "title": doc.get("title", ""),
-                            "source": doc.get("source", "code-vault"),
-                            "distance": float(distance),
-                            "retrieval_method": "chaos",
-                        })
+                docs = self._docs_from_results(results, k, method="chaos")
             except Exception as e:
-                print(f"[WARN] Chaos Retrieval fehlgeschlagen, fallback zu raw_search: {e}")
-                results = self.protocol.raw_search(query_vec, density=1.0)
-                docs = self._docs_from_results(results, k)
+                print(f"[WARN] ChaosRetrieval fehlgeschlagen → numpy-cosine: {e}")
+                docs = self._numpy_cosine_search(query_vec, k)
         else:
-            # Standard-Suche
-            results = self.protocol.raw_search(query_vec, density=1.0)
-            docs = self._docs_from_results(results, k)
+            # Kein Chaos verfügbar: ehrlicher numpy-cosine statt kaputtem C++ raw_search
+            docs = self._numpy_cosine_search(query_vec, k)
 
         # Hardware-State nach Suche
-        state_after = self.hw_logger.log_state(query, "search_end")
+        state_after = self.hw_logger.log_state(search_query, "search_end")
 
         return docs, state_before, state_after
 
-    def _docs_from_results(self, results: list, k: int) -> list:
-        """Helper: Konvertiere Raw-Search Ergebnisse in Doc-Dicts."""
+    def _numpy_cosine_search(self, query_vec: np.ndarray, k: int) -> list:
+        """Korrekter Fallback: Cosine-Similarity direkt auf der Doc-Matrix (numpy).
+
+        Ersetzt den kaputten C++ raw_search, der query-unabhängig immer dieselben
+        Docs mit dist=0 lieferte. Nutzt dieselbe Matrix wie ChaosRetrieval.
+        """
+        matrix = self.protocol._matrix
+        id_map = self.protocol._id_map
+        if matrix is None or not id_map:
+            return []
+        q = query_vec / (np.linalg.norm(query_vec) + 1e-8)
+        m_norms = matrix / (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-8)
+        sims = m_norms @ q
+        top_idx = np.argsort(-sims)[:k]
+        # distance = 1 - cosine (kleiner = ähnlicher, konsistent mit Konvention)
+        results = [(id_map[i], float(1.0 - sims[i])) for i in top_idx]
+        return self._docs_from_results(results, k, method="numpy_cosine")
+
+    def _docs_from_results(self, results: list, k: int, method: str = "chaos") -> list:
+        """Helper: Konvertiere (doc_id, distance)-Ergebnisse in Doc-Dicts."""
         docs = []
         archive_index = {str(d.get("id", "")): d for d in self.protocol.archive}
         for doc_id, distance in results[:k]:
@@ -249,7 +283,7 @@ class CodeRetriever:
                     "title": doc.get("title", ""),
                     "source": doc.get("source", "code-vault"),
                     "distance": float(distance),
-                    "retrieval_method": "raw_search",
+                    "retrieval_method": method,
                 })
         return docs
 
@@ -315,6 +349,71 @@ class QwenCoder:
                         chunks.append(token)
                     if obj.get("done"):
                         break
+            print()  # Newline nach dem Stream
+            return "".join(chunks)
+        except Exception as e:
+            return f"[ERR] {str(e)}"
+
+
+class ClaudeCoder:
+    """Anthropic-API-Backend mit QwenCoder-kompatiblem Interface (drop-in fürs Code-Gen).
+
+    Gleiche generate()-Signatur wie QwenCoder, damit der Workflow nichts merkt.
+    Grund: ~7b-lokal scheitert an semantischer Instruktionstreue (nicht Refusal/
+    Format) — diese Schicht braucht ein Frontier-Modell. Die deterministischen
+    Guards (Regression-Guard, Static-Validator) bleiben als Netz davor.
+
+    .usable == False, wenn Key oder Paket fehlt → Aufrufer kann auf lokal zurückfallen.
+    """
+
+    def __init__(self, model: str = None, num_predict: int = 8192, **_ignored):
+        self.model = model or CODEGEN_MODEL
+        self.num_predict = num_predict          # → max_tokens
+        self._client = None
+        self.usable = False
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            print("[WARN] ANTHROPIC_API_KEY nicht gesetzt — ClaudeCoder nicht nutzbar")
+            return
+        try:
+            import anthropic
+        except ImportError:
+            print("[WARN] anthropic-Paket fehlt — `pip install anthropic`")
+            return
+        try:
+            self._client = anthropic.Anthropic(api_key=api_key)
+            self.usable = True
+            print(f"[OK] Claude-API bereit (model={self.model})")
+        except Exception as e:
+            print(f"[WARN] Claude-Init fehlgeschlagen: {e}")
+
+    def generate(self, prompt: str, system: str = None, temperature: float = 0.2,
+                 stream: bool = False) -> str:
+        """Generiere via Claude-API. stream=True schreibt Tokens live nach stdout;
+        Rückgabe ist in beiden Fällen der volle Antworttext. Fehler → '[ERR] ...'."""
+        if not self.usable:
+            return "[ERR] ClaudeCoder nicht initialisiert (Key/Paket fehlt)"
+
+        kwargs = {
+            "model": self.model,
+            "max_tokens": self.num_predict,
+            "temperature": temperature,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            kwargs["system"] = system
+
+        try:
+            if not stream:
+                msg = self._client.messages.create(**kwargs)
+                return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+
+            chunks = []
+            with self._client.messages.stream(**kwargs) as s:
+                for text in s.text_stream:
+                    print(text, end="", flush=True)
+                    chunks.append(text)
             print()  # Newline nach dem Stream
             return "".join(chunks)
         except Exception as e:

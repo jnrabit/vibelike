@@ -41,7 +41,8 @@ class WorkflowAgent:
 
     def __init__(self):
         # Import QwenCoder + Modell-Konstanten lokal (circular-import-Schutz)
-        from terminal import QwenCoder, VALIDATOR_MODEL, ANALYSIS_MODEL, CodeRetriever
+        from terminal import (QwenCoder, ClaudeCoder, CODEGEN_BACKEND,
+                              VALIDATOR_MODEL, ANALYSIS_MODEL, CodeRetriever)
         from validator2 import StaticValidatorV2
         from task_classifier import TaskClassifier
 
@@ -51,8 +52,20 @@ class WorkflowAgent:
         except Exception:
             self.retriever = None
 
-        # Foreground: Coder-Modell für Code-Gen (Execution + Self-Heal).
-        self.qwen = QwenCoder()
+        # Foreground: Code-Gen. Default Claude-API (semantische Instruktionstreue,
+        # die ~7b lokal nicht liefert); Fallback auf lokales qwen wenn Key/Paket fehlt.
+        # Mit Frontier-Backend wird der 1.5b-Code-Review zu Rauschen → deaktiviert.
+        self.code_review_enabled = True
+        if CODEGEN_BACKEND == "claude":
+            claude = ClaudeCoder()
+            if claude.usable:
+                self.qwen = claude
+                self.code_review_enabled = False  # weak-reviewt-strong = Noise
+            else:
+                print("[WARN] Claude-Backend nicht verfügbar → Fallback auf lokales qwen2.5-coder")
+                self.qwen = QwenCoder()
+        else:
+            self.qwen = QwenCoder()
         # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder).
         # Wechselt mit `qwen` bei Bedarf in/aus VRAM (Ollama swap).
         self.analyzer_qwen = QwenCoder(
@@ -668,6 +681,18 @@ VOLLER CODE relevanter Dateien:
             strategy_prompt = f"""Du bist ein Senior Software-Architekt. Erstelle eine STRATEGISCHE Planung für die Aufgabe.
 
 ═══════════════════════════════════════════════════════════════════
+🎯 ZIEL (UNVERHANDELBAR — wird im Plan-Check verifiziert):
+{briefing['task']}
+═══════════════════════════════════════════════════════════════════
+⚠️  KEINE ZIEL-SUBSTITUTION. Wenn das Ziel eine konkrete kleine
+    Aufgabe nennt (z.B. "einen Check ergänzen"), plane GENAU DAS —
+    nicht eine umfassende Architektur-Initiative "stattdessen".
+⚠️  Die Schlüsselbegriffe aus der Aufgabe MÜSSEN in der Strategie
+    wörtlich auftauchen. Skalierung, Plattform, "Infrastruktur" sind
+    KEINE gültigen Ersatzziele.
+═══════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════
 🚨 VERBINDLICHE DATEILISTE — DAS SIND DIE EINZIGEN EXISTIERENDEN .py DATEIEN:
 ═══════════════════════════════════════════════════════════════════
 {authoritative}
@@ -695,11 +720,17 @@ Beantworte:
 6. RISIKEN: Was könnte schiefgehen? (technisch & inhaltlich)
 7. AUFWAND: Grob - Stunden? Tage? Wochen?
 
-Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS und WARUM, noch nicht auf das WIE."""
+Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS und WARUM, noch nicht auf das WIE.
+
+═══════════════════════════════════════════════════════════════════
+🎯 ERINNERUNG — das Ziel war:
+{briefing['task']}
+Wenn deine Strategie das nicht direkt adressiert: STOP, du driftest.
+═══════════════════════════════════════════════════════════════════"""
 
             label = f"Strategie (Iter {iteration}, NEU mit Feedback)" if feedback_history else "Strategie"
             print(f"\n[🤖 Qwen entwickelt {label}...]\n")
-            strategy = self.analyzer_qwen.generate(strategy_prompt, temperature=0.3, stream=True)
+            strategy = self.analyzer_qwen.generate(strategy_prompt, temperature=0.2, stream=True)
 
             # Parallel: Validator startet
             validation_future = self._start_validation(
@@ -790,6 +821,17 @@ Format: Strukturiert, aber NICHT zu detailliert. Konzentriere dich auf das WAS u
 basierend auf der genehmigten Strategie.
 
 ═══════════════════════════════════════════════════════════════════
+🎯 ZIEL (UNVERHANDELBAR — wird im Plan-Check verifiziert):
+{briefing['task']}
+═══════════════════════════════════════════════════════════════════
+⚠️  KEINE ZIEL-SUBSTITUTION. Wenn das Ziel eine konkrete Prüfung
+    (z.B. "None-Vergleiche flaggen") nennt, plane GENAU DIESE — nicht
+    eine andere Sicherheits-/Qualitäts-Prüfung "stattdessen".
+⚠️  Die Schlüsselbegriffe aus der Aufgabe MÜSSEN im Plan wörtlich
+    auftauchen. Sonst ist der Plan ungültig.
+═══════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════
 🚨 VERBINDLICHE DATEILISTE — DAS SIND DIE EINZIGEN EXISTIERENDEN .py DATEIEN:
 ═══════════════════════════════════════════════════════════════════
 {authoritative}
@@ -798,9 +840,6 @@ basierend auf der genehmigten Strategie.
 ⚠️  Jeder andere als-existierend behauptete Dateiname = HALLUZINATION.
 ═══════════════════════════════════════════════════════════════════
 {feedback_block}
-ORIGINALAUFGABE:
-{briefing['task']}
-
 GENEHMIGTE STRATEGIE:
 {strategy['strategy']}
 
@@ -830,11 +869,17 @@ Erstelle einen Plan mit:
 8. ROLLBACK-PLAN (wie kann man die Änderung rückgängig machen)
 9. ESTIMATED LINES OF CODE (pro Datei)
 
-Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
+Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise.
+
+═══════════════════════════════════════════════════════════════════
+🎯 ERINNERUNG — das Ziel war:
+{briefing['task']}
+Wenn dein Plan das nicht direkt umsetzt: STOP, du driftest.
+═══════════════════════════════════════════════════════════════════"""
 
             label = f"Detail-Plan (Iter {iteration}, NEU mit Feedback)" if feedback_history else "Detail-Plan"
             print(f"\n[🤖 Qwen erstellt {label}...]\n")
-            plan = self.analyzer_qwen.generate(detail_prompt, temperature=0.2, stream=True)
+            plan = self.analyzer_qwen.generate(detail_prompt, temperature=0.1, stream=True)
 
             # Parallel: Validator startet
             validation_future = self._start_validation(
@@ -877,6 +922,7 @@ Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
                         for f in plan_report.findings
                     ],
                 },
+                "hallucinated_files": list(hallucinated) if hallucinated else [],
                 "strategy_ref": strategy.get("strategy", ""),
                 "iteration": iteration,
                 "feedback_history": feedback_history.copy(),
@@ -923,6 +969,8 @@ Format: Strukturierter Plan, lesbar wie eine TODO-Liste. Sei präzise."""
         print("PHASE 3: EXECUTION (Dry-Run + Code-Review)")
         print("="*70)
 
+        existing_context = self._build_existing_files_context(plan.get("plan", ""))
+
         execution_prompt = f"""Du bist ein Experten-Code-Generator. Implementiere basierend auf diesem Plan:
 
 ORIGINALAUFGABE:
@@ -931,23 +979,43 @@ ORIGINALAUFGABE:
 PLAN:
 {plan['plan']}
 
-ANFORDERUNGEN:
+{existing_context}ANFORDERUNGEN:
 1. Schreib produktionsreife Code
 2. Folge dem bestehenden Coding-Style
 3. Inkludiere Error-Handling
 4. Schreib Tests (pytest-Format)
-5. Keine bestehende Logik zerstören
-6. Kommentiere nur wenn nötig
+5. Kommentiere nur wenn nötig
 
-Strukturiere die Antwort als:
-## Datei: <path>
+OUTPUT-FORMAT:
+
+Für jede BESTEHENDE Datei (oben unter "BESTEHENDE DATEIEN" gezeigt)
+schreibst du einen oder mehrere SEARCH/REPLACE-Blocks. Das System
+wendet sie auf die Datei an — du musst NICHT die ganze Datei kopieren.
+
+Format pro Block:
+## Datei: <pfad>
 ```python
-<code>
+<<<<<<< SEARCH
+<exakter Code-Snippet aus der Datei, byte-genau>
+=======
+<neuer Code-Snippet>
+>>>>>>> REPLACE
 ```
 
-## Tests: <path>
+Regeln:
+- SEARCH-Snippet muss genau 1× in der Datei vorkommen (sonst Anchor erweitern).
+- Whitespace und Einrückung exakt übernehmen.
+- Mehrere Änderungen → mehrere SEARCH/REPLACE-Blocks (auch in einer Datei).
+
+Für NEUE Dateien (nicht oben gelistet) schreibst du den vollständigen Inhalt:
+## Datei: <pfad>
 ```python
-<tests>
+<kompletter Datei-Inhalt>
+```
+
+## Tests: <pfad>
+```python
+<kompletter Test-Inhalt>
 ```
 
 Generiere kompletten, lauffähigen Code."""
@@ -957,6 +1025,19 @@ Generiere kompletten, lauffähigen Code."""
 
         # Parse OHNE zu schreiben (Dry-Run)
         planned_changes = self._parse_code(code)
+
+        # SEARCH/REPLACE-Patch-Status (Aider-Stil) berichten
+        sr_total = sum(c.get("sr_blocks", 0) for c in planned_changes)
+        sr_errors_flat = [
+            f"{Path(c['path']).name}: {err}"
+            for c in planned_changes for err in c.get("sr_errors", [])
+        ]
+        if sr_total or sr_errors_flat:
+            print(f"\n🩹 PATCH-MODUS: {sr_total} SEARCH/REPLACE-Block(s)")
+            if sr_errors_flat:
+                print(f"   🔴 {len(sr_errors_flat)} fehlgeschlagene Anchor(s):")
+                for e in sr_errors_flat[:8]:
+                    print(f"      - {e}")
 
         # Parallel: LLM-Code-Reviewer startet (nach Stream-Ende)
         review_future = self._start_code_review(code, plan, briefing['task'])
@@ -1025,6 +1106,21 @@ Generiere kompletten, lauffähigen Code."""
             "files_written": [],
             "approved": False,
         }
+
+        # Regression-Guard: stoppt destruktive Überschreibungen vor dem Write
+        regression = self._check_regression(planned_changes, plan.get("plan", ""))
+        result["regression_check"] = regression
+        if regression["verdict"] != "🟢":
+            print("\n" + "="*70)
+            print(f"{regression['verdict']} REGRESSION-GUARD")
+            print("="*70)
+            for issue in regression["issues"]:
+                print(f"  {issue['kind']:14s} {Path(issue['file']).name}: {issue['detail']}")
+        if regression["verdict"] == "🔴":
+            print("\n🛑 HARD-STOP: Regression-Guard hat unautorisierten Symbol-Verlust erkannt.")
+            print("   Keine Files geschrieben. Plan + Output prüfen.")
+            self.current_workflow["aborted_at"] = "EXECUTION_REGRESSION"
+            return result
 
         # User-Gate vor dem Schreiben
         print("\n" + "-"*70)
@@ -1409,6 +1505,16 @@ Regeln:
         re.IGNORECASE | re.DOTALL,
     )
     _FILE_MENTION_PATTERN = re.compile(r"\b([a-zA-Z_][\w\-]*\.py)\b")
+    _FENCED_BLOCK_PATTERN = re.compile(r"```.*?```", re.DOTALL)
+
+    @classmethod
+    def _strip_fenced_code(cls, text: str) -> str:
+        """Entfernt ```...``` Blöcke — Datei-Erwähnungen darin sind
+        Code-Beispiele (z.B. String-Argumente an scan_line('test.py', ...)),
+        keine Datei-Claims. Lauf-5-Befund: 'test.py' nur in fenced blocks
+        → False-Positive-Hard-Stop verhinderte Phase 3.
+        """
+        return cls._FENCED_BLOCK_PATTERN.sub("", text or "")
 
     def _classify_file_mention(self, fname: str, root_files: frozenset,
                                  tree_files: frozenset,
@@ -1453,7 +1559,7 @@ Regeln:
         root_files = frozenset(p.name for p in self.root.glob("*.py"))
         tree_files = frozenset(p.name for p in self.root.rglob("*.py"))
 
-        # Optional: NEUE-DATEIEN-Section erkennen (für Detail-Plan)
+        # NEUE-DATEIEN-Section noch im Original-Text suchen (vor Fence-Strip)
         declared_new: frozenset[str] = frozenset()
         if exclude_new_section:
             new_section_match = self._NEW_FILES_SECTION_PATTERN.search(text)
@@ -1463,8 +1569,10 @@ Regeln:
                     for m in self._FILE_MENTION_PATTERN.finditer(new_section_match.group(1))
                 )
 
-        # Alle Datei-Erwähnungen im Text finden
-        mentioned = {m.group(1) for m in self._FILE_MENTION_PATTERN.finditer(text)}
+        # Datei-Erwähnungen NUR außerhalb von ```fenced blocks``` zählen
+        # (Code-Beispiele enthalten oft 'test.py' o.ä. als String-Argument).
+        scan_text = self._strip_fenced_code(text)
+        mentioned = {m.group(1) for m in self._FILE_MENTION_PATTERN.finditer(scan_text)}
 
         # Per Datei klassifizieren via choose
         hallucinated = []
@@ -1555,16 +1663,24 @@ Regeln:
                     star = fname
                     break
 
-        # 2. Supporting (Skeletons): immer workflow_agent + 1-2 topic-matches
+        # 2. Supporting (Skeletons): NUR Topic-Treffer. KEIN blindes Anhaengen
+        # von workflow_agent.py — das hat in der Vergangenheit Briefings in
+        # Workflow-Design driften lassen (der Coder sieht das WorkflowAgent-Skelett
+        # und imitiert es statt die konkrete Aufgabe zu loesen).
         supporting: list[str] = []
         for keyword, fname in self._TOPIC_FILES.items():
             if keyword in task_lower and fname != star and fname not in supporting:
                 supporting.append(fname)
-        for fallback in ("workflow_agent.py", "validator2.py", "terminal.py"):
-            if fallback != star and fallback not in supporting:
-                supporting.append(fallback)
-            if len(supporting) >= max_supporting:
-                break
+                if len(supporting) >= max_supporting:
+                    break
+        # Letzter Fallback NUR wenn gar kein Star/Support gefunden — sonst
+        # nimmt der Briefing-Prompt die schmale Topic-Sicht.
+        if not supporting and star == "workflow_agent.py":
+            for fallback in ("validator2.py", "terminal.py"):
+                if fallback != star and fallback not in supporting:
+                    supporting.append(fallback)
+                if len(supporting) >= max_supporting:
+                    break
 
         sections: list[str] = []
         star_path = self.root / star
@@ -1911,8 +2027,51 @@ ANWEISUNG:
                              "reason": "earlier iteration scored better"})
         return best["changes"], best["static"], heal_log
 
+    _SR_BLOCK_PATTERN = re.compile(
+        r"<{5,}\s*SEARCH\s*\n(.*?)\n={5,}\s*\n(.*?)\n>{5,}\s*REPLACE",
+        re.DOTALL,
+    )
+
+    @classmethod
+    def _extract_sr_blocks(cls, content: str) -> list[tuple[str, str]]:
+        """Parst Aider-Stil SEARCH/REPLACE-Blocks aus einem Code-Block."""
+        return [
+            (m.group(1), m.group(2))
+            for m in cls._SR_BLOCK_PATTERN.finditer(content or "")
+        ]
+
+    @staticmethod
+    def _apply_sr_blocks(original: str, blocks: list[tuple[str, str]]) -> tuple[str, list[str]]:
+        """Wendet SR-Blocks sequenziell an. Strict-Match: SEARCH muss exakt 1× vorkommen.
+        Returns (new_content, errors).
+        """
+        text = original
+        errors = []
+        for i, (search, replace) in enumerate(blocks, 1):
+            count = text.count(search)
+            if count == 1:
+                text = text.replace(search, replace, 1)
+            elif count == 0:
+                preview = search[:60].replace("\n", "⏎")
+                errors.append(f"Block#{i}: SEARCH nicht gefunden — '{preview}…'")
+            else:
+                errors.append(f"Block#{i}: SEARCH {count}× im Text (ambig) — Anchor zu klein")
+        return text, errors
+
     def _parse_code(self, code: str) -> list:
-        """Parse Code-Output, gibt Liste von {path, content, exists} zurück. SCHREIBT NICHT."""
+        """Parse Code-Output, gibt Liste von {path, content, exists} zurück. SCHREIBT NICHT.
+
+        Unterstützt zwei Output-Formate:
+        - Vollständiger Datei-Inhalt (für NEUE Dateien)
+        - SEARCH/REPLACE-Blocks (für EXISTIERENDE Dateien) — Aider-Stil:
+              <<<<<<< SEARCH
+              <exact existing snippet>
+              =======
+              <new snippet>
+              >>>>>>> REPLACE
+          Wird auf den realen Datei-Inhalt angewendet; sr_errors signalisieren
+          nicht-matchende oder ambige Anchors.
+        """
         changes = []
         lines = code.split("\n")
         current_file = None
@@ -1920,14 +2079,28 @@ ANWEISUNG:
         in_code_block = False
 
         def _flush():
-            if current_file:
-                path = (self.root / current_file.strip()).resolve()
-                content = "\n".join(current_code)
-                changes.append({
-                    "path": str(path),
-                    "content": content,
-                    "exists": path.exists(),
-                })
+            if not current_file:
+                return
+            path = (self.root / current_file.strip()).resolve()
+            content = "\n".join(current_code)
+            sr_blocks = self._extract_sr_blocks(content)
+            change = {"path": str(path), "exists": path.exists()}
+            if sr_blocks:
+                if path.exists():
+                    original = path.read_text()
+                    new_content, sr_errors = self._apply_sr_blocks(original, sr_blocks)
+                    change["content"] = new_content
+                    change["sr_blocks"] = len(sr_blocks)
+                    change["sr_errors"] = sr_errors
+                else:
+                    change["content"] = content
+                    change["sr_blocks"] = len(sr_blocks)
+                    change["sr_errors"] = [
+                        "SEARCH/REPLACE-Block für nicht-existierende Datei — bitte vollen Inhalt liefern"
+                    ]
+            else:
+                change["content"] = content
+            changes.append(change)
 
         for line in lines:
             if line.startswith("## Datei:") or line.startswith("## File:") or line.startswith("## Tests:"):
@@ -1957,6 +2130,121 @@ ANWEISUNG:
             path.write_text(change["content"])
             files_written.append(str(path))
         return files_written
+
+    def _build_existing_files_context(self, plan_text: str) -> str:
+        """Extrahiert in plan_text genannte existierende .py-Dateien und baut
+        einen 'BESTEHENDE DATEIEN'-Kontextblock mit vollem Inhalt + Symbol-
+        Checkliste. Gibt leeren String zurück wenn keine existieren.
+
+        Notwendig damit der Code-Gen additiv arbeitet statt Mini-Stubs zu
+        schreiben (Lauf-3/4-Befund: 650→26/52 Zeilen Destruktion).
+        """
+        import re as _re
+        candidates = set(_re.findall(r"[\w/\.\-]+\.py", plan_text or ""))
+        blocks = []
+        for rel in sorted(candidates):
+            p = (self.root / rel).resolve()
+            try:
+                p.relative_to(self.root.resolve())
+            except ValueError:
+                continue
+            if not p.is_file():
+                continue
+            try:
+                content = p.read_text()
+            except Exception:
+                continue
+            if len(content) > 60_000:
+                continue
+            syms = self._top_level_symbols(content)
+            sym_line = (
+                ", ".join(sorted(syms)) if syms else "(Datei hat aktuell SyntaxError — bitte reparieren)"
+            )
+            n_lines = len(content.splitlines())
+            blocks.append(
+                f"### {rel} ({n_lines} Zeilen)\n"
+                f"ZU ERHALTENDE SYMBOLE: {sym_line}\n"
+                f"```python\n{content}\n```"
+            )
+        if not blocks:
+            return ""
+        return (
+            "BESTEHENDE DATEIEN (additiv erweitern, NICHT überschreiben):\n"
+            + "\n\n".join(blocks)
+            + "\n\n"
+        )
+
+    @staticmethod
+    def _top_level_symbols(content: str):
+        import ast
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            return None
+        names = set()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        names.add(tgt.id)
+        return names
+
+    def _check_regression(self, planned_changes: list, plan_text: str) -> dict:
+        """Pre-write-Check: erkennt destruktive Überschreibungen existierender Dateien.
+
+        🔴: top-level Symbol-Verlust (Klasse/Funktion/Konstante) ohne explizite
+            Plan-Erwähnung mit Entfernungs-Verb.
+        🟡: ≥50% Zeilen-Reduktion bei existierender Datei ≥20 Zeilen.
+        """
+        issues = []
+        plan_lower = (plan_text or "").lower()
+        removal_verbs = ("remove", "entfern", "löschen", "delete", "wegwerfen")
+
+        for change in planned_changes:
+            if not change.get("exists"):
+                continue
+            path = Path(change["path"])
+            try:
+                old_content = path.read_text()
+            except OSError:
+                continue
+            new_content = change["content"]
+            old_n = len(old_content.splitlines())
+            new_n = len(new_content.splitlines())
+
+            if path.suffix == ".py":
+                old_syms = self._top_level_symbols(old_content)
+                new_syms = self._top_level_symbols(new_content)
+                if old_syms is not None and new_syms is not None:
+                    lost = old_syms - new_syms
+                    unauthorized = {
+                        s for s in lost
+                        if not (s.lower() in plan_lower
+                                and any(v in plan_lower for v in removal_verbs))
+                    }
+                    if unauthorized:
+                        issues.append({
+                            "file": str(path),
+                            "kind": "symbol_loss",
+                            "detail": f"{len(unauthorized)} top-level Symbol(e) verschwunden: "
+                                      f"{sorted(unauthorized)[:6]}",
+                        })
+
+            if old_n >= 20 and new_n < old_n * 0.5:
+                issues.append({
+                    "file": str(path),
+                    "kind": "size_collapse",
+                    "detail": f"{old_n} → {new_n} Zeilen "
+                              f"({100*(1-new_n/old_n):.0f}% Reduktion)",
+                })
+
+        if not issues:
+            return {"verdict": "🟢", "issues": []}
+        if any(i["kind"] == "symbol_loss" for i in issues):
+            return {"verdict": "🔴", "issues": issues}
+        return {"verdict": "🟡", "issues": issues}
 
     def _show_diff(self, planned_changes: list, full: bool = False) -> None:
         """Zeigt Diff oder Preview pro geplanter Datei."""
@@ -1999,7 +2287,14 @@ ANWEISUNG:
                         print(f"   ... ({len(lines) - 15} weitere Zeilen, 'code' für Vollansicht)")
 
     def _start_code_review(self, code: str, plan: dict, task: str) -> concurrent.futures.Future:
-        """Startet parallelen Code-Reviewer (zweiter Qwen als Critic)."""
+        """Startet parallelen Code-Reviewer (zweiter Qwen als Critic).
+
+        Übersprungen bei Frontier-Code-Gen (self.code_review_enabled == False):
+        ein 1.5b-Modell, das Claude-Code reviewt, produziert nur False-Noise.
+        Die deterministischen Guards (Static-Validator, Regression-Guard) bleiben.
+        """
+        if not self.code_review_enabled:
+            return None
         def _run() -> str:
             review_prompt = f"""Du bist ein adversarialer Code-Reviewer. Deine EINZIGE Aufgabe: finde konkrete Bugs.
 
@@ -2039,6 +2334,8 @@ Was NICHT zählt:
 
     def _render_code_review(self, review_future: concurrent.futures.Future) -> str:
         """Holt Code-Reviewer-Ergebnis ab und rendert es."""
+        if review_future is None:  # bei Frontier-Code-Gen übersprungen
+            return ""
         print("\n[🔍 Code-Reviewer läuft parallel...]")
         try:
             result = review_future.result(timeout=300)
@@ -2320,9 +2617,19 @@ Diese Hinweise sollten kritisch überprüft werden.
         with open(self.workflow_log, "a") as f:
             f.write(json.dumps(self.current_workflow, default=str) + "\n")
 
-        print("\n" + "="*70)
-        print(f"✅ {'ERKLÄRUNG' if is_explain else 'ANALYSE'}-WORKFLOW ABGESCHLOSSEN")
-        print("="*70)
+        verdict = self._compute_workflow_verdict()
+        self.current_workflow["verdict"] = verdict
+        label = "ERKLÄRUNG" if is_explain else "ANALYSE"
+        v = verdict.get("verdict", "🟢")
+        reason = verdict.get("reason", "")
+        print("\n" + "=" * 70)
+        if v == "🟢":
+            print(f"✅ {label}-WORKFLOW ABGESCHLOSSEN — 🟢 {reason}")
+        elif v == "🟡":
+            print(f"⚠️  {label}-WORKFLOW ABGESCHLOSSEN — 🟡 {reason}")
+        else:
+            print(f"❌ {label}-WORKFLOW DURCHGELAUFEN, ZIEL NICHT ERREICHT — 🔴 {reason}")
+        print("=" * 70)
         if report.get("report_path"):
             print(f"   Report: {report['report_path']}")
         print()
@@ -2356,6 +2663,75 @@ Diese Hinweise sollten kritisch überprüft werden.
             print("🟠 (nur Warnung — Workflow läuft weiter)")
             print("🟠" * 35)
 
+    def _compute_workflow_verdict(self) -> dict:
+        """Aggregiert Healthpoint-Drifts, Datei-Schreibvorgänge und Tests zu einem
+        ehrlichen Workflow-Verdict. Fängt die Lücke, dass die bisherigen Layer-
+        Validierungen (Static/Critic/Verification) bei 0 Änderungen alle 🟢 melden
+        — der Lauf aber das versiegelte Ziel nicht erreicht hat.
+        """
+        wf = self.current_workflow or {}
+        phases = wf.get("phases", {})
+        task_type = wf.get("task_type", "IMPLEMENTATION")
+        hp_checks = wf.get("healthpoint_checks", []) or []
+        drift_phases = [c.get("phase", "?") for c in hp_checks if not c.get("aligned")]
+        drift_count = len(drift_phases)
+
+        files_written = phases.get("execution", {}).get("files_written", []) or []
+        files_written_count = len(files_written)
+        tests_passed = phases.get("verification", {}).get("tests_passed")
+        produces_code = task_type in ("IMPLEMENTATION", "BUG_FIX", "REFACTOR")
+
+        metrics = {
+            "task_type": task_type,
+            "healthpoint_drifts": drift_count,
+            "drift_phases": drift_phases,
+            "files_written": files_written_count,
+            "tests_passed": tests_passed,
+            "commit_done": bool(phases.get("commit")),
+        }
+
+        if produces_code and files_written_count == 0:
+            drift_note = (f"Healthpoint-Drifts: {drift_count}× ({', '.join(drift_phases)})"
+                          if drift_count else "ohne Drift-Signal")
+            return {"verdict": "🔴",
+                    "reason": (f"{task_type}-Lauf ohne Datei-Änderungen — "
+                               f"Ziel nicht erreicht ({drift_note})"),
+                    "metrics": metrics}
+        if drift_count >= 2:
+            return {"verdict": "🔴",
+                    "reason": (f"Mehrfach-Drift ({drift_count}× an "
+                               f"{', '.join(drift_phases)}) — Output verfehlt das "
+                               f"versiegelte Ziel"),
+                    "metrics": metrics}
+        if drift_count == 1:
+            return {"verdict": "🟡",
+                    "reason": (f"Abschluss mit Drift-Warnung an {drift_phases[0]} — "
+                               f"manuelle Sichtung empfohlen"),
+                    "metrics": metrics}
+        body = (f"{files_written_count} Datei(en) geschrieben"
+                if produces_code else "Report erstellt")
+        return {"verdict": "🟢",
+                "reason": f"Sauberer Lauf — keine Drift-Warnungen, {body}",
+                "metrics": metrics}
+
+    def _print_workflow_verdict(self, verdict: dict) -> None:
+        """Schreibt das Verdict an den Schluss-Block — typabhängige Klartext-Ausgabe."""
+        v = verdict.get("verdict", "🟢")
+        reason = verdict.get("reason", "")
+        print("\n" + "=" * 70)
+        if v == "🟢":
+            print(f"✅ WORKFLOW ABGESCHLOSSEN — 🟢 {reason}")
+        elif v == "🟡":
+            print(f"⚠️  WORKFLOW ABGESCHLOSSEN — 🟡 {reason}")
+        else:
+            print(f"❌ WORKFLOW DURCHGELAUFEN, ZIEL NICHT ERREICHT — 🔴 {reason}")
+        m = verdict.get("metrics", {})
+        print(f"   Metriken: drifts={m.get('healthpoint_drifts')}, "
+              f"files_written={m.get('files_written')}, "
+              f"tests_passed={m.get('tests_passed')}, "
+              f"task_type={m.get('task_type')}")
+        print("=" * 70 + "\n")
+
     def _run_implementation_template(self, task: str, task_type: str,
                                        iteration: int, max_iterations: int,
                                        parent_id: str | None) -> dict:
@@ -2375,16 +2751,18 @@ Diese Hinweise sollten kritisch überprüft werden.
             "phases": {}
         }
 
-        # Phase 1: BRIEFING (typ-spezifisches Framing: IMPLEMENTATION/BUG_FIX/REFACTOR)
-        briefing = self.phase_briefing(task, task_type=task_type)
-        self.current_workflow["phases"]["briefing"] = briefing
-
-        # Healthpoint versiegeln: das Ziel ist ab hier read-only, alle folgenden
-        # Phasen werden dagegen geprueft (warn-only).
+        # Healthpoint VOR dem Briefing versiegeln. Das versiegelte Ziel ist die
+        # User-Aufgabe selbst — nicht die spaetere Briefing-Reformulierung. Sonst
+        # kann das Briefing bereits driften, ohne dass wir es bemerken.
         if self.healthpoint_enabled and iteration == 0:
             from healthpoint import Healthpoint
             self.healthpoint = Healthpoint(goal=task)
             print(f"\n   🎯 Healthpoint versiegelt: {task[:80]}")
+
+        # Phase 1: BRIEFING (typ-spezifisches Framing: IMPLEMENTATION/BUG_FIX/REFACTOR)
+        briefing = self.phase_briefing(task, task_type=task_type)
+        self.current_workflow["phases"]["briefing"] = briefing
+        self._check_healthpoint("BRIEFING", briefing.get("analysis", ""))
 
         # Phase 2A: PLANNING - STRATEGIE
         # BUG_FIX überspringt das Strategie-Gate — ein lokaler Fix braucht kein
@@ -2414,6 +2792,37 @@ Diese Hinweise sollten kritisch überprüft werden.
             return self.current_workflow
         self.current_workflow["phases"]["planning_detailed"] = planning
         self._check_healthpoint("DETAILPLAN", planning.get("plan", ""))
+
+        # Hard-Stop bei zwei unabhaengigen Signalen: Static-Plan-Check 🔴 UND
+        # Healthpoint-Drift am Detail-Plan. Bei Konkurrenz beider Signale ist
+        # das User-Gate eine zu weiche Schwelle (besonders bei langen Plaenen
+        # leicht zu uebersehen). Drift+Halluzination im Plan = Execution faengt
+        # schlechten Code an, also lieber jetzt abbrechen.
+        plan_static_red = planning.get("static_validation", {}).get("verdict") == "🔴"
+        last_hp = (self.current_workflow.get("healthpoint_checks") or [{}])[-1]
+        hp_drift = last_hp.get("phase") == "DETAILPLAN" and not last_hp.get("aligned", True)
+        hallucinated = planning.get("hallucinated_files") or []
+        # Hard-Stop bei (a) Dual-Signal Static-Red + HP-Drift, ODER
+        # (b) Halluzinations-Treffer im Plan. Erfundene Dateinamen heissen, der
+        # Plan baut auf Phantomen — Execution wuerde garantiert ins Leere greifen.
+        if (plan_static_red and hp_drift) or hallucinated:
+            print("\n" + "🛑" * 35)
+            if hallucinated:
+                print("🛑 HARD-STOP: Halluzinierte Dateinamen im DETAILPLAN")
+                for fname in hallucinated[:5]:
+                    print(f"🛑   - {fname}")
+                self.current_workflow["aborted_at"] = "DETAILPLAN_HALLUCINATION"
+            else:
+                print("🛑 HARD-STOP: Static-Plan-Check 🔴 + Healthpoint-Drift am DETAILPLAN")
+                print(f"🛑   Drift-Grund: {last_hp.get('drift', '?')[:120]}")
+                self.current_workflow["aborted_at"] = "DETAILPLAN_HARDSTOP"
+            print("🛑 Execution wird NICHT gestartet — Plan ist ungeeignet.")
+            print("🛑" * 35)
+            verdict = self._compute_workflow_verdict()
+            self.current_workflow["verdict"] = verdict
+            self._print_workflow_verdict(verdict)
+            self._executor.shutdown(wait=False)
+            return self.current_workflow
 
         # Phase 3: EXECUTION (Dry-Run + Code-Review + User-Gate)
         execution = self.phase_execution(briefing, planning)
@@ -2497,9 +2906,9 @@ Diese Hinweise sollten kritisch überprüft werden.
         with open(self.workflow_log, "a") as f:
             f.write(json.dumps(self.current_workflow, default=str) + "\n")
 
-        print("\n" + "="*70)
-        print("✅ WORKFLOW ABGESCHLOSSEN")
-        print("="*70 + "\n")
+        verdict = self._compute_workflow_verdict()
+        self.current_workflow["verdict"] = verdict
+        self._print_workflow_verdict(verdict)
 
         # Validator-Threads sauber beenden
         self._executor.shutdown(wait=False)
