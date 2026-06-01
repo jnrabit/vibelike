@@ -424,22 +424,33 @@ Erstelle die {kind} NEU unter strikter Beachtung des Feedbacks.
 ═══════════════════════════════════════════════════════════════════
 """
 
-    def _retrieve(self, query: str, k: int = 3, max_snippet: int = 500) -> str:
-        """Holt allgemeine CS-Konzepte aus dem Vault (Wikipedia/RFCs/PEPs).
+    def _retrieve(self, query: str, k: int = 3, max_snippet: int = 500,
+                  source_boost: dict = None) -> str:
+        """Holt Kontext aus dem Vault (Wikipedia/RFCs/PEPs + eigener Projektcode).
 
-        ⚠️  Der Vault enthält KEIN Projekt-Code — nur Enzyklopädie-Wissen.
-        Für Projekt-Code: _extract_code_overview() / _read_focused_files() nutzen.
+        Standard (source_boost=None): allgemeines CS-Wissen, NICHT als Quelle für
+        Datei-/Funktionsnamen nutzen. Mit source_boost={"PROJEKT_SELFCODE": 0.6}
+        rankt der per --phase selfcode geharvestete eigene Code oben — dann sind
+        Datei-/Funktionsnamen autoritativ (echte Quellen, keine Halluzination).
         """
         if not self.retriever:
             return ""
         try:
-            docs, _, _ = self.retriever.search(query, k=k)
+            docs, _, _ = self.retriever.search(query, k=k, source_boost=source_boost)
             if not docs:
                 return ""
-            lines = [
-                "📚 ALLGEMEINES CS-WISSEN (Wikipedia/RFCs/PEPs — kein Projektcode!):",
-                "(Nutze nur als Konzept-Refresh, NICHT als Quelle für Datei-/Funktionsnamen)",
-            ]
+            boosting_selfcode = bool(source_boost
+                                     and source_boost.get("PROJEKT_SELFCODE", 1.0) < 1.0)
+            if boosting_selfcode:
+                lines = [
+                    "📂 SEMANTISCH RELEVANTER PROJEKTCODE (Vektor-Retrieval, echte Quellen):",
+                    "(Autoritativ für Datei-/Funktionsnamen — ergänzt die voll geladenen Dateien)",
+                ]
+            else:
+                lines = [
+                    "📚 ALLGEMEINES CS-WISSEN (Wikipedia/RFCs/PEPs — kein Projektcode!):",
+                    "(Nutze nur als Konzept-Refresh, NICHT als Quelle für Datei-/Funktionsnamen)",
+                ]
             for i, doc in enumerate(docs, 1):
                 title = doc.get("title", "unknown")
                 source = doc.get("source", "?")
@@ -577,6 +588,18 @@ Schließe mit:
         print(f"   Übersicht: {code_overview.count('📄')} Dateien strukturiert")
         print(f"   Volle Inhalte: {focused_files.count('═══')//2} Dateien gelesen\n")
 
+        # ANALYSIS/EXPLAIN: semantisch relevante eigene Code-Chunks aus dem Vault
+        # (Selfcode-Harvest), Projektcode geboostet. Ergänzt die keyword-basierten
+        # focused_files um function-level Treffer, die der Keyword-Match verfehlt.
+        selfcode_ctx = ""
+        if task_type in ("ANALYSIS", "EXPLAIN"):
+            selfcode_ctx = self._retrieve(task, k=5,
+                                          source_boost={"PROJEKT_SELFCODE": 0.6})
+            if selfcode_ctx:
+                print("[🔎 Semantisch relevanter Projektcode aus Vault geholt]\n")
+        selfcode_block = (f"\nSEMANTISCH RELEVANTER PROJEKTCODE (Vektor-Retrieval):\n"
+                          f"{selfcode_ctx}\n") if selfcode_ctx else ""
+
         # Typ-spezifisches Framing (Rolle + Sektionen + Abschluss)
         framing = self._briefing_framing(task_type)
 
@@ -603,7 +626,7 @@ CODE-ÜBERSICHT (AST-extrahiert):
 
 VOLLER CODE relevanter Dateien:
 {focused_files}
-
+{selfcode_block}
 ═══════════════════════════════════════════════════════════════════
 🚨 ERINNERUNG — verwende NUR diese Dateinamen:
 {authoritative}
