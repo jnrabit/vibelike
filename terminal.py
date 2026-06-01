@@ -200,7 +200,7 @@ class CodeRetriever:
         except Exception:
             return False
     
-    def search(self, query: str, k: int = 10) -> tuple:
+    def search(self, query: str, k: int = 10, source_boost: dict = None) -> tuple:
         """Such im Code-Vault via ChaosRetrieval. Rückgabe: (Dokumente, State vor/nach).
 
         ChaosRetrieval ist der primäre und einzige semantisch korrekte Pfad.
@@ -208,9 +208,17 @@ class CodeRetriever:
         query-unabhängig dieselben Docs mit dist=0 (Engine-Bug). Schlägt
         ChaosRetrieval fehl, greift ein numpy-Cosine-Fallback auf derselben
         Doc-Matrix: korrekt, nur ohne Chaos-Warp.
+
+        source_boost: optional {source: factor}. factor<1 boostet (kleinere
+        Distanz = höherer Rang), factor>1 bestraft. Re-Ranking nach Over-Fetch,
+        damit z.B. {"PROJEKT_SELFCODE": 0.6} eigenen Code vor generische
+        Wiki-Artikel zieht. Default None = unverändertes Ranking.
         """
         if not self.encoder:
             return [], None, None
+
+        # Bei aktivem Boost mehr Kandidaten holen, damit Re-Ranking Material hat
+        fetch_n = k * 3 if source_boost else k
 
         # Pre-Retrieval: DE→EN, damit deutsche Queries die englischen Vault-Docs
         # treffen. Skippt automatisch wenn Query schon englisch ist (Heuristik).
@@ -238,14 +246,19 @@ class CodeRetriever:
                 # Update Warp mit aktuellem Lorenz-State
                 lorenz_state = self.protocol.get_lorenz_params()
                 self.chaos_retrieval.warp.update(lorenz_state)
-                results = self.chaos_retrieval.search(query_vec, top_k=k * 2)
-                docs = self._docs_from_results(results, k, method="chaos")
+                results = self.chaos_retrieval.search(query_vec, top_k=fetch_n * 2)
+                docs = self._docs_from_results(results, fetch_n, method="chaos")
             except Exception as e:
                 print(f"[WARN] ChaosRetrieval fehlgeschlagen → numpy-cosine: {e}")
-                docs = self._numpy_cosine_search(query_vec, k)
+                docs = self._numpy_cosine_search(query_vec, fetch_n)
         else:
             # Kein Chaos verfügbar: ehrlicher numpy-cosine statt kaputtem C++ raw_search
-            docs = self._numpy_cosine_search(query_vec, k)
+            docs = self._numpy_cosine_search(query_vec, fetch_n)
+
+        # Optionaler Source-Boost + Trim auf k
+        if source_boost:
+            docs = self._apply_source_boost(docs, source_boost)
+        docs = docs[:k]
 
         # Hardware-State nach Suche
         state_after = self.hw_logger.log_state(search_query, "search_end")
@@ -269,6 +282,18 @@ class CodeRetriever:
         # distance = 1 - cosine (kleiner = ähnlicher, konsistent mit Konvention)
         results = [(id_map[i], float(1.0 - sims[i])) for i in top_idx]
         return self._docs_from_results(results, k, method="numpy_cosine")
+
+    def _apply_source_boost(self, docs: list, source_boost: dict) -> list:
+        """Re-Rankt Docs nach {source: factor}. factor<1 = Boost, >1 = Penalty.
+
+        Multipliziert die Distanz (kleiner = besser) und sortiert neu. Quellen
+        ohne Eintrag bleiben unverändert (factor 1.0).
+        """
+        for d in docs:
+            factor = source_boost.get(d.get("source", ""), 1.0)
+            d["distance"] = d["distance"] * factor
+        docs.sort(key=lambda d: d["distance"])
+        return docs
 
     def _docs_from_results(self, results: list, k: int, method: str = "chaos") -> list:
         """Helper: Konvertiere (doc_id, distance)-Ergebnisse in Doc-Dicts."""
