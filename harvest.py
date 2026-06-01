@@ -30,6 +30,7 @@ Resumable: bereits gesammelte IDs werden übersprungen.
 """
 import os
 import sys
+import ast
 import json
 import time
 import pickle
@@ -1163,6 +1164,117 @@ def harvest_peps(writer: "CodeVaultWriter", pep_numbers: list):
 
 
 # ═════════════════════════════════════════════════════════════════════
+# SelfCode Collector — eigener Projektcode (AST-Chunks pro Funktion/Klasse)
+# ═════════════════════════════════════════════════════════════════════
+
+# Verzeichnisse, die NICHT in den Vault gehören (Vendor/Noise/Generiert).
+SELFCODE_SKIP_DIRS = {
+    "__pycache__", ".git", ".venv", "venv", "node_modules",
+    "attic", "data", "logs", "models", "framework",  # framework = vendored Quelibrium-Engine
+}
+
+
+def _selfcode_docstring(node) -> str:
+    """Erste Zeile(n) des Docstrings als natürlichsprachiger Anker fürs Embedding."""
+    try:
+        ds = ast.get_docstring(node) or ""
+    except Exception:
+        ds = ""
+    return " ".join(ds.split())[:300]
+
+
+def harvest_selfcode(writer: "CodeVaultWriter", root: str = None) -> int:
+    """Ingestet die eigenen .py-Dateien als AST-Chunks (Funktion/Klasse/Methode).
+
+    Jeder Chunk: natürlichsprachiger Header (Pfad + qualname + Docstring) gefolgt
+    vom Quellcode. Der Header landet in den ersten 512 Zeichen → das Embedding
+    matcht Meta-Fragen über den eigenen Code ('wie funktioniert search()?').
+    Resumable via doc_id; nur neue/ungesehene IDs werden geadded.
+    """
+    root = root or ROOT
+    print(f"\n[selfcode] Scanne {root} nach .py-Dateien")
+    added = skipped = failed = files = 0
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Skip-Dirs in-place prunen (verhindert Abstieg)
+        dirnames[:] = [d for d in dirnames if d not in SELFCODE_SKIP_DIRS
+                       and not d.startswith(".")]
+        for fname in filenames:
+            if not fname.endswith(".py"):
+                continue
+            fpath = os.path.join(dirpath, fname)
+            rel = os.path.relpath(fpath, root)
+            try:
+                src = open(fpath, "r", encoding="utf-8").read()
+                tree = ast.parse(src, filename=rel)
+            except Exception as e:
+                failed += 1
+                print(f"    parse-skip {rel}: {type(e).__name__}")
+                continue
+            files += 1
+
+            # Sammle (qualname, kind, node) für Top-Level-Defs + Methoden
+            chunks = []
+            mod_defs = []
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    chunks.append((node.name, "function", node))
+                    mod_defs.append(f"def {node.name}")
+                elif isinstance(node, ast.ClassDef):
+                    chunks.append((node.name, "class", node))
+                    mod_defs.append(f"class {node.name}")
+                    for sub in node.body:
+                        if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            chunks.append((f"{node.name}.{sub.name}", "method", sub))
+
+            # Modul-Übersicht als eigener Chunk (Docstring + Def-Liste)
+            mod_ds = _selfcode_docstring(tree)
+            if mod_ds or mod_defs:
+                doc_id = f"SELFCODE-{rel}::__module__"
+                if not writer.has(doc_id):
+                    overview = (f"Python-Modul {rel}\n{mod_ds}\n\n"
+                                f"Definitionen: {', '.join(mod_defs)}")
+                    if writer.add({
+                        "id": doc_id, "content": overview,
+                        "title": f"{rel} (Modul-Übersicht)",
+                        "source": "PROJEKT_SELFCODE", "sector": "SELFCODE",
+                        "lang": "python", "rel_path": rel,
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }):
+                        added += 1
+                else:
+                    skipped += 1
+
+            # Ein Chunk pro Funktion/Klasse/Methode
+            for qualname, kind, node in chunks:
+                doc_id = f"SELFCODE-{rel}::{qualname}"
+                if writer.has(doc_id):
+                    skipped += 1
+                    continue
+                segment = ast.get_source_segment(src, node) or ""
+                if not segment.strip():
+                    continue
+                ds = _selfcode_docstring(node)
+                # Natürlichsprachiger Header zuerst → semantisch reiche erste 512 Z.
+                content = (f"{kind} {qualname} in {rel}\n{ds}\n\n{segment}")
+                if writer.add({
+                    "id": doc_id, "content": content,
+                    "title": f"{rel}::{qualname}",
+                    "source": "PROJEKT_SELFCODE", "sector": "SELFCODE",
+                    "lang": "python", "rel_path": rel, "kind": kind,
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }):
+                    added += 1
+                    if added % 32 == 0:
+                        n = writer.flush()
+                        print(f"  [{files} Dateien] +{added} chunks, {skipped} skip - saved {n}")
+
+    n = writer.flush()
+    print(f"[selfcode] done: {files} Dateien, +{added} chunks, {skipped} skipped, {failed} parse-fails")
+    return added
+
+
+# ═════════════════════════════════════════════════════════════════════
 # CLI
 # ═════════════════════════════════════════════════════════════════════
 
@@ -1179,7 +1291,8 @@ PHASE_MAP = {
 }
 
 ALL_PHASES = ["basics", "languages", "network", "advanced",
-              "databases", "security", "devops", "algorithms", "tools", "rfc", "pep"]
+              "databases", "security", "devops", "algorithms", "tools", "rfc", "pep",
+              "selfcode"]
 
 
 def main():
@@ -1204,6 +1317,8 @@ def main():
             total_added += harvest_rfcs(writer, RFC_NUMBERS)
         elif phase == "pep":
             total_added += harvest_peps(writer, PEP_NUMBERS)
+        elif phase == "selfcode":
+            total_added += harvest_selfcode(writer)
         elif phase == "tools":
             total_added += harvest_tool_docs(writer)
         else:
@@ -1230,26 +1345,27 @@ def main():
 # =============================================================================
 
 def harvest_wikipedia_worker(source: str = "wikipedia", limit: int = 100, **kwargs) -> int:
-    """Wrapper for background job processing - harvests Wikipedia."""
+    """Wrapper for background job processing - harvests Wikipedia (ALL PHASES)."""
     print(f"[harvest] Initializing Wikipedia harvester (device: {kwargs.get('device', 'cpu')})")
     writer = CodeVaultWriter(device=kwargs.get("device", "cpu"))
     total = 0
-    phases = ["basics", "languages"]  # Default: start with basics
-    for i, phase in enumerate(phases):
-        if phase in PHASE_MAP:
-            print(f"[harvest] Phase {i+1}/{len(phases)}: {phase}")
-            seeds_de, seeds_en, sector, source_tag = PHASE_MAP[phase]
-            total += harvest_wikipedia_seeds(writer, seeds_de, "de", sector, source_tag)
+    # Harvest all Wikipedia phases for comprehensive coverage
+    phases = [p for p in PHASE_MAP.keys()]  # All phases: basics, languages, network, advanced, databases, security, devops, algorithms, tools
+    print(f"[harvest] Will harvest {len(phases)} Wikipedia phases: {', '.join(phases)}")
+    for i, phase in enumerate(phases, 1):
+        print(f"[harvest] Phase {i}/{len(phases)}: {phase}")
+        seeds_de, seeds_en, sector, source_tag = PHASE_MAP[phase]
+        total += harvest_wikipedia_seeds(writer, seeds_de, "de", sector, source_tag)
+        time.sleep(WIKI_INTER_SECTOR_COOLDOWN)
+        if seeds_en:
+            total += harvest_wikipedia_seeds(writer, seeds_en, "en", sector, source_tag)
             time.sleep(WIKI_INTER_SECTOR_COOLDOWN)
-            if seeds_en:
-                total += harvest_wikipedia_seeds(writer, seeds_en, "en", sector, source_tag)
-                time.sleep(WIKI_INTER_SECTOR_COOLDOWN)
     print(f"[harvest] Wikipedia complete: +{total} documents")
     return total
 
 
-def harvest_rfcs_worker(limit: int = 50, **kwargs) -> int:
-    """Wrapper for background job processing - harvests RFCs."""
+def harvest_rfcs_worker(limit: int = 200, **kwargs) -> int:
+    """Wrapper for background job processing - harvests RFCs (Internet Standards)."""
     print(f"[harvest] Starting RFC harvester (limit: {limit})")
     writer = CodeVaultWriter(device=kwargs.get("device", "cpu"))
     rfc_list = RFC_NUMBERS[:limit] if limit else RFC_NUMBERS
@@ -1258,8 +1374,8 @@ def harvest_rfcs_worker(limit: int = 50, **kwargs) -> int:
     return result
 
 
-def harvest_peps_worker(limit: int = 50, **kwargs) -> int:
-    """Wrapper for background job processing - harvests PEPs."""
+def harvest_peps_worker(limit: int = 300, **kwargs) -> int:
+    """Wrapper for background job processing - harvests PEPs (Python Enhancement Proposals)."""
     print(f"[harvest] Starting PEP harvester (limit: {limit})")
     writer = CodeVaultWriter(device=kwargs.get("device", "cpu"))
     pep_list = PEP_NUMBERS[:limit] if limit else PEP_NUMBERS
