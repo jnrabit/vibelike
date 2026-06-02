@@ -107,6 +107,18 @@ class WorkflowAgent:
     # PARALLELE VALIDIERUNG (Critic)
     # =========================================================================
 
+    # Grammar-constrained decoding (Ollama format → GBNF): zwingt den Critic in
+    # valides JSON mit verdict ∈ {green,yellow,red}. Killt "Validator-Format unklar"
+    # an der Wurzel — die choose-Heuristik (_classify_validator_first_line) wird Fallback.
+    _CRITIC_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "verdict": {"type": "string", "enum": ["green", "yellow", "red"]},
+            "issues": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+        },
+        "required": ["verdict"],
+    }
+
     def _start_validation(self, phase_name: str, output: str, context: str) -> concurrent.futures.Future:
         """Startet Validator im Hintergrund. Gibt Future zurück (nicht blockierend)."""
         def _run() -> str:
@@ -118,14 +130,14 @@ KONTEXT:
 ZU REVIEWEN ({phase_name}):
 {output}
 
-HARTE REGELN (Verstoß = Output unbrauchbar):
-1. Erste Zeile: GENAU "🟢" ODER "🟡 <ein-Satz>" ODER "🔴 <ein-Satz>" — sonst NICHTS
-2. Maximal 3 weitere Zeilen, je ein konkreter Kritikpunkt (1-2 Sätze)
-3. Gesamtausgabe < 400 Zeichen
-4. ABSOLUT VERBOTEN: Die Ausgabe oben wiederholen, paraphrasieren, abschreiben, zusammenfassen
-5. ABSOLUT VERBOTEN: "✅"-Listen, "gut/korrekt/implementiert"-Floskeln, PEP-8/Best-Practice-Lyrik
-6. Wenn nichts Konkretes: NUR "🟢" — keine Erklärung, keine Höflichkeit
-7. Wenn du den Plan/Code abschreibst → STOP, lösche das, gib nur "🟢" aus
+Antworte AUSSCHLIESSLICH als JSON in genau dieser Form:
+{{"verdict": "green", "issues": []}}
+
+- verdict: "green" = nichts Konkretes zu bemängeln; "yellow" = Bedenken; "red" = ernstes Problem
+- issues: 0-3 KONKRETE Kritikpunkte als Strings (leeres Array wenn green)
+- VERBOTEN: den Input oben abschreiben, paraphrasieren oder zusammenfassen
+- VERBOTEN: Floskeln ("gut/korrekt/implementiert", PEP-8/Best-Practice-Lyrik)
+- Unsicher oder nichts Konkretes → {{"verdict": "green", "issues": []}}
 
 GUTE Kritikpunkte (so):
 - "Annahme dass GitHub API ohne Auth nutzbar — bei >60 req/h hard limit"
@@ -137,7 +149,8 @@ SCHLECHTE Kritikpunkte (nicht so):
 - "### PLAN: 1. Dateien... 2. Tests..."          ← Plan abgeschrieben, sofort STOP
 - "Folgt PEP 8 Style"                            ← Floskel
 """
-            return self.validator_qwen.generate(validator_prompt, temperature=0.4)
+            return self.validator_qwen.generate(validator_prompt, temperature=0.4,
+                                                fmt=self._CRITIC_SCHEMA)
 
         return self._executor.submit(_run)
 
@@ -315,8 +328,13 @@ SCHLECHTE Kritikpunkte (nicht so):
         except Exception as e:
             result = f"[Validator-Fehler: {e}]"
 
-        # Post-Filter: Validator-Echo unterdrücken
-        if reviewed and result and not result.startswith("[Validator-Fehler"):
+        # Primär: schema-gezwungenes JSON rendern (verdict→Emoji). Fällt das aus
+        # (kein valides JSON), greift der Heuristik-Pfad mit Echo-Unterdrückung.
+        is_err = result.startswith("[Validator-Fehler")
+        rendered = None if is_err else self._render_critic_json(result)
+        if rendered is not None:
+            result = rendered
+        elif reviewed and result and not is_err:
             result = self._strip_regurgitation(result, reviewed)
 
         print("\n" + "─"*70)
@@ -325,6 +343,27 @@ SCHLECHTE Kritikpunkte (nicht so):
         print(result)
         print("─"*70)
         return result
+
+    def _render_critic_json(self, raw: str):
+        """Rendert den schema-gezwungenen JSON-Critic zu '🟢'/'🟡 <issue>'-Format.
+
+        Return: gerenderter String, oder None wenn raw kein valides Critic-JSON ist
+        (→ Aufrufer nutzt den Heuristik-Fallback).
+        """
+        try:
+            m = re.search(r"\{.*\}", raw or "", re.DOTALL)
+            data = json.loads(m.group(0)) if m else None
+        except Exception:
+            data = None
+        if not isinstance(data, dict) or "verdict" not in data:
+            return None
+        emoji = {"green": "🟢", "yellow": "🟡", "red": "🔴"}.get(str(data["verdict"]).lower())
+        if not emoji:
+            return None
+        issues = [str(i).strip() for i in (data.get("issues") or []) if str(i).strip()]
+        if emoji == "🟢" or not issues:
+            return emoji
+        return "\n".join([f"{emoji} {issues[0]}"] + issues[1:3])
 
     # =========================================================================
     # USER-INTERAKTION (Approval + Feedback-basiertes Regenerieren)

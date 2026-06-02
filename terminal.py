@@ -332,11 +332,13 @@ class QwenCoder:
             print("[WARN] Ollama nicht erreichbar")
 
     def generate(self, prompt: str, system: str = None, temperature: float = 0.2,
-                 stream: bool = False) -> str:
+                 stream: bool = False, fmt=None) -> str:
         """Generiere mit dem konfigurierten Modell.
 
         stream=True: Tokens werden live nach stdout geschrieben (Vordergrund-Calls).
         stream=False: ein Block, kein Live-Output (Hintergrund-Threads, sonst Interleaving).
+        fmt: Ollama `format` — "json" oder ein JSON-Schema-Dict. Schema wird intern
+        zu GBNF kompiliert → grammar-constrained decoding (ungültige Ausgabe unmöglich).
         Rückgabe ist in beiden Fällen der volle Antworttext.
         """
         payload = {
@@ -348,6 +350,8 @@ class QwenCoder:
         }
         if system:
             payload["system"] = system
+        if fmt is not None:
+            payload["format"] = fmt
 
         try:
             if not stream:
@@ -414,9 +418,12 @@ class ClaudeCoder:
             print(f"[WARN] Claude-Init fehlgeschlagen: {e}")
 
     def generate(self, prompt: str, system: str = None, temperature: float = 0.2,
-                 stream: bool = False) -> str:
+                 stream: bool = False, fmt=None) -> str:
         """Generiere via Claude-API. stream=True schreibt Tokens live nach stdout;
-        Rückgabe ist in beiden Fällen der volle Antworttext. Fehler → '[ERR] ...'."""
+        Rückgabe ist in beiden Fällen der volle Antworttext. Fehler → '[ERR] ...'.
+
+        fmt: nur für Signatur-Kompat mit QwenCoder (Ollama-Schema) — hier ignoriert.
+        """
         if not self.usable:
             return "[ERR] ClaudeCoder nicht initialisiert (Key/Paket fehlt)"
 

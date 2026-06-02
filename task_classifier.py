@@ -60,6 +60,18 @@ TASK_TYPES = {
     },
 }
 
+# Grammar-constrained decoding (Ollama format → GBNF): erzwingt valides JSON mit
+# type ∈ TASK_TYPES. Macht den "Parse fehlgeschlagen → Default"-Pfad fast unmöglich.
+CLASSIFY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "type": {"type": "string", "enum": list(TASK_TYPES.keys())},
+        "confidence": {"type": "number"},
+        "reasoning": {"type": "string"},
+    },
+    "required": ["type", "confidence", "reasoning"],
+}
+
 
 class TaskClassifier:
     """Klassifiziert User-Tasks in einen der TASK_TYPES.
@@ -117,7 +129,7 @@ WICHTIG:
 - Kein Text vor oder nach dem JSON
 - confidence ist 0.0 bis 1.0 (wie sicher bist du dir)"""
 
-        raw = self.qwen.generate(prompt, temperature=0.1, stream=False)
+        raw = self.qwen.generate(prompt, temperature=0.1, stream=False, fmt=CLASSIFY_SCHEMA)
         parsed = self._parse_json_response(raw)
 
         # Fallback bei Parse-Fehler
