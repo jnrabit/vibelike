@@ -332,15 +332,19 @@ class QwenCoder:
             print("[WARN] Ollama nicht erreichbar")
 
     def generate(self, prompt: str, system: str = None, temperature: float = 0.2,
-                 stream: bool = False, fmt=None) -> str:
+                 stream: bool = False, fmt=None, cache_prefix: str = None) -> str:
         """Generiere mit dem konfigurierten Modell.
 
         stream=True: Tokens werden live nach stdout geschrieben (Vordergrund-Calls).
         stream=False: ein Block, kein Live-Output (Hintergrund-Threads, sonst Interleaving).
         fmt: Ollama `format` — "json" oder ein JSON-Schema-Dict. Schema wird intern
         zu GBNF kompiliert → grammar-constrained decoding (ungültige Ausgabe unmöglich).
+        cache_prefix: stabiler Präfix → vorne in system gefaltet, damit llama.cpp den
+        KV-Präfix über Calls hinweg recycelt (Signatur-Kompat mit ClaudeCoder).
         Rückgabe ist in beiden Fällen der volle Antworttext.
         """
+        if cache_prefix:
+            system = f"{cache_prefix}\n\n{system}" if system else cache_prefix
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -418,11 +422,14 @@ class ClaudeCoder:
             print(f"[WARN] Claude-Init fehlgeschlagen: {e}")
 
     def generate(self, prompt: str, system: str = None, temperature: float = 0.2,
-                 stream: bool = False, fmt=None) -> str:
+                 stream: bool = False, fmt=None, cache_prefix: str = None) -> str:
         """Generiere via Claude-API. stream=True schreibt Tokens live nach stdout;
         Rückgabe ist in beiden Fällen der volle Antworttext. Fehler → '[ERR] ...'.
 
         fmt: nur für Signatur-Kompat mit QwenCoder (Ollama-Schema) — hier ignoriert.
+        cache_prefix: stabiler Präfix → gecachter system-Block (cache_control ephemeral).
+        Über mehrere Calls mit identischem Präfix (z.B. Codegen-Retries) wird der Block
+        nur einmal berechnet → cache_read statt Neuberechnung.
         """
         if not self.usable:
             return "[ERR] ClaudeCoder nicht initialisiert (Key/Paket fehlt)"
@@ -433,7 +440,13 @@ class ClaudeCoder:
             "temperature": temperature,
             "messages": [{"role": "user", "content": prompt}],
         }
-        if system:
+        if cache_prefix:
+            blocks = [{"type": "text", "text": cache_prefix,
+                       "cache_control": {"type": "ephemeral"}}]
+            if system:
+                blocks.append({"type": "text", "text": system})
+            kwargs["system"] = blocks
+        elif system:
             kwargs["system"] = system
 
         try:

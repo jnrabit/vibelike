@@ -1038,23 +1038,11 @@ Wenn dein Plan das nicht direkt umsetzt: STOP, du driftest.
     # PHASE 3: EXECUTION
     # =========================================================================
 
-    def phase_execution(self, briefing: dict, plan: dict) -> dict:
-        """Phase 3: Code-Generierung mit Dry-Run + parallelem Code-Reviewer + User-Gate."""
-        print("\n" + "="*70)
-        print("PHASE 3: EXECUTION (Dry-Run + Code-Review)")
-        print("="*70)
+    # Stabiler Codegen-Instruktions-Block — identisch über alle Codegen-Calls
+    # (Execution + Retries) → geht als gecachter cache_prefix in generate().
+    _CODEGEN_INSTRUCTIONS = """Du bist ein Experten-Code-Generator. Implementiere basierend auf der ORIGINALAUFGABE und dem PLAN im User-Input.
 
-        existing_context = self._build_existing_files_context(plan.get("plan", ""))
-
-        execution_prompt = f"""Du bist ein Experten-Code-Generator. Implementiere basierend auf diesem Plan:
-
-ORIGINALAUFGABE:
-{briefing['task']}
-
-PLAN:
-{plan['plan']}
-
-{existing_context}ANFORDERUNGEN:
+ANFORDERUNGEN:
 1. Schreib produktionsreife Code
 2. Folge dem bestehenden Coding-Style
 3. Inkludiere Error-Handling
@@ -1063,7 +1051,7 @@ PLAN:
 
 OUTPUT-FORMAT:
 
-Für jede BESTEHENDE Datei (oben unter "BESTEHENDE DATEIEN" gezeigt)
+Für jede BESTEHENDE Datei (im User-Input unter "BESTEHENDE DATEIEN" gezeigt)
 schreibst du einen oder mehrere SEARCH/REPLACE-Blocks. Das System
 wendet sie auf die Datei an — du musst NICHT die ganze Datei kopieren.
 
@@ -1082,7 +1070,7 @@ Regeln:
 - Whitespace und Einrückung exakt übernehmen.
 - Mehrere Änderungen → mehrere SEARCH/REPLACE-Blocks (auch in einer Datei).
 
-Für NEUE Dateien (nicht oben gelistet) schreibst du den vollständigen Inhalt:
+Für NEUE Dateien (nicht gelistet) schreibst du den vollständigen Inhalt:
 ## Datei: <pfad>
 ```python
 <kompletter Datei-Inhalt>
@@ -1095,8 +1083,31 @@ Für NEUE Dateien (nicht oben gelistet) schreibst du den vollständigen Inhalt:
 
 Generiere kompletten, lauffähigen Code."""
 
+    def phase_execution(self, briefing: dict, plan: dict) -> dict:
+        """Phase 3: Code-Generierung mit Dry-Run + parallelem Code-Reviewer + User-Gate."""
+        print("\n" + "="*70)
+        print("PHASE 3: EXECUTION (Dry-Run + Code-Review)")
+        print("="*70)
+
+        existing_context = self._build_existing_files_context(plan.get("plan", ""))
+
+        # Variabler Teil (Task/Plan/Kontext); der stabile Instruktions-Block geht
+        # als gecachter Präfix → Prompt-Caching über Codegen-Retries (Stufe B).
+        execution_prompt = f"""ORIGINALAUFGABE:
+{briefing['task']}
+
+PLAN:
+{plan['plan']}
+
+{existing_context}"""
+
         print("[🤖 Qwen schreibt Code...]\n")
-        code = self.qwen.generate(execution_prompt, temperature=0.1, stream=True)
+        # MONOLITH (Invarianten/Engine-Grounding) + Instruktionen als gecachter
+        # Präfix: >1024 Tokens → Anthropic cached real über Codegen-Calls einer
+        # Session; erdet zugleich den Code-Generator (framework/ tabu etc.).
+        codegen_prefix = f"{self._load_monolith()}\n\n{self._CODEGEN_INSTRUCTIONS}"
+        code = self.qwen.generate(execution_prompt, temperature=0.1, stream=True,
+                                  cache_prefix=codegen_prefix)
 
         # Parse OHNE zu schreiben (Dry-Run)
         planned_changes = self._parse_code(code)
