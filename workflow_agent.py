@@ -1533,17 +1533,50 @@ Regeln:
         """MONOLITH.md — unveränderlicher Projekt-Anker, in JEDES Briefing geladen.
 
         Dokumentiert Invarianten, vendored Engine (Black-Box), Architektur,
-        Safety-Layer und das 'Warum' fester Entscheidungen. Gecacht; graceful ""
-        wenn die Datei fehlt.
+        Safety-Layer und das 'Warum' fester Entscheidungen. Der Marker
+        <!-- ENGINE_SKELETON_AUTO --> wird beim Laden durch ein frisch aus
+        framework/ erzeugtes AST-Skelett ersetzt — so kann die Engine-Doku
+        nicht von den Quell-Signaturen driften. Gecacht; graceful "" wenn fehlt.
         """
         if self._monolith_cache is not None:
             return self._monolith_cache
         path = self.root / "MONOLITH.md"
         try:
-            self._monolith_cache = path.read_text(encoding="utf-8") if path.exists() else ""
+            text = path.read_text(encoding="utf-8") if path.exists() else ""
         except Exception:
-            self._monolith_cache = ""
+            text = ""
+        if text:
+            marker = "<!-- ENGINE_SKELETON_AUTO -->"
+            skeleton = self._build_engine_skeleton()
+            if marker in text:
+                text = text.replace(marker, skeleton or "(framework/ nicht gefunden)")
+            elif skeleton:
+                text = f"{text}\n{skeleton}"
+        self._monolith_cache = text
         return self._monolith_cache
+
+    def _build_engine_skeleton(self) -> str:
+        """Live-AST-Skelett der vendored Engine (framework/quelibrium/).
+
+        Bei jedem MONOLITH-Load frisch erzeugt → kann nicht von den realen
+        Klassen/Methoden-Signaturen abweichen (Drift-Check). Nutzt dieselbe
+        _extract_skeleton-Logik wie die focused_files.
+        """
+        fw = self.root / "framework" / "quelibrium"
+        if not fw.exists():
+            return ""
+        blocks: list[str] = []
+        for f in sorted(fw.rglob("*.py")):
+            if f.name == "__init__.py":
+                continue
+            skel = self._extract_skeleton(f)
+            if not skel or skel.startswith("(no top-level"):
+                continue
+            rel = f.relative_to(self.root)
+            blocks.append(f"── {rel} ──\n{skel}")
+        if not blocks:
+            return ""
+        return "```\n" + "\n\n".join(blocks) + "\n```"
 
     # ─── choose-basierte Halluzinations-Detektion ─────────────────────────────
     # Per-Datei Predicate-Eskalation: in_root → in_tree → declared_new → REJECT.

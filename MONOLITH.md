@@ -32,6 +32,9 @@ Nur die öffentliche Nutzung zählt. Interna sind tabu (siehe Invarianten).
 - **`intelligence/resonance.py :: ResonanceField`** — Resonanz-Kopplung (Hypercube-Topologie) für ChaosRetrieval.
 - **`core/vault.py :: Vault`** — verschlüsselter Store: LZMA + Chaos-XOR über JSON-Liste. Das ist das `.monolith`-Dateiformat (`data/code_archive.monolith`). `MonolithVault = Vault` (Alias).
 
+**Live-Signaturen (auto aus `framework/` generiert — Drift-Check, bei jedem Briefing aktuell):**
+<!-- ENGINE_SKELETON_AUTO -->
+
 ---
 
 ## 3. ⚙️ 6-PHASEN-WORKFLOW (`workflow_agent.py :: WorkflowAgent`)
