@@ -89,6 +89,7 @@ class WorkflowAgent:
         self.workflow_log.parent.mkdir(parents=True, exist_ok=True)
         self.current_workflow = None
         self._monolith_cache = None  # lazy: MONOLITH.md (immer-geladener Projekt-Anker)
+        self.block_select_enabled = True  # MSA-Glied 1: semantischer Block-Selektor (Fallback: Keyword)
 
         # Task-Klassifikator (Phase 0) -- nutzt das Reasoning-Modell
         self.classifier = TaskClassifier(self.analyzer_qwen)
@@ -1762,6 +1763,65 @@ Regeln:
         "harvest": "harvest.py",
     }
 
+    # MSA-Glied 1: Block-Gate-Schema (grammar-constrained Relevanz-Vote)
+    _BLOCK_GATE_SCHEMA = {
+        "type": "object",
+        "properties": {"blocks": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"file": {"type": "string"}, "relevant": {"type": "boolean"}},
+            "required": ["file", "relevant"]}}},
+        "required": ["blocks"],
+    }
+
+    def _select_context_blocks(self, task: str, max_files: int = 4) -> list:
+        """MSA-Filterstufe: rankt Projektdateien per Retrieval (Tier 0) und siebt
+        sie per grammar-gegatetem 1.5b-Vote (Tier 1). ADDITIV — bei Leere/Fehler
+        gibt's das Tier-0-Ranking zurück, nie eine leere Liste durch Über-Filtern.
+        Returns: rel_path-Liste (z.B. ['terminal.py', 'choose/atom.py']).
+        """
+        if not self.retriever:
+            return []
+        try:
+            docs, _, _ = self.retriever.search(task, k=8,
+                                               source_boost={"PROJEKT_SELFCODE": 0.6})
+        except Exception:
+            return []
+        # Tier 0: rel_path aus Selfcode-IDs, Reihenfolge = Relevanz, dedupe
+        ranked: list[str] = []
+        for d in docs:
+            did = str(d.get("id", ""))
+            if not did.startswith("SELFCODE-"):
+                continue
+            rel = did[len("SELFCODE-"):].split("::", 1)[0]
+            if rel and rel not in ranked and (self.root / rel).exists():
+                ranked.append(rel)
+        ranked = ranked[:max(max_files, 4)]
+        if not ranked:
+            return []
+        # Tier 1: grammar-gegateter Relevanz-Vote (additiv)
+        gated = self._gate_blocks(task, ranked)
+        return (gated or ranked)[:max_files]
+
+    def _gate_blocks(self, task: str, files: list) -> list:
+        """Gebündelter 1.5b-Vote mit hartem Schema. Behält Ranking-Reihenfolge.
+        Fehlender Vote → behalten (additiv). Parse-Fehler → [] (Aufrufer nimmt Tier 0)."""
+        listing = "\n".join(f"- {f}" for f in files)
+        prompt = (f"Aufgabe: {task}\n\nKandidaten-Dateien:\n{listing}\n\n"
+                  f"Welche Dateien sind für die Aufgabe relevant? Antworte als JSON "
+                  f'{{"blocks":[{{"file":"<exakter Name oben>","relevant":true|false}}]}} '
+                  f"— genau ein Eintrag pro Kandidat.")
+        try:
+            raw = self.validator_qwen.generate(prompt, temperature=0.0,
+                                               fmt=self._BLOCK_GATE_SCHEMA)
+            m = re.search(r"\{.*\}", raw or "", re.DOTALL)
+            data = json.loads(m.group(0)) if m else {}
+            votes = {b["file"]: bool(b.get("relevant"))
+                     for b in data.get("blocks", []) if isinstance(b, dict) and "file" in b}
+        except Exception:
+            return []
+        # fehlender Vote → True (nie den Schlüssel-Block durch Stille verlieren)
+        return [f for f in files if votes.get(f, True)]
+
     def _read_focused_files(self, task: str,
                             star_budget: int = 6000,
                             skeleton_budget: int = 1200,
@@ -1774,36 +1834,45 @@ Regeln:
         """
         task_lower = task.lower()
 
-        # 1. Star: explizit erwähnter Filename > Topic-Treffer > Default
-        star: str = "workflow_agent.py"
-        for p in self.root.glob("*.py"):
-            if p.stem.lower() in task_lower and len(p.stem) > 3:
-                star = p.name
-                break
-        else:
-            for keyword, fname in self._TOPIC_FILES.items():
-                if keyword in task_lower:
-                    star = fname
-                    break
+        # MSA-Glied 1: semantischer Block-Selektor (Retrieval + grammar-gegateter
+        # Vote) wählt Star + Supporting nach Relevanz. ADDITIV — bei leerem
+        # Ergebnis fällt es aufs bisherige Keyword-Routing zurück.
+        selected: list[str] = []
+        if self.block_select_enabled and self.retriever:
+            selected = self._select_context_blocks(task, max_files=max_supporting + 1)
 
-        # 2. Supporting (Skeletons): NUR Topic-Treffer. KEIN blindes Anhaengen
-        # von workflow_agent.py — das hat in der Vergangenheit Briefings in
-        # Workflow-Design driften lassen (der Coder sieht das WorkflowAgent-Skelett
-        # und imitiert es statt die konkrete Aufgabe zu loesen).
-        supporting: list[str] = []
-        for keyword, fname in self._TOPIC_FILES.items():
-            if keyword in task_lower and fname != star and fname not in supporting:
-                supporting.append(fname)
-                if len(supporting) >= max_supporting:
+        if selected:
+            star = selected[0]
+            supporting = [f for f in selected[1:max_supporting + 1] if (self.root / f).exists()]
+            print(f"[🧱 Block-Selektor: {star}" +
+                  (f" + {', '.join(supporting)}" if supporting else "") + "]")
+        else:
+            # Fallback: Keyword-Routing (Substring > Topic > Default)
+            star = "workflow_agent.py"
+            for p in self.root.glob("*.py"):
+                if p.stem.lower() in task_lower and len(p.stem) > 3:
+                    star = p.name
                     break
-        # Letzter Fallback NUR wenn gar kein Star/Support gefunden — sonst
-        # nimmt der Briefing-Prompt die schmale Topic-Sicht.
-        if not supporting and star == "workflow_agent.py":
-            for fallback in ("validator2.py", "terminal.py"):
-                if fallback != star and fallback not in supporting:
-                    supporting.append(fallback)
-                if len(supporting) >= max_supporting:
-                    break
+            else:
+                for keyword, fname in self._TOPIC_FILES.items():
+                    if keyword in task_lower:
+                        star = fname
+                        break
+
+            # Supporting NUR Topic-Treffer. KEIN blindes Anhaengen von
+            # workflow_agent.py — das hat Briefings in Workflow-Design driften lassen.
+            supporting = []
+            for keyword, fname in self._TOPIC_FILES.items():
+                if keyword in task_lower and fname != star and fname not in supporting:
+                    supporting.append(fname)
+                    if len(supporting) >= max_supporting:
+                        break
+            if not supporting and star == "workflow_agent.py":
+                for fallback in ("validator2.py", "terminal.py"):
+                    if fallback != star and fallback not in supporting:
+                        supporting.append(fallback)
+                    if len(supporting) >= max_supporting:
+                        break
 
         sections: list[str] = []
         star_path = self.root / star
