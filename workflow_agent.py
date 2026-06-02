@@ -2893,6 +2893,12 @@ Diese Hinweise sollten kritisch überprüft werden.
             "commit_done": bool(phases.get("commit")),
         }
 
+        # Drift im PLANNING (Prosa) ≠ Drift im OUTPUT (Execution). Planning-Drift,
+        # der im finalen, getesteten Code nicht ankommt, soll kein 🔴 erzwingen.
+        execution_drift = "EXECUTION" in drift_phases
+        code_landed = produces_code and files_written_count > 0 and tests_passed is True
+
+        # 1. Code-Task ohne Datei-Änderungen → Ziel klar verfehlt
         if produces_code and files_written_count == 0:
             drift_note = (f"Healthpoint-Drifts: {drift_count}× ({', '.join(drift_phases)})"
                           if drift_count else "ohne Drift-Signal")
@@ -2900,12 +2906,29 @@ Diese Hinweise sollten kritisch überprüft werden.
                     "reason": (f"{task_type}-Lauf ohne Datei-Änderungen — "
                                f"Ziel nicht erreicht ({drift_note})"),
                     "metrics": metrics}
+        # 2. Drift IM Output (Execution) → ernst, auch bei geschriebenen Dateien
+        if execution_drift:
+            return {"verdict": "🔴",
+                    "reason": (f"Output-Drift an EXECUTION ({drift_count}× an "
+                               f"{', '.join(drift_phases)}) — Code verfehlt das "
+                               f"versiegelte Ziel"),
+                    "metrics": metrics}
+        # 3. Code gelandet + Tests grün, Drift nur im Planning → 🟡 (Sichtung, kein 🔴):
+        #    die Planungs-Prosa wanderte, aber der finale Output ist da und grün.
+        if code_landed and drift_count > 0:
+            return {"verdict": "🟡",
+                    "reason": (f"Code geschrieben + Tests grün, aber Planning-Drift "
+                               f"({drift_count}× an {', '.join(drift_phases)}) — "
+                               f"Sichtung empfohlen"),
+                    "metrics": metrics}
+        # 4. Mehrfach-Drift OHNE gelandeten/getesteten Code → verfehlt
         if drift_count >= 2:
             return {"verdict": "🔴",
                     "reason": (f"Mehrfach-Drift ({drift_count}× an "
                                f"{', '.join(drift_phases)}) — Output verfehlt das "
                                f"versiegelte Ziel"),
                     "metrics": metrics}
+        # 5. Einzel-Drift
         if drift_count == 1:
             return {"verdict": "🟡",
                     "reason": (f"Abschluss mit Drift-Warnung an {drift_phases[0]} — "
