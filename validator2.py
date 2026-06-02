@@ -412,12 +412,30 @@ class StaticValidatorV2:
             regex_module.MULTILINE,
         )
 
+        # NEUE DATEIEN / NEW FILES als 'declared_new' sammeln — die existieren
+        # legitim noch nicht (Neu-Feature) und sind KEINE Halluzination.
+        new_section_pattern = regex_module.compile(
+            r"(?:NEUE\s+DATEIEN|NEW\s+FILES)"
+            r"(.*?)"
+            r"(?=\n\s*(?:\d+\.\s+)?(?:BETROFFENE\s+DATEIEN|AFFECTED\s+FILES|FUNKTIONEN|"
+            r"FUNCTIONS|CODE-?FLOW|TESTS|IMPORTS|INTEGRATION|ROLLBACK|ESTIMATED|####|###|\Z))",
+            regex_module.IGNORECASE | regex_module.DOTALL,
+        )
+        declared_new: set[str] = set()
+        for nmatch in new_section_pattern.finditer(plan):
+            for fmatch in file_pattern.finditer(nmatch.group(1)):
+                declared_new.add(fmatch.group(1).strip())
+
         seen: set[str] = set()
         for fmatch in file_pattern.finditer(section):
             fname = fmatch.group(1).strip()
             if fname in seen:
                 continue
             seen.add(fname)
+
+            # Als NEU deklariert → existiert legitim noch nicht, keine Halluzination
+            if fname in declared_new:
+                continue
 
             # Prüfen ob die Datei (relativ zum Projekt-Root) existiert
             path = self.root / fname
