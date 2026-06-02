@@ -88,6 +88,7 @@ class WorkflowAgent:
         self.workflow_log = self.root / "logs" / "workflows.jsonl"
         self.workflow_log.parent.mkdir(parents=True, exist_ok=True)
         self.current_workflow = None
+        self._monolith_cache = None  # lazy: MONOLITH.md (immer-geladener Projekt-Anker)
 
         # Task-Klassifikator (Phase 0) -- nutzt das Reasoning-Modell
         self.classifier = TaskClassifier(self.analyzer_qwen)
@@ -588,6 +589,17 @@ Schließe mit:
         print(f"   Übersicht: {code_overview.count('📄')} Dateien strukturiert")
         print(f"   Volle Inhalte: {focused_files.count('═══')//2} Dateien gelesen\n")
 
+        # MONOLITH: unveränderlicher Projekt-Anker, IMMER (alle Task-Typen) als
+        # Fundament oben im Prompt — erdet das Modell über Invarianten, vendored
+        # Engine (Black-Box) und das 'Warum', bevor es Code sieht.
+        monolith = self._load_monolith()
+        monolith_block = (f"\n═══════════════════════════════════════════════════════════════════\n"
+                          f"📜 PROJEKT-FUNDAMENT (MONOLITH — unveränderliche Grundlage):\n"
+                          f"═══════════════════════════════════════════════════════════════════\n"
+                          f"{monolith}\n") if monolith else ""
+        if monolith:
+            print(f"[📜 MONOLITH geladen: {monolith.count(chr(10))+1} Zeilen]\n")
+
         # ANALYSIS/EXPLAIN: semantisch relevante eigene Code-Chunks aus dem Vault
         # (Selfcode-Harvest), Projektcode geboostet. Ergänzt die keyword-basierten
         # focused_files um function-level Treffer, die der Keyword-Match verfehlt.
@@ -614,7 +626,7 @@ Schließe mit:
 ⚠️  Jeder andere Dateiname (z.B. "workflow_manager.py", "vibelike.py", "plugin_manager.py")
     ist eine HALLUZINATION und macht deine Analyse unbrauchbar.
 ═══════════════════════════════════════════════════════════════════
-
+{monolith_block}
 AUFGABE:
 {task}
 
@@ -1516,6 +1528,22 @@ Regeln:
         """Liste ALLER .py-Dateien im Projekt-Root — als verbindliche Quelle der Wahrheit."""
         files = sorted(p.name for p in self.root.glob("*.py"))
         return "\n".join(f"  - {f}" for f in files)
+
+    def _load_monolith(self) -> str:
+        """MONOLITH.md — unveränderlicher Projekt-Anker, in JEDES Briefing geladen.
+
+        Dokumentiert Invarianten, vendored Engine (Black-Box), Architektur,
+        Safety-Layer und das 'Warum' fester Entscheidungen. Gecacht; graceful ""
+        wenn die Datei fehlt.
+        """
+        if self._monolith_cache is not None:
+            return self._monolith_cache
+        path = self.root / "MONOLITH.md"
+        try:
+            self._monolith_cache = path.read_text(encoding="utf-8") if path.exists() else ""
+        except Exception:
+            self._monolith_cache = ""
+        return self._monolith_cache
 
     # ─── choose-basierte Halluzinations-Detektion ─────────────────────────────
     # Per-Datei Predicate-Eskalation: in_root → in_tree → declared_new → REJECT.
