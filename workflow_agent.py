@@ -2879,10 +2879,22 @@ Diese Hinweise sollten kritisch überprüft werden.
         drift_phases = [c.get("phase", "?") for c in hp_checks if not c.get("aligned")]
         drift_count = len(drift_phases)
 
-        files_written = phases.get("execution", {}).get("files_written", []) or []
+        execution = phases.get("execution", {})
+        files_written = execution.get("files_written", []) or []
         files_written_count = len(files_written)
         tests_passed = phases.get("verification", {}).get("tests_passed")
         produces_code = task_type in ("IMPLEMENTATION", "BUG_FIX", "REFACTOR")
+
+        # Deterministische Signale (kein LLM): Static-Validator + Regression-Guard.
+        exec_static = (execution.get("static_validation") or {}).get("verdict")
+        exec_regression = (execution.get("regression_check") or {}).get("verdict")
+        # "Deterministischer Layer grün" = nirgends ein deterministisches 🔴 +
+        # Tests bestanden + Dateien geschrieben. Überstimmt ein halluziniertes
+        # LLM-Judge-🔴 (Healthpoint kann bei komplexem Output falsch urteilen).
+        deterministic_green = (
+            produces_code and files_written_count > 0 and tests_passed is True
+            and exec_static != "🔴" and exec_regression != "🔴"
+        )
 
         metrics = {
             "task_type": task_type,
@@ -2890,6 +2902,8 @@ Diese Hinweise sollten kritisch überprüft werden.
             "drift_phases": drift_phases,
             "files_written": files_written_count,
             "tests_passed": tests_passed,
+            "static": exec_static,
+            "regression": exec_regression,
             "commit_done": bool(phases.get("commit")),
         }
 
@@ -2906,8 +2920,17 @@ Diese Hinweise sollten kritisch überprüft werden.
                     "reason": (f"{task_type}-Lauf ohne Datei-Änderungen — "
                                f"Ziel nicht erreicht ({drift_note})"),
                     "metrics": metrics}
-        # 2. Drift IM Output (Execution) → ernst, auch bei geschriebenen Dateien
+        # 2. Drift IM Output (Execution) → ernst. ABER: wenn der deterministische
+        #    Layer grün ist (Tests + Static + Regression), ist das EXECUTION-Drift-
+        #    Signal vermutlich eine LLM-Judge-Halluzination → 🟡 statt 🔴.
+        #    Determinismus überstimmt LLM-Meinung.
         if execution_drift:
+            if deterministic_green:
+                return {"verdict": "🟡",
+                        "reason": (f"EXECUTION-Drift gemeldet ({', '.join(drift_phases)}), "
+                                   f"aber deterministischer Layer grün (Tests + Static + "
+                                   f"Regression) — Judge-Signal überstimmt, Sichtung empfohlen"),
+                        "metrics": metrics}
             return {"verdict": "🔴",
                     "reason": (f"Output-Drift an EXECUTION ({drift_count}× an "
                                f"{', '.join(drift_phases)}) — Code verfehlt das "
