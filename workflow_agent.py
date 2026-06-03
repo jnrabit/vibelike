@@ -41,8 +41,8 @@ class WorkflowAgent:
 
     def __init__(self):
         # Import QwenCoder + Modell-Konstanten lokal (circular-import-Schutz)
-        from terminal import (QwenCoder, ClaudeCoder, CODEGEN_BACKEND,
-                              VALIDATOR_MODEL, ANALYSIS_MODEL, CodeRetriever)
+        from terminal import (QwenCoder, ClaudeCoder, CODEGEN_BACKEND, VIBELIKE_ARCH,
+                              MODEL, VALIDATOR_MODEL, ANALYSIS_MODEL, CodeRetriever)
         from validator2 import StaticValidatorV2
         from task_classifier import TaskClassifier
 
@@ -52,11 +52,30 @@ class WorkflowAgent:
         except Exception:
             self.retriever = None
 
+        # "Ehrliche Mitte" (VIBELIKE_ARCH=mitte): Claude plant + reviewt, qwen-coder
+        # codet als Worker. Sonst: Default (Claude codet direkt).
+        self.reviewer = None
+        self.arch = VIBELIKE_ARCH
+        mitte = False
+        if VIBELIKE_ARCH == "mitte":
+            reviewer = ClaudeCoder(num_predict=8192)
+            if reviewer.usable:
+                mitte = True
+            else:
+                print("[WARN] Mitte-Modus braucht Claude → nicht usable, Fallback auf default")
+                self.arch = "default"
+
         # Foreground: Code-Gen. Default Claude-API (semantische Instruktionstreue,
         # die ~7b lokal nicht liefert); Fallback auf lokales qwen wenn Key/Paket fehlt.
         # Mit Frontier-Backend wird der 1.5b-Code-Review zu Rauschen → deaktiviert.
         self.code_review_enabled = True
-        if CODEGEN_BACKEND == "claude":
+        if mitte:
+            # Mitte: qwen-coder = Draft-Worker, Claude = Reviewer + Reasoning
+            self.qwen = QwenCoder(model=MODEL, num_predict=8192, keep_alive="30m")
+            self.reviewer = reviewer
+            self.code_review_enabled = False  # 1.5b reviewt Claude-Plan = Noise
+            print("[🧪 ARCH=mitte: Claude plant+reviewt, qwen-coder codet]")
+        elif CODEGEN_BACKEND == "claude":
             claude = ClaudeCoder()
             if claude.usable:
                 self.qwen = claude
@@ -67,12 +86,15 @@ class WorkflowAgent:
         else:
             self.qwen = QwenCoder()
         # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder).
-        # Wechselt mit `qwen` bei Bedarf in/aus VRAM (Ollama swap).
-        self.analyzer_qwen = QwenCoder(
-            model=ANALYSIS_MODEL,
-            num_predict=2048,
-            keep_alive="30m",
-        )
+        # Mitte: Claude (Frontier > 8b, verhindert Drift an der Wurzel).
+        if mitte:
+            self.analyzer_qwen = ClaudeCoder(num_predict=4096)
+        else:
+            self.analyzer_qwen = QwenCoder(
+                model=ANALYSIS_MODEL,
+                num_predict=2048,
+                keep_alive="30m",
+            )
         # Background: kleines Modell für parallelen LLM-Critic.
         # num_predict niedrig halten — Critic soll kurz sein, nicht den Input echoen.
         self.validator_qwen = QwenCoder(
@@ -1101,13 +1123,40 @@ PLAN:
 
 {existing_context}"""
 
-        print("[🤖 Qwen schreibt Code...]\n")
         # MONOLITH (Invarianten/Engine-Grounding) + Instruktionen als gecachter
         # Präfix: >1024 Tokens → Anthropic cached real über Codegen-Calls einer
         # Session; erdet zugleich den Code-Generator (framework/ tabu etc.).
         codegen_prefix = f"{self._load_monolith()}\n\n{self._CODEGEN_INSTRUCTIONS}"
-        code = self.qwen.generate(execution_prompt, temperature=0.1, stream=True,
-                                  cache_prefix=codegen_prefix)
+        if self.reviewer is not None:
+            # "Ehrliche Mitte": qwen-coder Draft → Claude Review (bless/refine/rewrite,
+            # mit Vollmacht den Draft zu verwerfen → Anti-Anchoring).
+            print("[🤖 qwen-coder schreibt Draft...]\n")
+            draft = self.qwen.generate(execution_prompt, temperature=0.1, stream=False,
+                                       cache_prefix=self._CODEGEN_INSTRUCTIONS)
+            print("[🔎 Claude reviewt (bless/refine/rewrite)...]\n")
+            review_prompt = (
+                f"{execution_prompt}\n\n"
+                f"KANDIDATEN-IMPLEMENTIERUNG (von einem kleineren lokalen Modell):\n"
+                f"```\n{draft}\n```\n\n"
+                f"Prüfe die Kandidaten-Implementierung gegen ORIGINALAUFGABE + PLAN.\n"
+                f"- Korrekt & vollständig → gib sie (ggf. minimal verfeinert) im geforderten Format aus.\n"
+                f"- Verfehlt sie die Spec oder ist grundlegend falsch → IGNORIERE sie und schreib die "
+                f"korrekte Implementierung von Grund auf; häng dich NICHT an ihre Struktur.\n"
+                f"Erste Zeile EXAKT: 'VERDICT: bless' ODER 'VERDICT: refine' ODER 'VERDICT: rewrite'. "
+                f"Danach der finale Code im ## Datei:-Format."
+            )
+            code = self.reviewer.generate(review_prompt, temperature=0.1, stream=True,
+                                          cache_prefix=codegen_prefix)
+            # VERDICT-Zeile loggen (hilft Draft / ankert Claude?) — Parser ignoriert sie
+            m = re.search(r"VERDICT:\s*(bless|refine|rewrite)", code or "", re.IGNORECASE)
+            verdict_word = m.group(1).lower() if m else "?"
+            print(f"\n[🔎 Review-Verdict: {verdict_word}]")
+            if self.current_workflow is not None:
+                self.current_workflow.setdefault("mitte", {})["review_verdict"] = verdict_word
+        else:
+            print("[🤖 Qwen schreibt Code...]\n")
+            code = self.qwen.generate(execution_prompt, temperature=0.1, stream=True,
+                                      cache_prefix=codegen_prefix)
 
         # Parse OHNE zu schreiben (Dry-Run)
         planned_changes = self._parse_code(code)

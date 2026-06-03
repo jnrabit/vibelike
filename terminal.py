@@ -58,6 +58,9 @@ ANALYSIS_MODEL = os.environ.get("VIBELIKE_ANALYSIS_MODEL", "qwen3:8b")
 # "ollama" (lokal, ~7b-Decke). Default claude — fällt auf lokal zurück wenn Key/Paket fehlt.
 CODEGEN_BACKEND = os.environ.get("VIBELIKE_CODEGEN_BACKEND", "claude").lower()
 CODEGEN_MODEL = os.environ.get("VIBELIKE_CODEGEN_MODEL", "claude-sonnet-4-6")
+# Architektur-Modus: "default" (Claude codet) oder "mitte" (Claude plant/reviewt,
+# qwen-coder codet als Worker). Experiment "ehrliche Mitte".
+VIBELIKE_ARCH = os.environ.get("VIBELIKE_ARCH", "default").lower()
 OLLAMA_URL = "http://localhost:11434/api/generate"
 LOG_FILE = os.path.join(ROOT, "logs", "triplets.jsonl")
 
