@@ -1105,6 +1105,25 @@ Für NEUE Dateien (nicht gelistet) schreibst du den vollständigen Inhalt:
 
 Generiere kompletten, lauffähigen Code."""
 
+    def _apply_review_patch(self, draft: str, review_out: str) -> tuple:
+        """Wendet Claudes SEARCH/REPLACE-Patch-Blocks auf qwens Draft an (in-memory).
+
+        Claude gibt im patch-Fall nur die Diffs aus (kleiner Output = Token-Spar) —
+        der volle Datei-Inhalt wird lokal aus dem Draft + Patch rekonstruiert.
+        Gibt (gepatchter_draft, anzahl_angewandt) zurück. Schlägt ein SEARCH-Snippet
+        nicht an (Whitespace-Mismatch), bleibt der Draft an der Stelle — der Bug wird
+        dann von der Verify-Phase (Tests) gefangen.
+        """
+        pairs = re.findall(
+            r"<{5,}\s*SEARCH\s*\n(.*?)\n={5,}\s*\n(.*?)\n>{5,}\s*REPLACE",
+            review_out or "", re.DOTALL)
+        out, applied = draft, 0
+        for search, replace in pairs:
+            if search and search in out:
+                out = out.replace(search, replace, 1)
+                applied += 1
+        return out, applied
+
     def phase_execution(self, briefing: dict, plan: dict) -> dict:
         """Phase 3: Code-Generierung mit Dry-Run + parallelem Code-Reviewer + User-Gate."""
         print("\n" + "="*70)
@@ -1133,24 +1152,33 @@ PLAN:
             print("[🤖 qwen-coder schreibt Draft...]\n")
             draft = self.qwen.generate(execution_prompt, temperature=0.1, stream=False,
                                        cache_prefix=self._CODEGEN_INSTRUCTIONS)
-            print("[🔎 Claude reviewt (bless/refine/rewrite)...]\n")
+            print("[🔎 Claude reviewt (bless/patch/rewrite)...]\n")
             review_prompt = (
                 f"{execution_prompt}\n\n"
                 f"KANDIDATEN-IMPLEMENTIERUNG (von einem kleineren lokalen Modell):\n"
                 f"```\n{draft}\n```\n\n"
-                f"Prüfe die Kandidaten-Implementierung gegen ORIGINALAUFGABE + PLAN.\n"
-                f"- Korrekt & vollständig → gib sie (ggf. minimal verfeinert) im geforderten Format aus.\n"
-                f"- Verfehlt sie die Spec oder ist grundlegend falsch → IGNORIERE sie und schreib die "
-                f"korrekte Implementierung von Grund auf; häng dich NICHT an ihre Struktur.\n"
-                f"Erste Zeile EXAKT: 'VERDICT: bless' ODER 'VERDICT: refine' ODER 'VERDICT: rewrite'. "
-                f"Danach der finale Code im ## Datei:-Format."
+                f"Prüfe den Kandidaten gegen ORIGINALAUFGABE + PLAN. BEVORZUGE PATCHEN vor Neuschreiben:\n"
+                f"- Schon korrekt & vollständig → erste Zeile 'VERDICT: bless', sonst NICHTS weiter.\n"
+                f"- ≥50% korrekt (Struktur stimmt, einzelne Bugs) → 'VERDICT: patch', danach NUR "
+                f"SEARCH/REPLACE-Blocks für die konkreten Fehler (gegen den Kandidaten-Code oben), "
+                f"NICHT die ganze Datei. Format je Fix:\n"
+                f"<<<<<<< SEARCH\n<exakter Ausschnitt aus dem Kandidaten>\n=======\n<korrigiert>\n>>>>>>> REPLACE\n"
+                f"- <50% korrekt / grundlegend falsch → 'VERDICT: rewrite', danach die korrekte "
+                f"Implementierung komplett im ## Datei:-Format.\n"
+                f"Erste Zeile EXAKT eine der drei VERDICT-Zeilen."
             )
-            code = self.reviewer.generate(review_prompt, temperature=0.1, stream=True,
-                                          cache_prefix=codegen_prefix)
-            # VERDICT-Zeile loggen (hilft Draft / ankert Claude?) — Parser ignoriert sie
-            m = re.search(r"VERDICT:\s*(bless|refine|rewrite)", code or "", re.IGNORECASE)
-            verdict_word = m.group(1).lower() if m else "?"
-            print(f"\n[🔎 Review-Verdict: {verdict_word}]")
+            review_out = self.reviewer.generate(review_prompt, temperature=0.1, stream=True,
+                                                 cache_prefix=codegen_prefix)
+            m = re.search(r"VERDICT:\s*(bless|patch|rewrite)", review_out or "", re.IGNORECASE)
+            verdict_word = m.group(1).lower() if m else "rewrite"
+            if verdict_word == "bless":
+                code = draft  # qwens Draft ist schon das Endergebnis — kein Claude-Output nötig
+            elif verdict_word == "patch":
+                code, n_applied = self._apply_review_patch(draft, review_out)
+                print(f"\n[🔧 {n_applied} Patch-Block(e) auf Draft angewandt]")
+            else:  # rewrite
+                code = review_out
+            print(f"[🔎 Review-Verdict: {verdict_word}]")
             if self.current_workflow is not None:
                 self.current_workflow.setdefault("mitte", {})["review_verdict"] = verdict_word
         else:
