@@ -70,11 +70,13 @@ def load_collect_wildcards(query_vec: np.ndarray, k: int = WILDCARDS):
         return []
 
 
-def main():
-    query = sys.argv[1] if len(sys.argv) > 1 else \
-        "Wie hängen chaotische Dynamik und Wissens-Retrieval zusammen?"
-    print(f"\n{'='*70}\nQUERY: {query}\n{'='*70}\n")
+def find_bridges(query: str, verbose: bool = True):
+    """Retrieval (2 Vaults) + qwen-Brücken-Skizze.
 
+    Returns (pool, bridges_text). pool = Konzept-Liste, bridges_text = roher
+    Brücken-Block (eine Brücke pro Zeile: A ↔ B: Rationale). Eine Quelle der
+    Wahrheit für CLI-Druck UND den ossifikat-Connector.
+    """
     retr = CodeRetriever()
 
     # 1. Viel aus dem fokussierten IT/Code-Vault (ChaosRetrieval, inkl. Exploration)
@@ -92,10 +94,11 @@ def main():
                      "content": (d.get("content") or "")[:400]})
     pool.extend(wild)
 
-    print(f"\n--- Konzept-Pool ({len(it_docs)} IT + {len(wild)} Wildcards) ---")
-    for i, c in enumerate(pool, 1):
-        tag = "🃏" if c["source"] == "COLLECT_BIG" else "  "
-        print(f"{tag}[{i}] {c['title']}  ({c['source']})")
+    if verbose:
+        print(f"\n--- Konzept-Pool ({len(it_docs)} IT + {len(wild)} Wildcards) ---")
+        for i, c in enumerate(pool, 1):
+            tag = "🃏" if c["source"] == "COLLECT_BIG" else "  "
+            print(f"{tag}[{i}] {c['title']}  ({c['source']})")
 
     # 3. qwen3:8b skizziert Brücken
     listing = "\n".join(f"[{i}] {c['title']} ({c['source']}): {c['content'][:200]}"
@@ -111,13 +114,23 @@ def main():
         f"Bevorzuge überraschende, cross-domain Verbindungen. Spekulation ist erlaubt "
         f"(es sind Kandidaten, kein Beweis)."
     )
-    print(f"\n{'='*70}\n🌉 BRÜCKEN-SKIZZE (qwen3:8b, Kandidaten):\n{'='*70}")
+    if verbose:
+        print(f"\n{'='*70}\n🌉 BRÜCKEN-SKIZZE (qwen3:8b, Kandidaten):\n{'='*70}")
     # qwen3:8b ist Reasoning-Modell (<think>): num_predict großzügig, Block strippen.
     qwen = QwenCoder(model=ANALYSIS_MODEL, num_predict=2000)
     raw = qwen.generate(prompt, temperature=0.7, stream=False) or ""
     bridges = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-    print(bridges if bridges else "(qwen lieferte leer)")
-    print()
+    if verbose:
+        print(bridges if bridges else "(qwen lieferte leer)")
+        print()
+    return pool, bridges
+
+
+def main():
+    query = sys.argv[1] if len(sys.argv) > 1 else \
+        "Wie hängen chaotische Dynamik und Wissens-Retrieval zusammen?"
+    print(f"\n{'='*70}\nQUERY: {query}\n{'='*70}\n")
+    find_bridges(query, verbose=True)
 
 
 if __name__ == "__main__":

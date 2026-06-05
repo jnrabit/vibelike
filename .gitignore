@@ -1,0 +1,6 @@
+# Laufzeit-/generierte Zustände (regenerierbar, churnen)
+data/ossifikat.db
+data/bridge_rationales.jsonl
+__pycache__/
+*.pyc
+.directory
