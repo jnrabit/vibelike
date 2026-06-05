@@ -142,6 +142,25 @@ body {
 .empty { color: var(--tm-faint); padding: 40px; text-align: center; }
 .hidden { display: none; }
 
+/* ── Terminal (xterm) ── */
+.tmbar { display: flex; gap: 9px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+#tm-token {
+  flex: 1; min-width: 180px; font-family: var(--tm-font-mono); font-size: 12.5px;
+  background: var(--tm-surface); color: var(--tm-text);
+  border: 1px solid var(--tm-border-strong); border-radius: var(--tm-radius-sm); padding: 8px 11px;
+}
+#tm-connect {
+  background: var(--tm-accent-soft); color: var(--tm-accent); cursor: pointer;
+  border: 1px solid var(--tm-border-strong); border-radius: var(--tm-radius-sm);
+  padding: 8px 16px; font-size: 13px; font-weight: 600;
+}
+#tm-connect:hover { border-color: var(--tm-accent); }
+.tm-status { font-family: var(--tm-font-mono); font-size: 11.5px; color: var(--tm-muted); }
+#term {
+  height: 70vh; background: #13130F; border: 1px solid var(--tm-border);
+  border-radius: var(--tm-radius); padding: 8px;
+}
+
 /* ── Mobil: Sidebar wird zur Leiste oben, Output volle Breite darunter ── */
 @media (max-width: 720px) {
   body { display: flex; flex-direction: column; height: auto; min-height: 100vh; }
@@ -183,4 +202,6 @@ body {
   .triple__foot { flex-wrap: wrap; gap: 5px 12px; }
   .section pre { font-size: 11px; max-height: 280px; }
   .phaseline { gap: 6px; }
+  #term { height: 64vh; }
+  #tm-connect { padding: 8px 13px; }
 }

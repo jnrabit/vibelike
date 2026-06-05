@@ -21,15 +21,21 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent.parent
+HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "ossifikat"))
+sys.path.insert(0, str(HERE))  # damit `from auth/terminal_ws import` unter beiden Startarten lädt
 
 WORKFLOWS_JSONL = ROOT / "logs" / "workflows.jsonl"
 OSSIFIKAT_DB = ROOT / "data" / "ossifikat.db"
 BRIDGE_RATIONALES = ROOT / "data" / "bridge_rationales.jsonl"
-STATIC = Path(__file__).resolve().parent / "static"
+STATIC = HERE / "static"
 
 app = FastAPI(title="Vibelike Kommandozentrale", docs_url="/api/docs")
+
+# PTY-Web-Terminal (hinter Token-Auth + 'terminal'-Capability)
+from terminal_ws import router as terminal_router  # noqa: E402
+app.include_router(terminal_router)
 
 
 # ── Datenquellen (read-only, pro Request frisch) ───────────────────────────

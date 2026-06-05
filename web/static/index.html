@@ -3,17 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vibelike · Kommandozentrale</title>
+  <title>hótr̥ · Kommandozentrale</title>
+  <link rel="stylesheet" href="/static/vendor/xterm.css">
   <link rel="stylesheet" href="/static/dash.css">
 </head>
 <body>
   <div class="backdrop" id="backdrop"></div>
   <aside class="sb" id="sb">
     <div class="sb__brand">
-      <div class="sb__mark">V</div>
+      <div class="sb__mark">ह</div>
       <div>
-        <div class="sb__name">Vibelike</div>
-        <div class="sb__meta">Kommandozentrale</div>
+        <div class="sb__name">hótr̥</div>
+        <div class="sb__meta">der das Wissen herbeiruft</div>
       </div>
     </div>
     <div class="navbtn is-active" data-view="workflows">
@@ -21,6 +22,9 @@
     </div>
     <div class="navbtn" data-view="knowledge">
       <span>Wissens-Substrat</span><span class="pill" id="nav-os">–</span>
+    </div>
+    <div class="navbtn" data-view="terminal">
+      <span>Terminal</span><span class="pill" id="nav-tm">⌘</span>
     </div>
     <div class="sb__foot">
       <span class="dot">●</span> <span id="health-text">verbinde…</span><br>
@@ -44,6 +48,8 @@
     <div id="content"></div>
   </main>
 
+  <script src="/static/vendor/xterm.js"></script>
+  <script src="/static/vendor/addon-fit.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

@@ -116,9 +116,76 @@ async function viewKnowledge() {
   }
 }
 
+// ── Terminal (xterm.js + WebSocket /ws/terminal) ────────────────────────
+let term = null, termFit = null, termWs = null;
+const setTmStatus = (s) => { const e = document.getElementById('tm-status'); if (e) e.textContent = s; };
+const sendResize = () => {
+  if (term && termWs && termWs.readyState === 1) {
+    try { termFit.fit(); } catch {}
+    termWs.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+  }
+};
+const onWinResize = () => sendResize();
+
+function cleanupTerminal() {
+  window.removeEventListener('resize', onWinResize);
+  if (termWs) { try { termWs.close(); } catch {} termWs = null; }
+  if (term) { try { term.dispose(); } catch {} term = null; }
+}
+
+function connectTerminal() {
+  const token = (document.getElementById('tm-token').value || '').trim();
+  if (!token) { setTmStatus('Token fehlt'); return; }
+  localStorage.setItem('vibelike_token', token);
+  cleanupTerminal();
+  term = new Terminal({
+    fontFamily: 'JetBrains Mono, ui-monospace, monospace', fontSize: 13, cursorBlink: true,
+    theme: { background: '#13130F', foreground: '#ECE6D9', cursor: '#D08A4D' },
+  });
+  termFit = new FitAddon.FitAddon();
+  term.loadAddon(termFit);
+  term.open(document.getElementById('term'));
+  requestAnimationFrame(() => { try { termFit.fit(); } catch {} });
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  termWs = new WebSocket(`${proto}://${location.host}/ws/terminal`);
+  termWs.onopen = () => { setTmStatus('verbunden'); termWs.send(JSON.stringify({ type: 'auth', token })); sendResize(); };
+  termWs.onmessage = (e) => term && term.write(e.data);
+  termWs.onerror = () => setTmStatus('Fehler');
+  termWs.onclose = (e) => {
+    const why = e.code === 4401 ? ' (Auth)' : e.code === 4403 ? ' (keine terminal-Capability)' : e.code >= 4400 ? ` (${e.code})` : '';
+    setTmStatus('getrennt' + why);
+  };
+  term.onData((d) => { if (termWs && termWs.readyState === 1) termWs.send(JSON.stringify({ type: 'input', data: d })); });
+  window.addEventListener('resize', onWinResize);
+}
+
+function viewTerminal() {
+  $('#view-title').textContent = 'Terminal';
+  $('#view-sub').textContent = 'PTY · terminal.py hinter Token-Auth';
+  $('#stats').innerHTML = '';
+  // schon mit offener Session? nicht neu aufbauen.
+  if (document.getElementById('term') && termWs && termWs.readyState <= 1) return;
+  const saved = localStorage.getItem('vibelike_token') || '';
+  const c = $('#content'); c.innerHTML = '';
+  const bar = el(`<div class="tmbar">
+    <input id="tm-token" type="password" autocomplete="off" placeholder="Bearer-Token (pair_admin / Pairing)" value="${esc(saved)}">
+    <button id="tm-connect">Verbinden</button>
+    <span id="tm-status" class="tm-status">getrennt</span>
+  </div>`);
+  c.appendChild(bar);
+  c.appendChild(el('<div id="term"></div>'));
+  document.getElementById('tm-connect').addEventListener('click', connectTerminal);
+}
+
 // ── Router ──────────────────────────────────────────────────────────────
 async function render() {
   document.querySelectorAll('.navbtn').forEach(b => b.classList.toggle('is-active', b.dataset.view === state.view));
+  if (state.view !== 'terminal') cleanupTerminal();
+  if (state.view === 'terminal') {
+    try { await loadHealth(); } catch {}   // Sidebar-Pills best-effort, Terminal hängt nicht dran
+    return viewTerminal();
+  }
   try {
     const h = await loadHealth();
     renderStats(h);

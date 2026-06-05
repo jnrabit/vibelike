@@ -4,3 +4,7 @@ data/bridge_rationales.jsonl
 __pycache__/
 *.pyc
 .directory
+
+# Geräte-Geheimnisse & Audit — NIE committen
+data/chaos_tokens.db
+logs/web_terminal_audit.jsonl
