@@ -159,6 +159,13 @@ body {
 #term {
   height: 70vh; background: #13130F; border: 1px solid var(--tm-border);
   border-radius: var(--tm-radius); padding: 8px;
+  touch-action: pan-y;            /* vertikale Wischgeste fürs Scrollback freigeben */
+}
+/* xterm-Viewport am Handy sauber scrollbar machen */
+#term .xterm-viewport {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;   /* Scroll bleibt im Terminal, kein Seiten-Bounce */
 }
 
 /* ── Mobil: Sidebar wird zur Leiste oben, Output volle Breite darunter ── */

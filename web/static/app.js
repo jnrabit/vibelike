@@ -140,6 +140,7 @@ function connectTerminal() {
   cleanupTerminal();
   term = new Terminal({
     fontFamily: 'JetBrains Mono, ui-monospace, monospace', fontSize: 13, cursorBlink: true,
+    scrollback: 5000,
     theme: { background: '#13130F', foreground: '#ECE6D9', cursor: '#D08A4D' },
   });
   termFit = new FitAddon.FitAddon();
@@ -174,8 +175,32 @@ function viewTerminal() {
     <span id="tm-status" class="tm-status">getrennt</span>
   </div>`);
   c.appendChild(bar);
-  c.appendChild(el('<div id="term"></div>'));
+  const termDiv = el('<div id="term"></div>');
+  c.appendChild(termDiv);
+  attachTermTouch(termDiv);
   document.getElementById('tm-connect').addEventListener('click', connectTerminal);
+}
+
+// Swipe-→-Scrollback: xterm scrollt am Handy nativ unzuverlässig (Viewport vs. Seiten-
+// Scroll). Wir mappen die vertikale Wischgeste direkt auf term.scrollLines — renderer-
+// agnostisch (Zeilenhöhe aus dem Viewport berechnet). preventDefault hält die Geste im
+// Terminal statt die Seite zu scrollen.
+function attachTermTouch(node) {
+  let ty = null;
+  // Capture-Phase (3. Arg capture:true): unser Scroll greift VOR xterms Text-/Auswahl-
+  // Ebene — sonst fängt die die Wischgeste über Text ab und es scrollt nur im Schwarzen.
+  node.addEventListener('touchstart', (e) => {
+    ty = e.touches.length === 1 ? e.touches[0].clientY : null;
+  }, { capture: true, passive: true });
+  node.addEventListener('touchmove', (e) => {
+    if (ty === null || !term) return;
+    const vp = term.element && term.element.querySelector('.xterm-viewport');
+    const rows = (term.buffer && term.buffer.active && term.buffer.active.length) || term.rows || 24;
+    const cell = vp && vp.scrollHeight ? vp.scrollHeight / rows : 18;
+    const lines = Math.trunc((ty - e.touches[0].clientY) / cell);
+    if (lines !== 0) { term.scrollLines(lines); ty = e.touches[0].clientY; e.preventDefault(); }
+  }, { capture: true, passive: false });
+  node.addEventListener('touchend', () => { ty = null; }, { capture: true, passive: true });
 }
 
 // ── Router ──────────────────────────────────────────────────────────────
