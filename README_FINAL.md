@@ -1,4 +1,9 @@
-# Vibelike - Complete Integration Summary
+# hótr̥ — Complete Integration Summary
+
+> **hótr̥** (vedisch *hótr̥*, होतृ — „der das Wissen herbeiruft/rezitiert") ist der
+> Anzeigename des Projekts. Im Code/CLI/Env heißt es weiterhin `vibelike`
+> (`VIBELIKE_*`, `vibelike-terminal`, …) — Rebrand ist rein kosmetisch.
+
 
 ## Status: ✓ COMPLETE
 
