@@ -58,6 +58,17 @@ ANALYSIS_MODEL = os.environ.get("VIBELIKE_ANALYSIS_MODEL", "qwen3:8b")
 # "ollama" (lokal, ~7b-Decke). Default claude — fällt auf lokal zurück wenn Key/Paket fehlt.
 CODEGEN_BACKEND = os.environ.get("VIBELIKE_CODEGEN_BACKEND", "claude").lower()
 CODEGEN_MODEL = os.environ.get("VIBELIKE_CODEGEN_MODEL", "claude-sonnet-4-6")
+# Großer Wissens-Vault: general-knowledge Korpus (188k Docs), PARALLEL zum Code-Vault
+# abgefragt. Beide werden je Query durchsucht (ChaosRetrieval-Recall) und per Cosine
+# auf gemeinsamer Skala fair zusammengeführt. VIBELIKE_DUAL_VAULT=0 schaltet ihn aus.
+KNOWLEDGE_VAULT_FILE = os.environ.get(
+    "VIBELIKE_KNOWLEDGE_VAULT", "/home/jnrabit/collect/data/monolith_archive.monolith")
+KNOWLEDGE_CACHE_FILE = os.environ.get(
+    "VIBELIKE_KNOWLEDGE_CACHE", "/home/jnrabit/collect/data/monolith_embedding_cache.pkl")
+DUAL_VAULT = os.environ.get("VIBELIKE_DUAL_VAULT", "1") != "0"
+# REPL-Antwortmodell für Q&A über die Vaults: GENERALIST (qwen3:8b), nicht der Coder —
+# sonst weist das Modell Nicht-Code-Fragen ab ("ich kann nur Code").
+KNOWLEDGE_ANSWER_MODEL = os.environ.get("VIBELIKE_KNOWLEDGE_ANSWER_MODEL", ANALYSIS_MODEL)
 # Architektur-Modus: "default" (Claude codet) oder "mitte" (Claude plant/reviewt,
 # qwen-coder codet als Worker). Experiment "ehrliche Mitte".
 VIBELIKE_ARCH = os.environ.get("VIBELIKE_ARCH", "default").lower()
@@ -146,32 +157,21 @@ class CodeRetriever:
 
     EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 
-    def __init__(self):
+    def __init__(self, remote_url: str = "__env__"):
+        # Remote-Modus: Suche läuft über den warmen Retrieval-Daemon (retrieval_service.py),
+        # damit nicht jede frisch gespawnte terminal.py die ~40s Vault-Ladezeit zahlt.
+        # remote_url=None erzwingt lokal (so lädt der Daemon selbst die Vaults, ohne sich
+        # zu proxien). "__env__" = aus VIBELIKE_RETRIEVAL_URL lesen.
+        if remote_url == "__env__":
+            remote_url = os.environ.get("VIBELIKE_RETRIEVAL_URL")
+        self.remote_url = (remote_url or "").rstrip("/") or None
+
+        # Code-Vault lokal: leichtgewichtig (~1733 docs, <2s), liefert Telemetrie
+        # (hw_logger/state) + ossifikat-Logging — in BEIDEN Modi gebraucht.
         self.protocol = Protocol(vault_file=CODE_VAULT_FILE, cache_file=CODE_CACHE_FILE)
         self.hw_logger = HardwareLogger(self.protocol)
 
-        # SentenceTransformer laden
-        try:
-            from sentence_transformers import SentenceTransformer
-            device = "cuda" if self._has_cuda() else "cpu"
-            self.encoder = SentenceTransformer(self.EMBEDDING_MODEL, device=device)
-            print("[OK] SentenceTransformer geladen")
-        except ImportError as e:
-            print(f"[ERR] sentence-transformers nicht installiert: {e}")
-            self.encoder = None
-
-        # Advanced Retrieval: ResonanceField + ChaosRetrieval
-        try:
-            self.resonance_field = ResonanceField()
-            self.chaos_retrieval = ChaosRetrieval(protocol=self.protocol, field=self.resonance_field)
-            print("[OK] ⚡ Chaos Retrieval mit Resonance Field aktiviert")
-            self.use_chaos_retrieval = True
-        except Exception as e:
-            print(f"[WARN] Chaos Retrieval nicht verfügbar: {e}")
-            self.chaos_retrieval = None
-            self.use_chaos_retrieval = False
-
-        # Ossifikat Integration
+        # Ossifikat Integration (leicht)
         try:
             if ADAPTERS_AVAILABLE:
                 self.terminal_adapter = TerminalAdapter()
@@ -181,6 +181,37 @@ class CodeRetriever:
         except Exception as e:
             print(f"[WARN] Ossifikat nicht verfügbar: {e}")
             self.terminal_adapter = None
+
+        if self.remote_url:
+            # ── Remote: kein Encoder/Vault/Chaos lokal — der Daemon hält alles warm ──
+            self.encoder = None
+            self.resonance_field = None
+            self.chaos_retrieval = None
+            self.use_chaos_retrieval = False
+            self.query_translator = None
+            self._engines = []
+            print(f"[OK] 🔌 Retrieval-Daemon: {self.remote_url} (kein lokaler Vault-Load)")
+            return
+
+        # ── Lokal: Encoder + Chaos + beide Vaults selbst laden ──
+        try:
+            from sentence_transformers import SentenceTransformer
+            device = "cuda" if self._has_cuda() else "cpu"
+            self.encoder = SentenceTransformer(self.EMBEDDING_MODEL, device=device)
+            print("[OK] SentenceTransformer geladen")
+        except ImportError as e:
+            print(f"[ERR] sentence-transformers nicht installiert: {e}")
+            self.encoder = None
+
+        try:
+            self.resonance_field = ResonanceField()
+            self.chaos_retrieval = ChaosRetrieval(protocol=self.protocol, field=self.resonance_field)
+            print("[OK] ⚡ Chaos Retrieval mit Resonance Field aktiviert")
+            self.use_chaos_retrieval = True
+        except Exception as e:
+            print(f"[WARN] Chaos Retrieval nicht verfügbar: {e}")
+            self.chaos_retrieval = None
+            self.use_chaos_retrieval = False
 
         # Pre-Retrieval Query-Translator (DE→EN): deutsche Queries treffen sonst
         # die englischen Wikipedia/RFC/PEP-Docs schlecht. Heuristik + Cache, kein
@@ -192,6 +223,21 @@ class CodeRetriever:
         except Exception as e:
             print(f"[WARN] Query-Translator nicht verfügbar: {e}")
             self.query_translator = None
+
+        # Multi-Vault: primär Code-Vault; optional großer Wissens-Vault parallel.
+        # Beide Engines werden je Query abgefragt und per Cosine fair gemerged.
+        self._engines = [self._make_engine(self.protocol, self.chaos_retrieval, "code")]
+        if DUAL_VAULT:
+            try:
+                if os.path.exists(KNOWLEDGE_VAULT_FILE):
+                    kproto = Protocol(vault_file=KNOWLEDGE_VAULT_FILE, cache_file=KNOWLEDGE_CACHE_FILE)
+                    kchaos = ChaosRetrieval(protocol=kproto, field=ResonanceField())
+                    self._engines.append(self._make_engine(kproto, kchaos, "knowledge"))
+                    print(f"[OK] 📚 Wissens-Vault: {len(kproto.archive):,} docs (parallel zum Code-Vault)")
+                else:
+                    print(f"[WARN] Wissens-Vault nicht gefunden: {KNOWLEDGE_VAULT_FILE}")
+            except Exception as e:
+                print(f"[WARN] Wissens-Vault nicht geladen: {e}")
 
         print(f"[OK] Code-Vault: {len(self.protocol.archive):,} docs, {len(self.protocol._doc_cache):,} vectors")
     
@@ -216,7 +262,12 @@ class CodeRetriever:
         Distanz = höherer Rang), factor>1 bestraft. Re-Ranking nach Over-Fetch,
         damit z.B. {"PROJEKT_SELFCODE": 0.6} eigenen Code vor generische
         Wiki-Artikel zieht. Default None = unverändertes Ranking.
+
+        Remote-Modus (self.remote_url gesetzt): delegiert die Suche an den warmen
+        Retrieval-Daemon; lokal wird kein Vault/Encoder geladen.
         """
+        if self.remote_url:
+            return self._remote_search(query, k, source_boost)
         if not self.encoder:
             return [], None, None
 
@@ -243,20 +294,9 @@ class CodeRetriever:
         if query_vec.ndim > 1:
             query_vec = query_vec[0]
 
-        # ChaosRetrieval primär — returnt [(doc_id, distance), ...]
-        if self.use_chaos_retrieval and self.chaos_retrieval:
-            try:
-                # Update Warp mit aktuellem Lorenz-State
-                lorenz_state = self.protocol.get_lorenz_params()
-                self.chaos_retrieval.warp.update(lorenz_state)
-                results = self.chaos_retrieval.search(query_vec, top_k=fetch_n * 2)
-                docs = self._docs_from_results(results, fetch_n, method="chaos")
-            except Exception as e:
-                print(f"[WARN] ChaosRetrieval fehlgeschlagen → numpy-cosine: {e}")
-                docs = self._numpy_cosine_search(query_vec, fetch_n)
-        else:
-            # Kein Chaos verfügbar: ehrlicher numpy-cosine statt kaputtem C++ raw_search
-            docs = self._numpy_cosine_search(query_vec, fetch_n)
+        # Multi-Vault: jede Engine via ChaosRetrieval (Recall), Union per Cosine fair
+        # gerankt — gemeinsame, über Vaults hinweg vergleichbare Distanz-Skala.
+        docs = self._multi_search(query_vec, fetch_n)
 
         # Optionaler Source-Boost + Trim auf k
         if source_boost:
@@ -266,6 +306,25 @@ class CodeRetriever:
         # Hardware-State nach Suche
         state_after = self.hw_logger.log_state(search_query, "search_end")
 
+        return docs, state_before, state_after
+
+    def _remote_search(self, query: str, k: int, source_boost: dict = None) -> tuple:
+        """Suche über den warmen Retrieval-Daemon. hw_logger bleibt lokal (Code-Vault)
+        für Telemetrie/Triplet-Log. Daemon nicht erreichbar ⇒ leeres Ergebnis (kein
+        40s-Fallback-Load)."""
+        state_before = self.hw_logger.log_state(query, "search_start")
+        docs = []
+        try:
+            payload = {"query": query, "k": k}
+            if source_boost:
+                payload["source_boost"] = source_boost
+            resp = requests.post(f"{self.remote_url}/search", json=payload, timeout=30)
+            resp.raise_for_status()
+            docs = resp.json().get("docs", [])
+        except Exception as e:
+            print(f"[WARN] Retrieval-Daemon ({self.remote_url}) nicht erreichbar: {e}\n"
+                  f"        Läuft retrieval_service.py? (leeres Ergebnis)")
+        state_after = self.hw_logger.log_state(query, "search_end")
         return docs, state_before, state_after
 
     def _numpy_cosine_search(self, query_vec: np.ndarray, k: int) -> list:
@@ -314,6 +373,69 @@ class CodeRetriever:
                     "retrieval_method": method,
                 })
         return docs
+
+    def _make_engine(self, protocol, chaos, label: str) -> dict:
+        """Bündelt eine Vault-Engine: Protocol + ChaosRetrieval + Matrix/ID-Maps."""
+        id_map = list(getattr(protocol, "_id_map", None) or [])
+        matrix = getattr(protocol, "_matrix", None)
+        inv = {str(idv): row for row, idv in enumerate(id_map)}
+        index = {str(d.get("id", "")): d for d in protocol.archive}
+        return {"label": label, "protocol": protocol, "chaos": chaos,
+                "matrix": matrix, "id_map": id_map, "inv": inv, "index": index}
+
+    def _engine_candidates(self, eng: dict, query_vec, q_unit, fetch_n: int) -> list:
+        """[(doc_id, cosine_distance)] einer Engine. ChaosRetrieval liefert Kandidaten
+        (Recall), Cosine auf der Doc-Matrix rankt sie auf gemeinsamer Skala (Precision)."""
+        matrix = eng["matrix"]
+        inv = eng["inv"]
+        if matrix is None or not inv:
+            return []
+        cand_ids = []
+        chaos = eng["chaos"]
+        if chaos is not None:
+            try:
+                chaos.warp.update(eng["protocol"].get_lorenz_params())
+                res = chaos.search(query_vec, top_k=fetch_n * 3)
+                cand_ids = [str(r[0]) for r in res if str(r[0]) in inv]
+            except Exception:
+                cand_ids = []
+        if cand_ids:
+            rows = np.array([inv[i] for i in cand_ids])
+            sub = matrix[rows]
+            sub = sub / (np.linalg.norm(sub, axis=1, keepdims=True) + 1e-8)
+            sims = sub @ q_unit
+            order = np.argsort(-sims)[:fetch_n]
+            return [(cand_ids[j], float(1.0 - sims[j])) for j in order]
+        # Fallback (Chaos leer/aus): volle Cosine über die Matrix.
+        mn = matrix / (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-8)
+        sims = mn @ q_unit
+        top = np.argsort(-sims)[:fetch_n]
+        return [(eng["id_map"][i], float(1.0 - sims[i])) for i in top]
+
+    def _multi_search(self, query_vec, fetch_n: int) -> list:
+        """Fragt alle Engines ab und merged per gemeinsamer Cosine-Distanz (kleiner=besser)."""
+        q_unit = query_vec / (np.linalg.norm(query_vec) + 1e-8)
+        merged, seen = [], set()
+        for eng in self._engines:
+            for doc_id, dist in self._engine_candidates(eng, query_vec, q_unit, fetch_n):
+                key = (eng["label"], str(doc_id))
+                if key in seen:
+                    continue
+                seen.add(key)
+                doc = eng["index"].get(str(doc_id))
+                if not doc:
+                    continue
+                merged.append({
+                    "id": doc_id,
+                    "content": doc.get("text", doc.get("content", "")),
+                    "title": doc.get("title", ""),
+                    "source": doc.get("source", eng["label"]),
+                    "vault": eng["label"],
+                    "distance": float(dist),
+                    "retrieval_method": "chaos+cosine",
+                })
+        merged.sort(key=lambda d: d["distance"])
+        return merged
 
 
 # =============================================================================
@@ -473,26 +595,28 @@ class ClaudeCoder:
 # =============================================================================
 
 def build_system_prompt(context: list) -> str:
-    """Baue System-Prompt mit Code-Kontext."""
+    """Baue System-Prompt aus Vault-Kontext (Code UND Allgemein-/Fachwissen)."""
     if not context:
-        return """Du bist ein Senior Software Engineer.
-Antworte technisch präzise auf Deutsch. Code in Markdown-Codeblöcken.
-Wenn unsicher: explizit markieren."""
-    
+        return """Du bist ein präziser, sachkundiger Assistent.
+Antworte auf Deutsch. Bei Code: Markdown-Codeblöcke mit Sprachen-Tag.
+Wenn du etwas nicht sicher weißt, sage es explizit."""
+
     sources = []
-    for i, d in enumerate(context[:3]):  # Max 3 Quellen für Fokus
+    for i, d in enumerate(context[:4]):  # Top 4 für Fokus, vault-übergreifend gerankt
+        vault = d.get("vault", "")
+        tag = d.get("source", "vault") + (f" · {vault}" if vault else "")
         sources.append(
-            f"QUELLE {i+1} ({d.get('distance', 0):.1f}, {d.get('source', 'code-vault')}):\n"
-            f"{d.get('content', '')[:400]}"
+            f"QUELLE {i+1} (d={d.get('distance', 0):.2f}, {tag}):\n"
+            f"{d.get('content', '')[:450]}"
         )
-    
-    return f"""Du bist ein Senior Software Engineer mit Quellen-Fokus.
+
+    return """Du bist ein präziser Recherche- und Fachassistent mit Quellen-Fokus.
 
 REGELN:
-1. Antworte primär basierend auf den QUELLEN.
-2. Code IMMER in Markdown-Codeblöcken mit Sprachen-Tag.
-3. Wenn Quellen nicht ausreichen: explizit sagen.
-4. Technisch präzise, auf Deutsch.
+1. Antworte primär anhand der QUELLEN — ob Code, Wissenschaft oder Allgemeinwissen.
+2. Code immer in Markdown-Codeblöcken mit Sprachen-Tag.
+3. Reichen die Quellen nicht, sag das explizit und ergänze vorsichtig aus eigenem Wissen.
+4. Präzise, auf Deutsch.
 
 QUELLEN:\n\n""" + "\n\n".join(sources)
 
@@ -717,9 +841,9 @@ def main():
     print_header()
 
     # Initialisierung
-    print("[INIT] Lade Code-Vault...")
+    print("[INIT] Lade Vaults...")
     retriever = CodeRetriever()
-    coder = QwenCoder()
+    coder = QwenCoder(model=KNOWLEDGE_ANSWER_MODEL)  # Generalist, nicht der Coder
     print()
 
     while True:
@@ -770,9 +894,9 @@ def main():
                     print("[ERR] Keine Aufgabe nach 'briefing:' eingegeben")
                 continue
 
-            # Suche im Vault
-            print("[SEARCH] Suche im Code-Vault...")
-            context, _, _ = retriever.search(query, k=5)
+            # Suche in beiden Vaults (Code + Wissen), fair gemerged
+            print("[SEARCH] Suche in den Vaults...")
+            context, _, _ = retriever.search(query, k=6)
 
             if context:
                 print(f"[OK] Gefunden: {len(context)} Dokumente")
@@ -795,7 +919,7 @@ def main():
             system_prompt = build_system_prompt(context)
             
             # Generieren (streaming → Live-Output)
-            print("[GEN] qwen2.5-coder...\n" + "-" * 60)
+            print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
             response = coder.generate(query, system=system_prompt, stream=True)
             print("-" * 60)
 
