@@ -1,0 +1,186 @@
+/* dash.css — Kommandozentrale, "Editorial Dark" Design-Tokens aus terminal.css.
+   Eigenes, schlankes Layout (kein React-Markup-Zwang). */
+:root {
+  --tm-bg:        #13130F;
+  --tm-bg-elev:   #18181432;
+  --tm-surface:   #1A1A15;
+  --tm-surface-2: #20201B;
+  --tm-border:    rgba(236, 230, 217, 0.08);
+  --tm-border-strong: rgba(236, 230, 217, 0.18);
+  --tm-text:      #ECE6D9;
+  --tm-muted:     #A39A87;
+  --tm-faint:     #6D665A;
+  --tm-accent:    #D08A4D;
+  --tm-accent-soft: rgba(208, 138, 77, 0.14);
+  --tm-success:   #88B26A;
+  --tm-danger:    #D86E5E;
+  --tm-warn:      #D9B065;
+  --tm-shadow:    0 1px 0 rgba(0,0,0,0.4), 0 16px 40px rgba(0,0,0,0.5);
+  --tm-font-ui:   'Geist', system-ui, sans-serif;
+  --tm-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --tm-font-display: 'Instrument Serif', Georgia, serif;
+  --tm-radius:    6px;
+  --tm-radius-sm: 4px;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--tm-bg);
+  color: var(--tm-text);
+  font-family: var(--tm-font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  display: grid;
+  grid-template-columns: 244px 1fr;
+  height: 100vh;
+}
+
+/* ── Sidebar ── */
+.sb {
+  background: var(--tm-surface);
+  border-right: 1px solid var(--tm-border);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 14px;
+  gap: 6px;
+}
+.sb__brand { display: flex; align-items: center; gap: 11px; margin-bottom: 22px; }
+.sb__mark {
+  width: 34px; height: 34px; border-radius: var(--tm-radius);
+  background: var(--tm-accent-soft); color: var(--tm-accent);
+  display: grid; place-items: center; font-weight: 700; font-size: 18px;
+  border: 1px solid var(--tm-border-strong);
+}
+.sb__name { font-family: var(--tm-font-display); font-style: italic; font-size: 19px; }
+.sb__meta { font-size: 11px; color: var(--tm-faint); letter-spacing: .04em; text-transform: uppercase; }
+.navbtn {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 12px; border-radius: var(--tm-radius-sm);
+  color: var(--tm-muted); cursor: pointer; user-select: none;
+  border: 1px solid transparent; font-size: 13.5px;
+}
+.navbtn:hover { background: var(--tm-surface-2); color: var(--tm-text); }
+.navbtn.is-active { background: var(--tm-accent-soft); color: var(--tm-accent); border-color: var(--tm-border-strong); }
+.navbtn .pill { font-family: var(--tm-font-mono); font-size: 11px; color: var(--tm-faint); }
+.sb__foot { margin-top: auto; font-size: 11px; color: var(--tm-faint); }
+.sb__foot .dot { color: var(--tm-success); }
+
+/* ── Main ── */
+.main { overflow-y: auto; padding: 28px 34px; min-width: 0; }
+.head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
+.head__left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.head h1 { font-family: var(--tm-font-display); font-style: italic; font-weight: 400; font-size: 27px; margin: 0; }
+.head .sub { color: var(--tm-muted); font-size: 13px; word-break: break-word; }
+.refresh { color: var(--tm-faint); font-size: 16px; cursor: pointer; padding: 6px 10px; border: 1px solid var(--tm-border); border-radius: var(--tm-radius-sm); flex-shrink: 0; }
+.refresh:hover { color: var(--tm-accent); border-color: var(--tm-border-strong); }
+
+/* Hamburger + Backdrop: nur mobil sichtbar */
+.menu-toggle {
+  display: none; flex-shrink: 0;
+  background: var(--tm-surface-2); color: var(--tm-text);
+  border: 1px solid var(--tm-border-strong); border-radius: var(--tm-radius-sm);
+  font-size: 18px; line-height: 1; padding: 7px 11px; cursor: pointer;
+}
+.backdrop {
+  display: none; position: fixed; inset: 0; z-index: 40;
+  background: rgba(0,0,0,0.55);
+}
+
+/* ── Stat row ── */
+.stats { display: flex; gap: 14px; margin-bottom: 26px; flex-wrap: wrap; }
+.stat {
+  background: var(--tm-surface); border: 1px solid var(--tm-border);
+  border-radius: var(--tm-radius); padding: 14px 18px; min-width: 130px;
+}
+.stat .n { font-family: var(--tm-font-mono); font-size: 26px; color: var(--tm-accent); }
+.stat .l { font-size: 11px; color: var(--tm-muted); text-transform: uppercase; letter-spacing: .05em; }
+
+/* ── Cards ── */
+.card {
+  background: var(--tm-surface); border: 1px solid var(--tm-border);
+  border-radius: var(--tm-radius); padding: 15px 17px; margin-bottom: 11px;
+  cursor: pointer; transition: border-color .12s;
+}
+.card:hover { border-color: var(--tm-border-strong); }
+.card__top { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+.card__task { font-weight: 500; flex: 1; }
+.card__meta { font-family: var(--tm-font-mono); font-size: 11.5px; color: var(--tm-faint); display: flex; gap: 14px; }
+
+.badge {
+  font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 20px;
+  border: 1px solid var(--tm-border-strong); white-space: nowrap;
+}
+.badge.success { color: var(--tm-success); border-color: var(--tm-success); }
+.badge.tests-ok { color: var(--tm-success); }
+.badge.tests-failed, .badge.aborted { color: var(--tm-danger); border-color: var(--tm-danger); }
+.badge.partial { color: var(--tm-warn); }
+.badge.muted { color: var(--tm-muted); }
+.badge.drift { color: var(--tm-warn); border-color: var(--tm-warn); }
+.badge.verdict { color: var(--tm-accent); }
+
+/* ── Triple / bridge ── */
+.triple { background: var(--tm-surface); border: 1px solid var(--tm-border); border-radius: var(--tm-radius); padding: 14px 16px; margin-bottom: 10px; }
+.triple__edge { font-family: var(--tm-font-mono); font-size: 13px; }
+.triple__edge .s { color: var(--tm-text); }
+.triple__edge .p { color: var(--tm-accent); padding: 0 7px; }
+.triple__edge .o { color: var(--tm-text); }
+.triple__rat { color: var(--tm-muted); font-size: 12.5px; margin-top: 6px; font-style: italic; }
+.triple__foot { font-family: var(--tm-font-mono); font-size: 11px; color: var(--tm-faint); margin-top: 7px; display: flex; gap: 14px; }
+
+/* ── Detail panel ── */
+.detail { }
+.detail .back { color: var(--tm-accent); cursor: pointer; font-size: 13px; margin-bottom: 14px; display: inline-block; }
+.detail .back:hover { text-decoration: underline; }
+.section { background: var(--tm-surface); border: 1px solid var(--tm-border); border-radius: var(--tm-radius); padding: 14px 17px; margin-bottom: 12px; }
+.section h3 { margin: 0 0 9px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--tm-muted); }
+.section pre { font-family: var(--tm-font-mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 0; color: var(--tm-text); max-height: 360px; overflow-y: auto; }
+.phaseline { display: flex; gap: 8px; flex-wrap: wrap; }
+.phasechip { font-family: var(--tm-font-mono); font-size: 11px; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--tm-border-strong); }
+.phasechip.aligned { color: var(--tm-success); }
+.phasechip.drift { color: var(--tm-warn); border-color: var(--tm-warn); }
+.filelist { font-family: var(--tm-font-mono); font-size: 12px; color: var(--tm-accent); }
+.empty { color: var(--tm-faint); padding: 40px; text-align: center; }
+.hidden { display: none; }
+
+/* ── Mobil: Sidebar wird zur Leiste oben, Output volle Breite darunter ── */
+@media (max-width: 720px) {
+  body { display: flex; flex-direction: column; height: auto; min-height: 100vh; }
+
+  /* Sidebar → horizontale Top-Leiste */
+  .sb {
+    flex-direction: row; flex-wrap: wrap; align-items: center;
+    width: auto; gap: 8px; padding: 9px 13px;
+    border-right: none; border-bottom: 1px solid var(--tm-border);
+    position: static;
+  }
+  .sb__brand { margin: 0 auto 0 0; gap: 9px; }
+  .sb__mark { width: 30px; height: 30px; font-size: 16px; }
+  .sb__name { font-size: 17px; }
+  .sb__meta { display: none; }
+  .navbtn { padding: 7px 13px; font-size: 13px; }
+  .sb__foot { display: none; }
+
+  /* Drawer-Reste deaktivieren — auf dem Handy nicht nötig */
+  .menu-toggle { display: none; }
+  .backdrop { display: none !important; }
+
+  .main { padding: 16px 15px 40px; }
+  .head { margin-bottom: 18px; }
+  .head h1 { font-size: 22px; }
+  .head .sub { font-size: 12px; }
+
+  .stats { gap: 9px; margin-bottom: 18px; }
+  .stat { min-width: 0; flex: 1; padding: 11px 13px; }
+  .stat .n { font-size: 21px; }
+  .stat .l { font-size: 10px; }
+
+  .card { padding: 13px 14px; }
+  .card__top { flex-wrap: wrap; }
+  .card__task { flex-basis: 100%; order: 3; margin-top: 4px; }
+  .card__meta { flex-wrap: wrap; gap: 6px 12px; }
+
+  .triple__edge { font-size: 12px; }
+  .triple__foot { flex-wrap: wrap; gap: 5px 12px; }
+  .section pre { font-size: 11px; max-height: 280px; }
+  .phaseline { gap: 6px; }
+}
