@@ -35,6 +35,25 @@ _retriever = None
 _lock = threading.Lock()  # CodeRetriever.search ist nicht thread-safe (Chaos-Warp-State)
 
 
+def _sd_notify(state: str) -> None:
+    """systemd Type=notify: meldet READY=1, sobald die Vaults geladen sind — der
+    Web-Server (Requires + After) startet dann erst nach diesem Punkt. Kein Dep,
+    No-Op wenn nicht unter systemd (NOTIFY_SOCKET ungesetzt)."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    try:
+        import socket
+        if addr[0] == "@":          # abstrakter Socket
+            addr = "\0" + addr[1:]
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        s.connect(addr)
+        s.sendall(state.encode())
+        s.close()
+    except Exception:
+        pass
+
+
 def _load():
     global _retriever
     from terminal import CodeRetriever
@@ -95,8 +114,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    _load()
-    srv = ThreadingHTTPServer((HOST, PORT), Handler)
+    # Port ZUERST binden → klarer, sofortiger Fehler bei Konflikt, statt erst 40s Vaults
+    # zu laden und dann beim Bind zu sterben (teure Restart-Schleife).
+    try:
+        srv = ThreadingHTTPServer((HOST, PORT), Handler)
+    except OSError as e:
+        print(f"[daemon] FEHLER: {HOST}:{PORT} belegt ({e}). Läuft schon ein "
+              f"retrieval_service.py? → pkill -f retrieval_service.py", flush=True)
+        sys.exit(1)
+    _load()                 # Vaults laden (~40s); Health meldet solange ready:false
+    _sd_notify("READY=1")   # erst jetzt sind die Vaults warm → Web-Service startet
     print(f"[daemon] http://{HOST}:{PORT}", flush=True)
     try:
         srv.serve_forever()

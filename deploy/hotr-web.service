@@ -1,0 +1,42 @@
+# hótr̥ Web — Dashboard + PTY-Terminal, nur im Tailnet erreichbar.
+# Startet erst, wenn der Retrieval-Daemon READY ist (Requires + After, Type=notify dort)
+# → die per PTY gespawnte terminal.py erbt VIBELIKE_RETRIEVAL_URL und ist sofort warm.
+#
+# Installation + IP anpassen: siehe deploy/systemd-install.md
+[Unit]
+Description=hótr̥ Web (Dashboard + PTY-Terminal, Tailnet)
+After=network-online.target tailscaled.service ollama.service hotr-retrieval.service
+Wants=network-online.target
+Requires=hotr-retrieval.service
+
+[Service]
+Type=simple
+User=jnrabit
+Group=jnrabit
+WorkingDirectory=/home/jnrabit/vibelike
+# API-Key (chmod 600). '-' = optional, Service startet auch ohne (dann kein Codegen).
+EnvironmentFile=-/home/jnrabit/.vibeweb.env
+# terminal.py (per PTY gespawnt) nutzt den warmen Daemon statt selbst zu laden:
+Environment=VIBELIKE_RETRIEVAL_URL=http://127.0.0.1:8810
+# ↓↓↓ Tailnet-IP dieses Rechners anpassen:  tailscale ip -4
+ExecStart=/usr/bin/python3 -m uvicorn web.server:app --host 100.120.117.36 --port 8800 --ws wsproto
+Restart=on-failure
+RestartSec=5
+
+# ── Sandbox / Defense-in-depth ──
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/jnrabit/vibelike
+ReadWritePaths=-/home/jnrabit/.cache
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+TasksMax=300
+
+[Install]
+WantedBy=multi-user.target

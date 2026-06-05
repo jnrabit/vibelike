@@ -1,0 +1,41 @@
+# hótr̥ Retrieval-Daemon — hält beide Vaults (Code + 188k Wissen) EINMAL warm.
+# Type=notify: gilt erst als "started", wenn die Vaults geladen sind (sd_notify READY=1)
+# → der Web-Service startet erst danach, Reconnects sind sofort instant.
+#
+# Installation: siehe deploy/systemd-install.md
+[Unit]
+Description=hótr̥ Retrieval-Daemon (warmer Dual-Vault, 127.0.0.1:8810)
+After=network.target ollama.service
+Wants=ollama.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=jnrabit
+Group=jnrabit
+WorkingDirectory=/home/jnrabit/vibelike
+ExecStart=/usr/bin/python3 retrieval_service.py
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=300
+
+# ── Sandbox / Defense-in-depth ──
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Schreibpfade: Projekt (logs, data) + Modell-Cache (sentence-transformers/HF).
+# '-' = nicht scheitern, falls der Pfad (noch) fehlt.
+ReadWritePaths=/home/jnrabit/vibelike
+ReadWritePaths=-/home/jnrabit/.cache
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+TasksMax=200
+# MemoryHigh=4G   # optional: weiche RAM-Grenze (torch+Matrix ~2-3G); bei OOM hochsetzen
+
+[Install]
+WantedBy=multi-user.target
