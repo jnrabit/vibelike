@@ -594,10 +594,39 @@ class ClaudeCoder:
 # System Prompt Builder
 # =============================================================================
 
-def build_system_prompt(context: list) -> str:
-    """Baue System-Prompt aus Vault-Kontext (Code UND Allgemein-/Fachwissen)."""
+def assess_grounding(context: list) -> dict:
+    """Wie gut stützen die Quellen die Query? Basis: kleinste Cosine-Distanz (0=ideal).
+    Liefert Banner (für die Konsole) + Direktive (in den System-Prompt), damit hótr̥ bei
+    schwacher Deckung ehrlich hedged statt souverän zu konfabulieren — genau die
+    'Souveränität-vortäuschen'-Falle, die bei crossdomänen Fragen auftritt."""
     if not context:
-        return """Du bist ein präziser, sachkundiger Assistent.
+        return {"level": "leer", "best": None,
+                "banner": "[⚠ keine Quellen — Antwort ist reines Modellwissen, unbelegt]",
+                "directive": "Es wurden KEINE Quellen gefunden. Sag das offen; antworte "
+                             "vorsichtig aus eigenem Wissen und markiere alles als unbelegt."}
+    best = min(d.get("distance", 1.0) for d in context)
+    if best <= 0.30:
+        return {"level": "stark", "best": best, "banner": "", "directive": ""}
+    if best <= 0.45:
+        return {"level": "schwach", "best": best,
+                "banner": f"[⚠ Quellen schwach: beste Distanz {best:.2f} — Antwort eher Schlussfolgerung als Beleg]",
+                "directive": (f"ACHTUNG: Beste Quellen-Distanz nur {best:.2f} (mäßige Passung). "
+                              "Stütze dich nur so weit auf die Quellen, wie sie wirklich tragen, "
+                              "und markiere klar, was Schlussfolgerung statt Beleg ist.")}
+    return {"level": "sehr schwach", "best": best,
+            "banner": f"[⚠ Quellen sehr schwach: beste Distanz {best:.2f} — größtenteils Spekulation]",
+            "directive": (f"ACHTUNG: Selbst die beste Quelle passt kaum (Distanz {best:.2f}). Sag "
+                          "ausdrücklich, dass die Quellen das Thema kaum abdecken; spekuliere NICHT "
+                          "souverän, sondern trenne klar Beleg von Vermutung.")}
+
+
+def build_system_prompt(context: list) -> str:
+    """Baue System-Prompt aus Vault-Kontext (Code UND Allgemein-/Fachwissen).
+    Bei schwacher Quellen-Deckung wird eine Ehrlichkeits-Direktive vorangestellt."""
+    head = assess_grounding(context)["directive"]
+    head = (head + "\n\n") if head else ""
+    if not context:
+        return head + """Du bist ein präziser, sachkundiger Assistent.
 Antworte auf Deutsch. Bei Code: Markdown-Codeblöcke mit Sprachen-Tag.
 Wenn du etwas nicht sicher weißt, sage es explizit."""
 
@@ -610,7 +639,7 @@ Wenn du etwas nicht sicher weißt, sage es explizit."""
             f"{d.get('content', '')[:450]}"
         )
 
-    return """Du bist ein präziser Recherche- und Fachassistent mit Quellen-Fokus.
+    return head + """Du bist ein präziser Recherche- und Fachassistent mit Quellen-Fokus.
 
 REGELN:
 1. Antworte primär anhand der QUELLEN — ob Code, Wissenschaft oder Allgemeinwissen.
@@ -915,7 +944,12 @@ def main():
             else:
                 print("[WARN] Keine Dokumente gefunden")
             
-            # System-Prompt bauen
+            # Ehrlichkeits-Signal: schwache Quellen-Deckung sichtbar machen
+            g = assess_grounding(context)
+            if g["banner"]:
+                print(g["banner"])
+
+            # System-Prompt bauen (Schwäche-Direktive ist bei Bedarf vorangestellt)
             system_prompt = build_system_prompt(context)
             
             # Generieren (streaming → Live-Output)
