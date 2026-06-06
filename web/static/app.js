@@ -179,10 +179,11 @@ async function ratifyTriple(id, action, card) {
 }
 
 // ── Terminal (xterm.js + WebSocket /ws/terminal) ────────────────────────
-let term = null, termFit = null, termWs = null;
+let term = null, termFit = null, termWs = null, termBuilt = false;
 const setTmStatus = (s) => { const e = document.getElementById('tm-status'); if (e) e.textContent = s; };
+const termVisible = () => term && term.element && term.element.offsetParent !== null;
 const sendResize = () => {
-  if (term && termWs && termWs.readyState === 1) {
+  if (term && termWs && termWs.readyState === 1 && termVisible()) {
     try { termFit.fit(); } catch {}
     termWs.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
   }
@@ -223,24 +224,33 @@ function connectTerminal() {
   window.addEventListener('resize', onWinResize);
 }
 
+// Terminal-Pane EINMAL bauen (persistent außerhalb von #content) → überlebt Tab-Wechsel.
+function ensureTermPane() {
+  const pane = $('#term-pane');
+  if (termBuilt) return pane;
+  const saved = localStorage.getItem('vibelike_token') || '';
+  pane.innerHTML = '';
+  pane.appendChild(el(`<div class="tmbar">
+    <input id="tm-token" type="password" autocomplete="off" placeholder="Bearer-Token (pair_admin / Pairing)" value="${esc(saved)}">
+    <button id="tm-connect">Verbinden</button>
+    <span id="tm-status" class="tm-status">getrennt</span>
+  </div>`));
+  const termDiv = el('<div id="term"></div>');
+  pane.appendChild(termDiv);
+  attachTermTouch(termDiv);
+  document.getElementById('tm-connect').addEventListener('click', connectTerminal);
+  termBuilt = true;
+  return pane;
+}
+
 function viewTerminal() {
   $('#view-title').textContent = 'Terminal';
   $('#view-sub').textContent = 'PTY · terminal.py hinter Token-Auth';
   $('#stats').innerHTML = '';
-  // schon mit offener Session? nicht neu aufbauen.
-  if (document.getElementById('term') && termWs && termWs.readyState <= 1) return;
-  const saved = localStorage.getItem('vibelike_token') || '';
-  const c = $('#content'); c.innerHTML = '';
-  const bar = el(`<div class="tmbar">
-    <input id="tm-token" type="password" autocomplete="off" placeholder="Bearer-Token (pair_admin / Pairing)" value="${esc(saved)}">
-    <button id="tm-connect">Verbinden</button>
-    <span id="tm-status" class="tm-status">getrennt</span>
-  </div>`);
-  c.appendChild(bar);
-  const termDiv = el('<div id="term"></div>');
-  c.appendChild(termDiv);
-  attachTermTouch(termDiv);
-  document.getElementById('tm-connect').addEventListener('click', connectTerminal);
+  $('#content').classList.add('hidden');
+  ensureTermPane().classList.remove('hidden');
+  // sichtbar geworden → neu einpassen (Session + Scrollback bleiben erhalten)
+  if (term && termFit) requestAnimationFrame(() => sendResize());
 }
 
 // Swipe-→-Scrollback: xterm scrollt am Handy nativ unzuverlässig (Viewport vs. Seiten-
@@ -268,11 +278,13 @@ function attachTermTouch(node) {
 // ── Router ──────────────────────────────────────────────────────────────
 async function render() {
   document.querySelectorAll('.navbtn').forEach(b => b.classList.toggle('is-active', b.dataset.view === state.view));
-  if (state.view !== 'terminal') cleanupTerminal();
   if (state.view === 'terminal') {
     try { await loadHealth(); } catch {}   // Sidebar-Pills best-effort, Terminal hängt nicht dran
     return viewTerminal();
   }
+  // andere Sicht: Terminal-Pane nur verstecken (Session bleibt am Leben), Content zeigen
+  const tp = $('#term-pane'); if (tp) tp.classList.add('hidden');
+  $('#content').classList.remove('hidden');
   try {
     const h = await loadHealth();
     renderStats(h);

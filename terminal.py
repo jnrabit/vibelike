@@ -16,6 +16,7 @@ Features:
 import os
 import sys
 import json
+import re
 import time
 import pickle
 import numpy as np
@@ -1016,6 +1017,7 @@ def main():
     print("[INIT] Lade Vaults...")
     retriever = CodeRetriever()
     coder = QwenCoder(model=KNOWLEDGE_ANSWER_MODEL)  # Generalist, nicht der Coder
+    history = []  # gehaltener Gesprächskontext: [(frage, antwort), …] für Folgefragen
     print()
 
     while True:
@@ -1039,6 +1041,8 @@ def main():
             if query.lower() == "c":
                 clear_screen()
                 print_header()
+                history.clear()  # Gesprächskontext zurücksetzen
+                print("[OK] Gesprächskontext geleert")
                 continue
 
             if query.lower() == "r":
@@ -1088,12 +1092,27 @@ def main():
             # System-Prompt bauen (Schwäche-Direktive ist bei Bedarf vorangestellt)
             system_prompt = build_system_prompt(context)
             
+            # Gehaltener Gesprächskontext für Folgefragen — bewusst KURZ (letzte 2 Turns,
+            # gekürzt): zu viel Historie erstickt das kleine Modell (Klein-Modell-Decke).
+            sys_full = system_prompt
+            if history:
+                convo = "\n\n".join(
+                    f"FRÜHER gefragt: {q}\nDeine Antwort (gekürzt): {a[:400]}"
+                    for q, a in history[-2:]
+                )
+                sys_full += "\n\nBISHERIGES GESPRÄCH (Kontext für Folgefragen, nicht wiederholen):\n" + convo
+                print(f"[💬 {min(len(history),2)} Turn(s) Kontext]")
+
             # Generieren (streaming → Live-Output)
             print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
-            response = coder.generate(query, system=system_prompt, stream=True)
+            response = coder.generate(query, system=sys_full, stream=True)
             print("-" * 60)
 
-            # Triplet loggen
+            # Historie pflegen (<think> raus, gekappt) + Triplet loggen
+            clean = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+            history.append((query, clean))
+            if len(history) > 6:
+                del history[:-6]
             retriever.hw_logger.log_triplet(query, context, response)
             
         except KeyboardInterrupt:
