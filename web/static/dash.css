@@ -126,6 +126,21 @@ body {
 .triple__edge .o { color: var(--tm-text); }
 .triple__rat { color: var(--tm-muted); font-size: 12.5px; margin-top: 6px; font-style: italic; }
 .triple__foot { font-family: var(--tm-font-mono); font-size: 11px; color: var(--tm-faint); margin-top: 7px; display: flex; gap: 14px; }
+/* Ratifizier-Aktionen */
+.triple { transition: opacity .28s ease, transform .28s ease, border-color .12s; }
+.triple__act { display: flex; align-items: center; gap: 9px; margin-top: 11px; flex-wrap: wrap; }
+.rbtn {
+  font-size: 12.5px; font-weight: 600; padding: 6px 13px; border-radius: var(--tm-radius-sm);
+  cursor: pointer; background: var(--tm-surface-2); border: 1px solid var(--tm-border-strong);
+}
+.rbtn.ok { color: var(--tm-success); }
+.rbtn.no { color: var(--tm-danger); }
+.rbtn.ok:hover { border-color: var(--tm-success); }
+.rbtn.no:hover { border-color: var(--tm-danger); }
+.rbtn:disabled { opacity: .5; cursor: default; }
+.rbtn__msg { font-family: var(--tm-font-mono); font-size: 11.5px; color: var(--tm-warn); }
+.triple.is-ok { opacity: 0; transform: translateX(16px); border-color: var(--tm-success); }
+.triple.is-no { opacity: 0; transform: translateX(-16px); border-color: var(--tm-danger); }
 
 /* ── Detail panel ── */
 .detail { }

@@ -103,16 +103,54 @@ async function viewWorkflowDetail(id) {
 // ── Knowledge / ossifikat ───────────────────────────────────────────────
 async function viewKnowledge() {
   $('#view-title').textContent = 'Wissens-Substrat';
-  $('#view-sub').textContent = 'ossifikat-Staging · Kandidaten warten auf Ratifizierung';
+  $('#view-sub').textContent = 'ossifikat-Staging · per Klick bestätigen oder verwerfen';
   const { triples } = await getJSON('/api/ossifikat/staging');
   const c = $('#content'); c.innerHTML = '';
-  if (!triples.length) { c.appendChild(el('<div class="empty">Kein Staging. Brücken erzeugen via experiments/bridges_to_ossifikat.py</div>')); return; }
+  if (!triples.length) { c.appendChild(el('<div class="empty">Staging leer. Brücken erzeugen via experiments/bridges_to_ossifikat.py</div>')); return; }
   for (const t of triples) {
-    c.appendChild(el(`<div class="triple">
+    const card = el(`<div class="triple" data-id="${esc(t.id)}">
       <div class="triple__edge"><span class="s">${esc(t.subject)}</span><span class="p">—[${esc(t.predicate)}]→</span><span class="o">${esc(t.object)}</span></div>
       ${t.rationale ? `<div class="triple__rat">↳ ${esc(t.rationale)}</div>` : ''}
       <div class="triple__foot"><span>#${esc(t.id)}</span><span>conf ${esc(t.confidence)}</span><span>${esc(t.source)}</span><span>${esc((t.created_at||'').slice(0,19))}</span></div>
-    </div>`));
+      <div class="triple__act">
+        <button class="rbtn ok">✓ bestätigen</button>
+        <button class="rbtn no">✗ verwerfen</button>
+        <span class="rbtn__msg"></span>
+      </div>
+    </div>`);
+    card.querySelector('.rbtn.ok').addEventListener('click', () => ratifyTriple(t.id, 'confirm', card));
+    card.querySelector('.rbtn.no').addEventListener('click', () => ratifyTriple(t.id, 'reject', card));
+    c.appendChild(card);
+  }
+}
+
+// Ratifizierung per Klick → POST mit Bearer-Token (aus localStorage, vom Terminal-Tab).
+async function ratifyTriple(id, action, card) {
+  const token = localStorage.getItem('vibelike_token');
+  const msg = card.querySelector('.rbtn__msg');
+  if (!token) { msg.textContent = 'Token nötig — im Terminal-Tab eingeben'; return; }
+  card.querySelectorAll('.rbtn').forEach(b => b.disabled = true);
+  try {
+    const r = await fetch(`/api/ossifikat/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ id }),
+    });
+    if (r.ok) {
+      card.classList.add(action === 'confirm' ? 'is-ok' : 'is-no');
+      setTimeout(() => {
+        card.remove();
+        loadHealth().catch(() => {});
+        if (!$('#content').querySelector('.triple'))
+          $('#content').innerHTML = '<div class="empty">Staging leer — alles ratifiziert. ✓</div>';
+      }, 280);
+    } else {
+      msg.textContent = r.status === 401 ? 'Token ungültig' : r.status === 403 ? 'keine Ratify-Berechtigung' : `Fehler ${r.status}`;
+      card.querySelectorAll('.rbtn').forEach(b => b.disabled = false);
+    }
+  } catch {
+    msg.textContent = 'Netzwerkfehler';
+    card.querySelectorAll('.rbtn').forEach(b => b.disabled = false);
   }
 }
 

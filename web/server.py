@@ -16,7 +16,7 @@ import json
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -36,6 +36,22 @@ app = FastAPI(title="Vibelike Kommandozentrale", docs_url="/api/docs")
 # PTY-Web-Terminal (hinter Token-Auth + 'terminal'-Capability)
 from terminal_ws import router as terminal_router  # noqa: E402
 app.include_router(terminal_router)
+
+from auth import device_for_token, capabilities_for  # noqa: E402
+
+
+def _require_ratify(authorization: str = Header(default=None)) -> str:
+    """Ratifizieren ist ein Schreib-Akt → Token Pflicht. Akzeptiert 'ratify' ODER
+    'terminal' (ein shell-vertrautes Gerät darf erst recht ein Tripel bestätigen).
+    Gibt die verifizierte device_id zurück (landet als confirmed_by im append-only Log)."""
+    token = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else None
+    device = device_for_token(token)
+    if not device:
+        raise HTTPException(401, "ungültiges oder fehlendes Token")
+    caps = capabilities_for(device)
+    if "ratify" not in caps and "terminal" not in caps:
+        raise HTTPException(403, "Device darf nicht ratifizieren ('ratify' oder 'terminal' nötig)")
+    return device
 
 
 # ── Datenquellen (read-only, pro Request frisch) ───────────────────────────
@@ -198,6 +214,43 @@ def ossifikat_staging() -> JSONResponse:
     finally:
         s.close()
     return JSONResponse({"triples": triples, "count": len(triples)})
+
+
+@app.post("/api/ossifikat/confirm")
+def ossifikat_confirm(payload: dict, device: str = Depends(_require_ratify)) -> JSONResponse:
+    """Staging-Tripel ratifizieren (staging=0 + append-only Confirmation mit confirmed_by)."""
+    if not OSSIFIKAT_DB.exists():
+        raise HTTPException(404, "keine ossifikat db")
+    try:
+        tid = int(payload.get("id"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "id fehlt/ungültig")
+    note = payload.get("note")
+    from ossifikat.store import OssifikatStore
+    s = OssifikatStore(str(OSSIFIKAT_DB))
+    try:
+        s.confirm(tid, confirmed_by=device, confirmation_type="web", note=note)
+    finally:
+        s.close()
+    return JSONResponse({"ok": True, "id": tid, "confirmed_by": device})
+
+
+@app.post("/api/ossifikat/reject")
+def ossifikat_reject(payload: dict, device: str = Depends(_require_ratify)) -> JSONResponse:
+    """Staging-Tripel verwerfen (löscht es komplett)."""
+    if not OSSIFIKAT_DB.exists():
+        raise HTTPException(404, "keine ossifikat db")
+    try:
+        tid = int(payload.get("id"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "id fehlt/ungültig")
+    from ossifikat.store import OssifikatStore
+    s = OssifikatStore(str(OSSIFIKAT_DB))
+    try:
+        s.reject(tid)
+    finally:
+        s.close()
+    return JSONResponse({"ok": True, "id": tid})
 
 
 # ── Statische Seite ──────────────────────────────────────────────────────────
