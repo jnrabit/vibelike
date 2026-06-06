@@ -3,6 +3,7 @@ data/ossifikat.db
 data/bridge_rationales.jsonl
 data/decompose_cache.json
 data/translation_cache.json
+data/ratification_overlay.json
 __pycache__/
 *.pyc
 .directory

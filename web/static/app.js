@@ -3,7 +3,7 @@ const $ = (s) => document.querySelector(s);
 const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 
-let state = { view: 'workflows', detailId: null };
+let state = { view: 'workflows', detailId: null, ratifyView: 'queue' };
 
 async function getJSON(url) {
   const r = await fetch(url);
@@ -102,33 +102,60 @@ async function viewWorkflowDetail(id) {
 
 // ── Knowledge / ossifikat ───────────────────────────────────────────────
 async function viewKnowledge() {
+  const rv = state.ratifyView || 'queue';
   $('#view-title').textContent = 'Wissens-Substrat';
-  $('#view-sub').textContent = 'ossifikat-Staging · per Klick bestätigen oder verwerfen';
-  const { triples } = await getJSON('/api/ossifikat/staging');
+  $('#view-sub').textContent = 'ossifikat · verbürgen, parken oder archivieren (alles reversibel)';
+  const data = await getJSON('/api/ossifikat/staging?view=' + rv);
+  const triples = data.triples || [];
+  const k = data.counts || { queue: 0, parked: 0, archived: 0 };
   const c = $('#content'); c.innerHTML = '';
-  if (!triples.length) { c.appendChild(el('<div class="empty">Staging leer. Brücken erzeugen via experiments/bridges_to_ossifikat.py</div>')); return; }
+
+  const nav = el(`<div class="subnav">
+    <span class="subnav__btn" data-rv="queue">Queue <b>${k.queue}</b></span>
+    <span class="subnav__btn" data-rv="parked">Geparkt <b>${k.parked}</b></span>
+    <span class="subnav__btn" data-rv="archived">Archiv <b>${k.archived}</b></span>
+  </div>`);
+  nav.querySelectorAll('.subnav__btn').forEach(b => {
+    if (b.dataset.rv === rv) b.classList.add('is-active');
+    b.addEventListener('click', () => { state.ratifyView = b.dataset.rv; viewKnowledge(); });
+  });
+  c.appendChild(nav);
+
+  if (!triples.length) {
+    const m = rv === 'queue' ? 'Queue leer — alles entschieden. ✓'
+            : rv === 'parked' ? 'Nichts geparkt.' : 'Archiv leer.';
+    c.appendChild(el(`<div class="empty">${m}</div>`)); return;
+  }
   for (const t of triples) {
+    const acts = rv === 'queue'
+      ? `<button class="rbtn ok" data-a="confirm">✓ verbürgen</button>
+         <button class="rbtn park" data-a="park">~ parken</button>
+         <button class="rbtn no" data-a="archive">✗ archivieren</button>`
+      : rv === 'parked'
+      ? `<button class="rbtn ok" data-a="confirm">✓ verbürgen</button>
+         <button class="rbtn back" data-a="restore">↩ in die Queue</button>
+         <button class="rbtn no" data-a="archive">✗ archivieren</button>`
+      : `<button class="rbtn back" data-a="restore">↩ in die Queue</button>
+         <button class="rbtn del" data-a="reject">🗑 endgültig löschen</button>`;
     const card = el(`<div class="triple" data-id="${esc(t.id)}">
       <div class="triple__edge"><span class="s">${esc(t.subject)}</span><span class="p">—[${esc(t.predicate)}]→</span><span class="o">${esc(t.object)}</span></div>
       ${t.rationale ? `<div class="triple__rat">↳ ${esc(t.rationale)}</div>` : ''}
       <div class="triple__foot"><span>#${esc(t.id)}</span><span>conf ${esc(t.confidence)}</span><span>${esc(t.source)}</span><span>${esc((t.created_at||'').slice(0,19))}</span></div>
-      <div class="triple__act">
-        <button class="rbtn ok">✓ bestätigen</button>
-        <button class="rbtn no">✗ verwerfen</button>
-        <span class="rbtn__msg"></span>
-      </div>
+      <div class="triple__act">${acts}<span class="rbtn__msg"></span></div>
     </div>`);
-    card.querySelector('.rbtn.ok').addEventListener('click', () => ratifyTriple(t.id, 'confirm', card));
-    card.querySelector('.rbtn.no').addEventListener('click', () => ratifyTriple(t.id, 'reject', card));
+    card.querySelectorAll('.rbtn').forEach(b =>
+      b.addEventListener('click', () => ratifyTriple(t.id, b.dataset.a, card)));
     c.appendChild(card);
   }
 }
 
 // Ratifizierung per Klick → POST mit Bearer-Token (aus localStorage, vom Terminal-Tab).
+// Aktionen: confirm | park | archive | restore | reject(endgültig).
 async function ratifyTriple(id, action, card) {
   const token = localStorage.getItem('vibelike_token');
   const msg = card.querySelector('.rbtn__msg');
   if (!token) { msg.textContent = 'Token nötig — im Terminal-Tab eingeben'; return; }
+  if (action === 'reject' && !confirm('Endgültig löschen? Das ist unwiderruflich.')) return;
   card.querySelectorAll('.rbtn').forEach(b => b.disabled = true);
   try {
     const r = await fetch(`/api/ossifikat/${action}`, {
@@ -137,13 +164,10 @@ async function ratifyTriple(id, action, card) {
       body: JSON.stringify({ id }),
     });
     if (r.ok) {
-      card.classList.add(action === 'confirm' ? 'is-ok' : 'is-no');
-      setTimeout(() => {
-        card.remove();
-        loadHealth().catch(() => {});
-        if (!$('#content').querySelector('.triple'))
-          $('#content').innerHTML = '<div class="empty">Staging leer — alles ratifiziert. ✓</div>';
-      }, 280);
+      const cls = (action === 'confirm' || action === 'restore') ? 'is-ok'
+                : action === 'park' ? 'is-park' : 'is-no';
+      card.classList.add(cls);
+      setTimeout(() => { loadHealth().catch(() => {}); viewKnowledge(); }, 280);
     } else {
       msg.textContent = r.status === 401 ? 'Token ungültig' : r.status === 403 ? 'keine Ratify-Berechtigung' : `Fehler ${r.status}`;
       card.querySelectorAll('.rbtn').forEach(b => b.disabled = false);

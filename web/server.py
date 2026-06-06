@@ -38,6 +38,7 @@ from terminal_ws import router as terminal_router  # noqa: E402
 app.include_router(terminal_router)
 
 from auth import device_for_token, capabilities_for  # noqa: E402
+import ratification  # noqa: E402  (reversible park/archiv-Zustände überm Staging)
 
 
 def _require_ratify(authorization: str = Header(default=None)) -> str:
@@ -191,16 +192,33 @@ def workflow_detail(wf_id: str) -> JSONResponse:
     raise HTTPException(status_code=404, detail=f"workflow {wf_id} not found")
 
 
+def _payload_id(payload: dict) -> int:
+    try:
+        return int(payload.get("id"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "id fehlt/ungültig")
+
+
 @app.get("/api/ossifikat/staging")
-def ossifikat_staging() -> JSONResponse:
+def ossifikat_staging(view: str = "queue") -> JSONResponse:
+    """Staging-Tripel nach Ratifizier-Sicht: queue | parked | archived.
+    Liefert auch counts aller drei Sichten (für die Tab-Badges)."""
+    empty = {"triples": [], "count": 0, "view": view,
+             "counts": {"queue": 0, "parked": 0, "archived": 0}}
     if not OSSIFIKAT_DB.exists():
-        return JSONResponse({"triples": [], "count": 0, "error": "no ossifikat db"})
+        return JSONResponse({**empty, "error": "no ossifikat db"})
     from ossifikat.store import OssifikatStore
     s = OssifikatStore(str(OSSIFIKAT_DB))
     rationales = _load_rationales()
+    overlay = ratification.states()
+    counts = {"queue": 0, "parked": 0, "archived": 0}
     triples = []
     try:
         for t in s.list_staging():
+            st = overlay.get(str(t.id), {}).get("state", "queue")
+            counts[st] = counts.get(st, 0) + 1
+            if st != view:
+                continue
             triples.append({
                 "id": t.id,
                 "subject": t.subject,
@@ -210,21 +228,19 @@ def ossifikat_staging() -> JSONResponse:
                 "source": t.source,
                 "created_at": getattr(t, "created_at", ""),
                 "rationale": rationales.get(t.id, ""),
+                "state": st,
             })
     finally:
         s.close()
-    return JSONResponse({"triples": triples, "count": len(triples)})
+    return JSONResponse({"triples": triples, "count": len(triples), "view": view, "counts": counts})
 
 
 @app.post("/api/ossifikat/confirm")
 def ossifikat_confirm(payload: dict, device: str = Depends(_require_ratify)) -> JSONResponse:
-    """Staging-Tripel ratifizieren (staging=0 + append-only Confirmation mit confirmed_by)."""
+    """Tripel verbürgen (ossifikat staging=0 + append-only Confirmation). Overlay wird geräumt."""
     if not OSSIFIKAT_DB.exists():
         raise HTTPException(404, "keine ossifikat db")
-    try:
-        tid = int(payload.get("id"))
-    except (TypeError, ValueError):
-        raise HTTPException(400, "id fehlt/ungültig")
+    tid = _payload_id(payload)
     note = payload.get("note")
     from ossifikat.store import OssifikatStore
     s = OssifikatStore(str(OSSIFIKAT_DB))
@@ -232,25 +248,48 @@ def ossifikat_confirm(payload: dict, device: str = Depends(_require_ratify)) -> 
         s.confirm(tid, confirmed_by=device, confirmation_type="web", note=note)
     finally:
         s.close()
+    ratification.clear_state(tid)
     return JSONResponse({"ok": True, "id": tid, "confirmed_by": device})
+
+
+@app.post("/api/ossifikat/park")
+def ossifikat_park(payload: dict, device: str = Depends(_require_ratify)) -> JSONResponse:
+    """Zurückstellen — später entscheiden (reversibel, nichts verloren)."""
+    tid = _payload_id(payload)
+    ratification.set_state(tid, "parked", device)
+    return JSONResponse({"ok": True, "id": tid, "state": "parked"})
+
+
+@app.post("/api/ossifikat/archive")
+def ossifikat_archive(payload: dict, device: str = Depends(_require_ratify)) -> JSONResponse:
+    """Verwerfen OHNE Löschen — reversibel (ersetzt das harte reject)."""
+    tid = _payload_id(payload)
+    ratification.set_state(tid, "archived", device)
+    return JSONResponse({"ok": True, "id": tid, "state": "archived"})
+
+
+@app.post("/api/ossifikat/restore")
+def ossifikat_restore(payload: dict, device: str = Depends(_require_ratify)) -> JSONResponse:
+    """Zurück in die Queue (Overlay entfernen)."""
+    tid = _payload_id(payload)
+    ratification.clear_state(tid)
+    return JSONResponse({"ok": True, "id": tid, "state": "queue"})
 
 
 @app.post("/api/ossifikat/reject")
 def ossifikat_reject(payload: dict, device: str = Depends(_require_ratify)) -> JSONResponse:
-    """Staging-Tripel verwerfen (löscht es komplett)."""
+    """Endgültig löschen (nur bewusst aus dem Archiv). Unwiderruflich."""
     if not OSSIFIKAT_DB.exists():
         raise HTTPException(404, "keine ossifikat db")
-    try:
-        tid = int(payload.get("id"))
-    except (TypeError, ValueError):
-        raise HTTPException(400, "id fehlt/ungültig")
+    tid = _payload_id(payload)
     from ossifikat.store import OssifikatStore
     s = OssifikatStore(str(OSSIFIKAT_DB))
     try:
         s.reject(tid)
     finally:
         s.close()
-    return JSONResponse({"ok": True, "id": tid})
+    ratification.clear_state(tid)
+    return JSONResponse({"ok": True, "id": tid, "deleted": True})
 
 
 # ── Statische Seite ──────────────────────────────────────────────────────────

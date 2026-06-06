@@ -143,6 +143,22 @@ body {
 .rbtn__msg { font-family: var(--tm-font-mono); font-size: 11.5px; color: var(--tm-warn); }
 .triple.is-ok { opacity: 0; transform: translateX(16px); border-color: var(--tm-success); }
 .triple.is-no { opacity: 0; transform: translateX(-16px); border-color: var(--tm-danger); }
+.triple.is-park { opacity: 0; transform: translateY(-10px); border-color: var(--tm-warn); }
+.rbtn.park { color: var(--tm-warn); }
+.rbtn.park:hover { border-color: var(--tm-warn); }
+.rbtn.back { color: var(--tm-muted); }
+.rbtn.back:hover { border-color: var(--tm-border-strong); color: var(--tm-text); }
+.rbtn.del { color: var(--tm-danger); opacity: .8; }
+.rbtn.del:hover { border-color: var(--tm-danger); opacity: 1; }
+/* Sub-Navigation Queue / Geparkt / Archiv */
+.subnav { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.subnav__btn {
+  font-size: 13px; padding: 6px 13px; border-radius: 20px; cursor: pointer;
+  color: var(--tm-muted); border: 1px solid var(--tm-border); user-select: none;
+}
+.subnav__btn:hover { color: var(--tm-text); border-color: var(--tm-border-strong); }
+.subnav__btn.is-active { color: var(--tm-accent); border-color: var(--tm-border-strong); background: var(--tm-accent-soft); }
+.subnav__btn b { font-family: var(--tm-font-mono); font-weight: 600; margin-left: 4px; }
 
 /* ── Detail panel ── */
 .detail { }
