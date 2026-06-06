@@ -66,6 +66,10 @@ KNOWLEDGE_VAULT_FILE = os.environ.get(
 KNOWLEDGE_CACHE_FILE = os.environ.get(
     "VIBELIKE_KNOWLEDGE_CACHE", "/home/jnrabit/collect/data/monolith_embedding_cache.pkl")
 DUAL_VAULT = os.environ.get("VIBELIKE_DUAL_VAULT", "1") != "0"
+# Query-Decomposition: mehr-aspektige Fragen in Teilfragen zerlegen + per RRF fusionieren,
+# damit crossdomäne Anker alle getroffen werden (nicht nur der dominante). Nur bei
+# Mehr-Aspekt-Heuristik aktiv, einfache Queries bleiben schnell. =0 schaltet aus.
+QUERY_DECOMPOSE = os.environ.get("VIBELIKE_QUERY_DECOMPOSE", "1") != "0"
 # REPL-Antwortmodell für Q&A über die Vaults: GENERALIST (qwen3:8b), nicht der Coder —
 # sonst weist das Modell Nicht-Code-Fragen ab ("ich kann nur Code").
 KNOWLEDGE_ANSWER_MODEL = os.environ.get("VIBELIKE_KNOWLEDGE_ANSWER_MODEL", ANALYSIS_MODEL)
@@ -189,6 +193,7 @@ class CodeRetriever:
             self.chaos_retrieval = None
             self.use_chaos_retrieval = False
             self.query_translator = None
+            self.decomposer = None
             self._engines = []
             print(f"[OK] 🔌 Retrieval-Daemon: {self.remote_url} (kein lokaler Vault-Load)")
             return
@@ -223,6 +228,16 @@ class CodeRetriever:
         except Exception as e:
             print(f"[WARN] Query-Translator nicht verfügbar: {e}")
             self.query_translator = None
+
+        # Query-Decomposer (crossdomäne Mehr-Aspekt-Fragen → Teilfragen + RRF-Fusion)
+        self.decomposer = None
+        if QUERY_DECOMPOSE:
+            try:
+                from query_decomposer import QueryDecomposer
+                self.decomposer = QueryDecomposer()
+                print("[OK] 🧭 Query-Decomposer (Multi-Aspekt) aktiv")
+            except Exception as e:
+                print(f"[WARN] Query-Decomposer nicht verfügbar: {e}")
 
         # Multi-Vault: primär Code-Vault; optional großer Wissens-Vault parallel.
         # Beide Engines werden je Query abgefragt und per Cosine fair gemerged.
@@ -274,29 +289,41 @@ class CodeRetriever:
         # Bei aktivem Boost mehr Kandidaten holen, damit Re-Ranking Material hat
         fetch_n = k * 3 if source_boost else k
 
-        # Pre-Retrieval: DE→EN, damit deutsche Queries die englischen Vault-Docs
-        # treffen. Skippt automatisch wenn Query schon englisch ist (Heuristik).
-        search_query = query
-        if self.query_translator is not None:
+        # Decomposition ZUERST auf dem Original — die Anker sind noch intakt (der
+        # Übersetzer würde "biochemisch und biophysisch" zu "Biochemistry-Physiology"
+        # kollabieren). Der Decomposer gibt direkt ENGLISCHE Teilfragen aus.
+        sub_queries = None
+        if self.decomposer is not None:
             try:
-                tr = self.query_translator.translate(query)
-                search_query = tr.get("translated") or query
-                if not tr.get("skipped") and search_query != query:
-                    print(f"[🌐 Query: '{query[:38]}' → '{search_query[:38]}']")
+                dec = self.decomposer.decompose(query)
+                if not dec.get("skipped") and len(dec.get("subqueries", [])) > 1:
+                    sub_queries = dec["subqueries"]
+                    print("[🧭 zerlegt: " + " | ".join(s[:30] for s in sub_queries) + "]")
             except Exception:
-                search_query = query
+                sub_queries = None
 
-        # Hardware-State vor Suche
-        state_before = self.hw_logger.log_state(search_query, "search_start")
-
-        # Query embedden
-        query_vec = self.encoder.encode(search_query, convert_to_numpy=True).astype(np.float32)
-        if query_vec.ndim > 1:
-            query_vec = query_vec[0]
-
-        # Multi-Vault: jede Engine via ChaosRetrieval (Recall), Union per Cosine fair
-        # gerankt — gemeinsame, über Vaults hinweg vergleichbare Distanz-Skala.
-        docs = self._multi_search(query_vec, fetch_n)
+        if sub_queries:
+            # Multi-Query: Teilfragen sind bereits Englisch → direkt einbetten, je über
+            # beide Vaults, dann Reciprocal Rank Fusion (rang-basiert, skaleninvariant,
+            # jeder Anker kommt zum Zug). Kein Translator nötig.
+            search_query = sub_queries[0]
+            state_before = self.hw_logger.log_state(query, "search_start")
+            ranked = [self._multi_search(self._embed(sq), fetch_n) for sq in sub_queries]
+            docs = self._rrf_fuse(ranked, fetch_n)
+        else:
+            # Einzel-Aspekt: DE→EN übersetzen (Heuristik skippt englische Queries), dann
+            # Multi-Vault via ChaosRetrieval-Recall + Cosine-Merge.
+            search_query = query
+            if self.query_translator is not None:
+                try:
+                    tr = self.query_translator.translate(query)
+                    search_query = tr.get("translated") or query
+                    if not tr.get("skipped") and search_query != query:
+                        print(f"[🌐 '{query[:34]}' → '{search_query[:34]}']")
+                except Exception:
+                    search_query = query
+            state_before = self.hw_logger.log_state(search_query, "search_start")
+            docs = self._multi_search(self._embed(search_query), fetch_n)
 
         # Optionaler Source-Boost + Trim auf k
         if source_boost:
@@ -373,6 +400,35 @@ class CodeRetriever:
                     "retrieval_method": method,
                 })
         return docs
+
+    def _embed(self, text: str) -> np.ndarray:
+        """Query-Text → 1D float32-Vektor (MiniLM, 384-dim)."""
+        v = self.encoder.encode(text, convert_to_numpy=True).astype(np.float32)
+        return v[0] if v.ndim > 1 else v
+
+    def _rrf_fuse(self, ranked_lists: list, k: int, rrf_k: int = 60) -> list:
+        """Reciprocal Rank Fusion mehrerer Ergebnislisten (je Teilfrage eine). Score =
+        Σ 1/(rrf_k + rang) über alle Listen → rang-basiert, skaleninvariant, jeder Anker
+        kommt zum Zug. Distanz bleibt die beste echte Cosine (fürs Grounding-Signal)."""
+        agg = {}
+        for docs in ranked_lists:
+            for rank, d in enumerate(docs):
+                key = (d.get("vault"), str(d.get("id")))
+                e = agg.get(key)
+                if e is None:
+                    agg[key] = {"doc": d, "rrf": 1.0 / (rrf_k + rank),
+                                "best": d.get("distance", 1.0)}
+                else:
+                    e["rrf"] += 1.0 / (rrf_k + rank)
+                    e["best"] = min(e["best"], d.get("distance", 1.0))
+        fused = []
+        for e in agg.values():
+            doc = dict(e["doc"])
+            doc["distance"] = e["best"]   # echte Cosine-Distanz für assess_grounding
+            doc["rrf"] = e["rrf"]
+            fused.append(doc)
+        fused.sort(key=lambda d: -d["rrf"])
+        return fused[:k]
 
     def _make_engine(self, protocol, chaos, label: str) -> dict:
         """Bündelt eine Vault-Engine: Protocol + ChaosRetrieval + Matrix/ID-Maps."""
