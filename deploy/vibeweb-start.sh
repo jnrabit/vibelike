@@ -41,15 +41,14 @@ fi
 [ -f terminal.py ]           && c_ok "terminal.py (REPL fürs PTY)"         || { c_warn "terminal.py fehlt — Terminal-Tab spawnt nichts"; }
 [ -f retrieval_service.py ]  && c_ok "retrieval_service.py (Vault-Daemon)" || { c_warn "retrieval_service.py fehlt — Vaults laden pro Verbindung neu (~40s)"; }
 
-# 3. Tailscale / Host
-if [ "$HOST_REQ" = "auto" ]; then
-  if HOST=$(tailscale ip -4 2>/dev/null | head -n1) && [ -n "$HOST" ]; then
-    c_ok "Tailscale up · binde an tailnet-IP $HOST"
-  else
-    HOST="127.0.0.1"; c_warn "Tailscale nicht erreichbar — fallback auf $HOST (nur lokal)"
-  fi
+# 3. Bind-Host (Default 0.0.0.0 → localhost UND Tailnet; Firewall gated) + Tailnet-IP für Anzeige
+BIND="${VIBEWEB_HOST:-0.0.0.0}"
+[ "$BIND" = "auto" ] && BIND="0.0.0.0"
+TAILNET_IP=$(tailscale ip -4 2>/dev/null | head -n1)
+if [ -n "$TAILNET_IP" ]; then
+  c_ok "Bind $BIND · Tailnet-IP $TAILNET_IP (Firewall: tailscale0 trusted, WLAN block)"
 else
-  HOST="$HOST_REQ"; c_ok "Host fest: $HOST"
+  c_warn "Tailscale nicht erreichbar — Bind $BIND, Tailnet-URL unbekannt"
 fi
 
 # 4. Port frei?
@@ -99,9 +98,9 @@ else
 fi
 
 echo "───────────────────────────────────────────────────"
-echo "  hótr̥ Dashboard:  http://$HOST:$PORT/"
-echo "  Terminal      :  http://$HOST:$PORT/  → Tab 'Terminal'"
-echo "  Stop          :  Ctrl-C (Server) · Daemon bleibt warm: pkill -f retrieval_service.py"
+echo "  hótr̥ lokal (PC) :  http://localhost:$PORT/"
+[ -n "$TAILNET_IP" ] && echo "  hótr̥ Tailnet    :  http://$TAILNET_IP:$PORT/  (Handy)"
+echo "  Stop            :  Ctrl-C (Server) · Daemon bleibt warm: pkill -f retrieval_service.py"
 echo "───────────────────────────────────────────────────"
 
-exec python3 -m uvicorn web.server:app --host "$HOST" --port "$PORT" --ws wsproto
+exec python3 -m uvicorn web.server:app --host "$BIND" --port "$PORT" --ws wsproto

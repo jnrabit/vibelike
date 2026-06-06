@@ -18,8 +18,10 @@ WorkingDirectory=/home/jnrabit/vibelike
 EnvironmentFile=-/home/jnrabit/.vibeweb.env
 # terminal.py (per PTY gespawnt) nutzt den warmen Daemon statt selbst zu laden:
 Environment=VIBELIKE_RETRIEVAL_URL=http://127.0.0.1:8810
-# ↓↓↓ Tailnet-IP dieses Rechners anpassen:  tailscale ip -4
-ExecStart=/usr/bin/python3 -m uvicorn web.server:app --host 100.120.117.36 --port 8800 --ws wsproto
+# Bind 0.0.0.0 → erreichbar via localhost (PC-Browser) UND Tailnet-IP (Handy). Die
+# Firewall gated extern (tailscale0 trusted, WLAN block). Für striktes Binden stattdessen
+# die Tailnet-IP eintragen (tailscale ip -4).
+ExecStart=/usr/bin/python3 -m uvicorn web.server:app --host 0.0.0.0 --port 8800 --ws wsproto
 Restart=on-failure
 RestartSec=5
 
