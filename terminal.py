@@ -59,6 +59,10 @@ ANALYSIS_MODEL = os.environ.get("VIBELIKE_ANALYSIS_MODEL", "qwen3:8b")
 # "ollama" (lokal, ~7b-Decke). Default claude — fällt auf lokal zurück wenn Key/Paket fehlt.
 CODEGEN_BACKEND = os.environ.get("VIBELIKE_CODEGEN_BACKEND", "claude").lower()
 CODEGEN_MODEL = os.environ.get("VIBELIKE_CODEGEN_MODEL", "claude-sonnet-4-6")
+# Rat-Modus (Council, via '??'-Präfix): A=lokal (KNOWLEDGE_ANSWER_MODEL/qwen3),
+# B=zugeschaltetes Frontier (Haiku), Synthese=stärkeres Modell (Sonnet) → Konsens+Unterschiede.
+COUNCIL_MODEL = os.environ.get("VIBELIKE_COUNCIL_MODEL", "claude-haiku-4-5-20251001")
+SYNTH_MODEL = os.environ.get("VIBELIKE_SYNTH_MODEL", "claude-sonnet-4-6")
 # Großer Wissens-Vault: general-knowledge Korpus (188k Docs), PARALLEL zum Code-Vault
 # abgefragt. Beide werden je Query durchsucht (ChaosRetrieval-Recall) und per Cosine
 # auf gemeinsamer Skala fair zusammengeführt. VIBELIKE_DUAL_VAULT=0 schaltet ihn aus.
@@ -794,6 +798,48 @@ def build_system_prompt(context: list) -> str:
     return head + fact_block + rules + "\n\n".join(src)
 
 
+def run_council(query: str, system_prompt: str, local_coder, council_coder, synth_coder) -> str:
+    """Rat-Modus: lokale Antwort (A) + zugeschaltete Frontier-Antwort (B) + Synthese
+    (stärkeres Modell) mit KONSENS/UNTERSCHIEDEN. Übereinstimmung = sicher, Divergenz =
+    ehrlich markiert (nicht weggeglättet). Rückgabe = Text für die Gesprächshistorie."""
+    sep = "-" * 60
+
+    # A — lokal (grounded, wie sonst)
+    print(f"\n── Antwort A (lokal · {local_coder.model}) ──\n{sep}")
+    ans_a = local_coder.generate(query, system=system_prompt, stream=True)
+    ans_a = re.sub(r"<think>.*?</think>", "", ans_a, flags=re.DOTALL).strip()
+    print(sep)
+
+    # B — zugeschaltetes Frontier-Modell, gleicher Kontext
+    if not (council_coder and council_coder.usable):
+        print("[WARN] Rat-Modell nicht nutzbar (ANTHROPIC_API_KEY?) — nur lokale Antwort A.")
+        return ans_a
+    print(f"\n── Antwort B ({council_coder.model}) ──\n{sep}")
+    ans_b = council_coder.generate(query, system=system_prompt, stream=True)
+    print(sep)
+
+    # Synthese — stärkeres Modell vergleicht A & B
+    if not (synth_coder and synth_coder.usable):
+        print("[WARN] Synthese-Modell nicht nutzbar — A und B stehen oben nebeneinander.")
+        return f"{ans_a}\n\n---\n\n{ans_b}"
+    synth_prompt = (
+        f"FRAGE:\n{query}\n\n"
+        f"ANTWORT A (lokales Modell):\n{ans_a}\n\n"
+        f"ANTWORT B (Frontier-Modell):\n{ans_b}\n\n"
+        "Vergleiche A und B. Antworte auf Deutsch in genau zwei Abschnitten:\n"
+        "KONSENS: worauf sich beide einigen (das Verlässliche), knapp.\n"
+        "UNTERSCHIEDE: jeder Punkt, an dem sie divergieren — konkret benannt, mit ehrlicher "
+        "Einschätzung, welche Seite plausibler ist und warum (oder dass es offen bleibt). "
+        "Glätte den Dissens NICHT weg — die Unterschiede sind das Wichtigste."
+    )
+    synth_system = ("Du bist ein präziser Schiedsrichter zweier Modell-Antworten. Ehrlich, "
+                    "knapp, kein Geschwafel; Unsicherheit offen markieren.")
+    print(f"\n── 🜂 Synthese ({synth_coder.model}) ──\n{sep}")
+    synth = synth_coder.generate(synth_prompt, system=synth_system, stream=True)
+    print(sep)
+    return synth or f"{ans_a}\n\n---\n\n{ans_b}"
+
+
 # =============================================================================
 # CLI Interface
 # =============================================================================
@@ -808,6 +854,7 @@ def print_header():
     print("CODE-VAULT TERMINAL")
     print("=" * 60)
     print("[q] beenden | [l] logs | [s] state | [r] review | [c] clear | [w] workflow")
+    print("[??frage] Rat-Modus: lokal + Frontier + Synthese (Konsens & Unterschiede)")
     print("-" * 60)
 
 
@@ -1018,6 +1065,8 @@ def main():
     retriever = CodeRetriever()
     coder = QwenCoder(model=KNOWLEDGE_ANSWER_MODEL)  # Generalist, nicht der Coder
     history = []  # gehaltener Gesprächskontext: [(frage, antwort), …] für Folgefragen
+    council_coder = None  # lazy: Frontier-Modelle erst beim ersten '??' (Rat-Modus)
+    synth_coder = None
     print()
 
     while True:
@@ -1070,6 +1119,14 @@ def main():
                     print("[ERR] Keine Aufgabe nach 'briefing:' eingegeben")
                 continue
 
+            # Rat-Modus: '??' vor der Frage schaltet die Frontier-Modelle zu (Council)
+            council = query.startswith("??")
+            if council:
+                query = query[2:].strip()
+                if not query:
+                    print("[ERR] Keine Frage nach '??'")
+                    continue
+
             # Suche in beiden Vaults (Code + Wissen), fair gemerged
             print("[SEARCH] Suche in den Vaults...")
             context, _, _ = retriever.search(query, k=6)
@@ -1103,10 +1160,17 @@ def main():
                 sys_full += "\n\nBISHERIGES GESPRÄCH (Kontext für Folgefragen, nicht wiederholen):\n" + convo
                 print(f"[💬 {min(len(history),2)} Turn(s) Kontext]")
 
-            # Generieren (streaming → Live-Output)
-            print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
-            response = coder.generate(query, system=sys_full, stream=True)
-            print("-" * 60)
+            # Generieren — Rat-Modus (3 Rollen) oder normal (nur lokal)
+            if council:
+                if council_coder is None:  # lazy: erst beim ersten '??' Frontier zuschalten
+                    print("[RAT] Schalte Frontier-Modelle zu…")
+                    council_coder = ClaudeCoder(model=COUNCIL_MODEL)
+                    synth_coder = ClaudeCoder(model=SYNTH_MODEL)
+                response = run_council(query, sys_full, coder, council_coder, synth_coder)
+            else:
+                print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
+                response = coder.generate(query, system=sys_full, stream=True)
+                print("-" * 60)
 
             # Historie pflegen (<think> raus, gekappt) + Triplet loggen
             clean = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
