@@ -184,6 +184,22 @@ body {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;   /* Scroll bleibt im Terminal, kein Seiten-Bounce */
 }
+/* Desktop: feste, sichtbare Scrollbar-Lane rechts statt überlagerndem Overlay.
+   overflow-y:scroll + echte Breite → xterms FitAddon reserviert den Platz, der Text
+   läuft nicht mehr drunter. Mobil (Touch-Handler scrollt) bleibt es beim Overlay. */
+@media (min-width: 721px) {
+  #term .xterm-viewport {
+    overflow-y: scroll;
+    scrollbar-width: thin;                                  /* Firefox: klassisch, nimmt Platz */
+    scrollbar-color: var(--tm-faint) transparent;
+  }
+  #term .xterm-viewport::-webkit-scrollbar { width: 12px; }
+  #term .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+  #term .xterm-viewport::-webkit-scrollbar-thumb {
+    background: var(--tm-faint); border-radius: 6px;
+    border: 3px solid var(--tm-bg);                         /* solider Daumen, klar abgesetzt */
+  }
+}
 
 /* ── Mobil: Sidebar wird zur Leiste oben, Output volle Breite darunter ── */
 @media (max-width: 720px) {
