@@ -73,6 +73,10 @@ QUERY_DECOMPOSE = os.environ.get("VIBELIKE_QUERY_DECOMPOSE", "1") != "0"
 # REPL-Antwortmodell für Q&A über die Vaults: GENERALIST (qwen3:8b), nicht der Coder —
 # sonst weist das Modell Nicht-Code-Fragen ab ("ich kann nur Code").
 KNOWLEDGE_ANSWER_MODEL = os.environ.get("VIBELIKE_KNOWLEDGE_ANSWER_MODEL", ANALYSIS_MODEL)
+# Kanonische ossifikat-DB — EINE Quelle (Dashboard/Web lesen dieselbe). Confirmte Fakten
+# von hier erden Antworten (Grounding-Schleife). =0/leer schaltet Fakten-Grounding aus.
+OSSIFIKAT_DB = os.environ.get("VIBELIKE_OSSIFIKAT_DB", os.path.join(ROOT, "data", "ossifikat.db"))
+GROUND_ON_FACTS = os.environ.get("VIBELIKE_GROUND_ON_FACTS", "1") != "0"
 # Architektur-Modus: "default" (Claude codet) oder "mitte" (Claude plant/reviewt,
 # qwen-coder codet als Worker). Experiment "ehrliche Mitte".
 VIBELIKE_ARCH = os.environ.get("VIBELIKE_ARCH", "default").lower()
@@ -174,11 +178,12 @@ class CodeRetriever:
         # (hw_logger/state) + ossifikat-Logging — in BEIDEN Modi gebraucht.
         self.protocol = Protocol(vault_file=CODE_VAULT_FILE, cache_file=CODE_CACHE_FILE)
         self.hw_logger = HardwareLogger(self.protocol)
+        self._facts_cache = {}  # content-key → embedding (confirmte Fakten, lazy)
 
-        # Ossifikat Integration (leicht)
+        # Ossifikat Integration (leicht) — auf die KANONISCHE DB (data/ossifikat.db)
         try:
             if ADAPTERS_AVAILABLE:
-                self.terminal_adapter = TerminalAdapter()
+                self.terminal_adapter = TerminalAdapter(ossifikat_db_path=OSSIFIKAT_DB)
                 print("[OK] 📊 Ossifikat TerminalAdapter aktiviert")
             else:
                 self.terminal_adapter = None
@@ -330,6 +335,13 @@ class CodeRetriever:
             docs = self._apply_source_boost(docs, source_boost)
         docs = docs[:k]
 
+        # Grounding-Schleife: VERBÜRGTE Fakten autoritativ VORANSTELLEN (nicht vom
+        # Vault-Trim betroffen) — was du bestätigt hast, erdet die Antwort.
+        facts = self._confirmed_facts(self._embed(search_query))
+        if facts:
+            print(f"[🔖 {len(facts)} verbürgte(r) Fakt(en) als Grounding]")
+            docs = facts + docs
+
         # Hardware-State nach Suche
         state_after = self.hw_logger.log_state(search_query, "search_end")
 
@@ -429,6 +441,70 @@ class CodeRetriever:
             fused.append(doc)
         fused.sort(key=lambda d: -d["rrf"])
         return fused[:k]
+
+    def _fact_rationales(self) -> dict:
+        """triple_id → Rationale aus data/bridge_rationales.jsonl (für reicheres Grounding)."""
+        rats, p = {}, os.path.join(ROOT, "data", "bridge_rationales.jsonl")
+        try:
+            with open(p, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    d = json.loads(line)
+                    rats[int(d["triple_id"])] = d.get("rationale", "")
+        except Exception:
+            pass
+        return rats
+
+    def _confirmed_facts(self, query_vec, k: int = 3, max_dist: float = 0.55) -> list:
+        """Relevante VERBÜRGTE (confirmte) ossifikat-Tripel, per Cosine zur Query gewählt.
+        Grounding-Schleife: was du bestätigt hast, erdet die Antwort. Frisch pro Query
+        gelesen (neu Verbürgtes greift sofort, kein Neustart). Embeddings gecacht."""
+        if not GROUND_ON_FACTS or self.encoder is None:
+            return []
+        try:
+            from ossifikat.store import OssifikatStore
+            s = OssifikatStore(OSSIFIKAT_DB)
+            try:
+                rows = s.query()  # confirmte, nicht-retracted Tripel
+            finally:
+                s.close()
+        except Exception:
+            return []
+        if not rows:
+            return []
+        rats = self._fact_rationales()
+        q = query_vec / (np.linalg.norm(query_vec) + 1e-8)
+        vecs = []
+        for t in rows:
+            rat = rats.get(t.id, "")
+            key = f"{t.id}:{t.subject}|{t.predicate}|{t.object}|{rat[:40]}"
+            v = self._facts_cache.get(key)
+            if v is None:
+                v = self._embed(f"{t.subject} {t.predicate} {t.object}. {rat}".strip())
+                v = v / (np.linalg.norm(v) + 1e-8)
+                self._facts_cache[key] = v
+            vecs.append(v)
+        sims = np.asarray(vecs) @ q
+        out = []
+        for i in np.argsort(-sims)[:k]:
+            dist = float(1.0 - sims[i])
+            if dist > max_dist:
+                continue
+            t = rows[i]
+            rat = rats.get(t.id, "")
+            out.append({
+                "id": t.id,
+                "content": f"{t.subject} —[{t.predicate}]→ {t.object}" + (f"  ({rat})" if rat else ""),
+                "title": f"{t.subject} → {t.object}",
+                "source": "ossifikat",
+                "vault": "verbürgt",
+                "distance": dist,
+                "rationale": rat,
+                "retrieval_method": "confirmed-fact",
+            })
+        return out
 
     def _make_engine(self, protocol, chaos, label: str) -> dict:
         """Bündelt eine Vault-Engine: Protocol + ChaosRetrieval + Matrix/ID-Maps."""
@@ -677,33 +753,44 @@ def assess_grounding(context: list) -> dict:
 
 
 def build_system_prompt(context: list) -> str:
-    """Baue System-Prompt aus Vault-Kontext (Code UND Allgemein-/Fachwissen).
+    """Baue System-Prompt aus VERBÜRGTEN Fakten (ratifiziert) + Vault-Kontext.
     Bei schwacher Quellen-Deckung wird eine Ehrlichkeits-Direktive vorangestellt."""
+    context = context or []
     head = assess_grounding(context)["directive"]
     head = (head + "\n\n") if head else ""
-    if not context:
-        return head + """Du bist ein präziser, sachkundiger Assistent.
-Antworte auf Deutsch. Bei Code: Markdown-Codeblöcke mit Sprachen-Tag.
-Wenn du etwas nicht sicher weißt, sage es explizit."""
 
-    sources = []
-    for i, d in enumerate(context[:4]):  # Top 4 für Fokus, vault-übergreifend gerankt
+    # Grounding-Schleife: von dir bestätigte Fakten sind autoritativ.
+    facts = [d for d in context if d.get("vault") == "verbürgt"]
+    sources = [d for d in context if d.get("vault") != "verbürgt"]
+    fact_block = ""
+    if facts:
+        fl = "\n".join("- " + (d.get("content") or "") for d in facts[:5])
+        fact_block = ("VERBÜRGTE FAKTEN (von dir bestätigt — als gesichert behandeln, bei "
+                      "Widerspruch haben sie Vorrang vor den QUELLEN):\n" + fl + "\n\n")
+
+    if not sources:
+        body = ("Du bist ein präziser, sachkundiger Assistent. Antworte auf Deutsch. "
+                "Bei Code: Markdown-Codeblöcke mit Sprachen-Tag. Wenn du etwas nicht "
+                "sicher weißt, sage es explizit.")
+        return head + fact_block + body
+
+    src = []
+    for i, d in enumerate(sources[:4]):  # Top 4 für Fokus, vault-übergreifend gerankt
         vault = d.get("vault", "")
         tag = d.get("source", "vault") + (f" · {vault}" if vault else "")
-        sources.append(
+        src.append(
             f"QUELLE {i+1} (d={d.get('distance', 0):.2f}, {tag}):\n"
             f"{d.get('content', '')[:450]}"
         )
 
-    return head + """Du bist ein präziser Recherche- und Fachassistent mit Quellen-Fokus.
-
-REGELN:
-1. Antworte primär anhand der QUELLEN — ob Code, Wissenschaft oder Allgemeinwissen.
-2. Code immer in Markdown-Codeblöcken mit Sprachen-Tag.
-3. Reichen die Quellen nicht, sag das explizit und ergänze vorsichtig aus eigenem Wissen.
-4. Präzise, auf Deutsch.
-
-QUELLEN:\n\n""" + "\n\n".join(sources)
+    rules = ("Du bist ein präziser Recherche- und Fachassistent.\n\n"
+             "REGELN:\n"
+             "1. Antworte primär anhand der VERBÜRGTEN FAKTEN und QUELLEN — Fakten haben Vorrang.\n"
+             "2. Code immer in Markdown-Codeblöcken mit Sprachen-Tag.\n"
+             "3. Reichen sie nicht, sag das explizit und ergänze vorsichtig aus eigenem Wissen.\n"
+             "4. Präzise, auf Deutsch.\n\n"
+             "QUELLEN:\n\n")
+    return head + fact_block + rules + "\n\n".join(src)
 
 
 # =============================================================================
@@ -988,15 +1075,8 @@ def main():
                 for i, doc in enumerate(context):
                     title = doc.get("title", "Unbekannt")[:40]
                     print(f"  [{i+1}] {title}... (Dist: {doc['distance']:.1f})")
-
-                # Log to ossifikat
-                if ADAPTERS_AVAILABLE and retriever.terminal_adapter:
-                    context_ids = [str(c.get("id", "")) for c in context]
-                    retriever.terminal_adapter.store_query_response(
-                        query=query,
-                        response="",
-                        context_ids=context_ids
-                    )
+                # (Kein opakes query/response-Hash-Staging mehr — war Lärm. Meaningful
+                #  Kandidaten kommen künftig über den QwenExtractor.)
             else:
                 print("[WARN] Keine Dokumente gefunden")
             
