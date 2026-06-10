@@ -139,37 +139,54 @@ class ToolRegistry:
         except Exception as e:
             return f"[ERR] {type(e).__name__}: {e}"
 
-    # ═══ Built-in Tools (Platzhalter) ═══
+    # ═══ Built-in Tools (mit echten Implementierungen) ═══
 
     def _tool_search_vault(self, query: str, scope: str = "all") -> str:
         """Suche in den Vaults (Code + Wissen)."""
-        # TODO: mit terminal.py-Retrieval verbinden
-        return f"[STUB] search_vault('{query}', scope='{scope}') — später mit Dual-Vault"
+        # Import hier (lazy) um zirkuläre Abhängigkeiten zu vermeiden
+        try:
+            from agent_tools import ToolsFactory
+            return ToolsFactory.vault().search(query, k=5)
+        except Exception as e:
+            return f"[ERR] search_vault() fehlgeschlagen: {e}"
 
     def _tool_read_file(self, path: str) -> str:
         """Lese eine Datei."""
         try:
-            p = Path(path)
-            if not p.exists():
-                return f"[ERR] {path} existiert nicht"
-            return p.read_text()[:500]
+            from agent_tools import ToolsFactory
+            return ToolsFactory.file().read(path, max_lines=30)
         except Exception as e:
-            return f"[ERR] {e}"
+            return f"[ERR] read_file() fehlgeschlagen: {e}"
 
     def _tool_run_sandboxed(self, command: str, timeout: int = 5) -> str:
         """Führe einen Command in der Sandbox aus (später)."""
-        # TODO: mit sandbox/manager.py verbinden
-        return f"[STUB] run_sandboxed('{command}') — später mit echtem Sandbox"
+        try:
+            from agent_tools import ToolsFactory
+            return ToolsFactory.sandbox().run(command, timeout=timeout)
+        except Exception as e:
+            return f"[ERR] run_sandboxed() fehlgeschlagen: {e}"
 
     def _tool_query_ossifikat(self, query: str, confirmed_only: bool = True) -> str:
         """Abfrage confirmte Fakten aus ossifikat."""
-        # TODO: mit _confirmed_facts() aus terminal.py verbinden
-        return f"[STUB] query_ossifikat('{query}', confirmed={confirmed_only})"
+        try:
+            from agent_tools import ToolsFactory
+            if confirmed_only:
+                return ToolsFactory.ossifikat().query_confirmed(subject=query, k=5)
+            else:
+                return ToolsFactory.ossifikat().list_staging()
+        except Exception as e:
+            return f"[ERR] query_ossifikat() fehlgeschlagen: {e}"
 
     def _tool_verify(self, statement: str, method: str = "syntax") -> str:
         """Verifiziere einen Statement (Syntax, Test, Logik)."""
-        # TODO: mit Static-Validator/Regression-Guard verbinden
-        return f"[STUB] verify('{statement}', method='{method}')"
+        try:
+            from agent_tools import ToolsFactory
+            if method == "syntax":
+                return ToolsFactory.verify().check_syntax(statement)
+            else:
+                return f"[STUB] verify('{statement}', method='{method}') — später"
+        except Exception as e:
+            return f"[ERR] verify() fehlgeschlagen: {e}"
 
 
 class State:
