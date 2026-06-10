@@ -266,14 +266,29 @@ class AgentLoop:
         return f"[STOP] Max {max_steps} Schritte erreicht"
 
     def _choose_action(self, query: str, state: State) -> Optional[tuple]:
-        """Modell wählt nächste Action (später: LLM-Inferencing, jetzt: Heuristik)."""
-        # Heuristik für P0-Demo: einfach ein paar Tools probieren
-        if "search" in query.lower() or "find" in query.lower():
-            return ("search_vault", {"query": query, "scope": "all"})
-        elif "read" in query.lower() or "file" in query.lower():
-            return ("read_file", {"path": "README.md"})
-        elif "verify" in query.lower() or "check" in query.lower():
-            return ("verify", {"statement": query, "method": "syntax"})
+        """Modell wählt nächste Action — P0.2: LLM-Inferencing mit Fallback."""
+        try:
+            from agent_inference import ActionDecider
+            decider = ActionDecider(model="qwen3:8b")
+            action, params = decider.decide(
+                query=query,
+                available_tools=state.tools_available,
+                recent_steps=[]  # TODO: recent Steps aus Log laden
+            )
+            if action:
+                return (action, params)
+        except Exception as e:
+            # Fallback: wenn Inferencing fehlschlägt, Heuristik
+            pass
+
+        # Fallback-Heuristik (wenn Modell leer/fehlt)
+        q = query.lower()
+        if "search" in q or "find" in q:
+            return ("search_vault", {"query": query})
+        elif "read" in q or "file" in q:
+            return ("read_file", {"path": "terminal.py"})
+        elif "verify" in q or "check" in q or "syntax" in q:
+            return ("verify", {"statement": query})
         else:
             return ("query_ossifikat", {"query": query})
 
