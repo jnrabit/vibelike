@@ -130,19 +130,21 @@ QUERY (was der Nutzer fragt):
 
 VERFÜGBARE TOOLS:
 {tools_str}
+  - done: Beantworte die Frage direkt — nur wenn du genug Infos aus den letzten Steps hast
 
 {recent_context}
 
 AUFGABE:
-Wähle das BESTE Tool für die Query. Antworte im JSON-Format (nur JSON, keine anderen Worte):
+Wähle das BESTE Tool für die Query. Wenn genug Informationen vorhanden sind → wähle 'done'.
+Antworte im JSON-Format (nur JSON, keine anderen Worte):
 {{
-  "action": "<tool-name>",
+  "action": "<tool-name oder done>",
   "reasoning": "<kurz warum>",
   "params": {{"<param-name>": "<wert>"}}
 }}
 
-Beispiel:
-{{"action": "search_vault", "reasoning": "User fragt nach Code", "params": {{"query": "Vault Retrieval"}}}}
+Für 'done': params muss 'answer' enthalten:
+{{"action": "done", "reasoning": "genug Infos", "params": {{"answer": "Die Antwort ist..."}}}}
 
 ANTWORTE NUR MIT JSON:"""
 

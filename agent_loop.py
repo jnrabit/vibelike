@@ -223,71 +223,117 @@ class AgentLoop:
         self.state = State()
 
     async def step(self, query: str, correlation_id: Optional[str] = None, max_steps: int = 5) -> str:
-        """Ein Agent-Durchlauf: query → Schritte → Antwort."""
+        """Ein Agent-Durchlauf: query → Schritte → Antwort.
+
+        Stop-Bedingung: Modell wählt action='done' (Healthpoint-Anker) ODER max_steps.
+        Synthese-Antwort: nach dem Loop generiert das Modell eine finale Antwort aus
+        allen Tool-Ergebnissen (statt roher Tool-Output).
+        """
         cid = correlation_id or f"{int(time.time() * 1000)}"
-        print(f"\n[AGENT] Starte '{query[:60]}...' (cid={cid})")
+        print(f"\n[AGENT] Starte '{query[:60]}' (cid={cid})")
+
+        tool_results = []  # alle Tool-Ergebnisse für die Synthese
 
         for step_idx in range(max_steps):
             self.state.step_count = step_idx
 
-            # Modell wählt Action (später: echtes Modell-Inferencing)
-            action = self._choose_action(query, self.state)
+            # Recent Steps aus Log (letzte 3) als Kontext ans Modell
+            recent = [vars(s) for s in self.log.recent(3)]
+
+            action = self._choose_action(query, self.state, recent)
             if not action:
-                return "[STOP] Modell hat keine Action gewählt"
+                break
 
             action_name, params = action
-            print(f"  [{step_idx}] Action: {action_name}({list(params.keys())})")
+            print(f"  [{step_idx}] {action_name}({list(params.keys())})")
+
+            # done-Action = Modell signalisiert "genug Infos" (Healthpoint-Anker)
+            if action_name == "done":
+                answer = params.get("answer", "").strip()
+                if answer:
+                    print(f"  → done nach {step_idx} Schritten")
+                    self._log_step(query, "done", params, answer, cid)
+                    return answer
+                break
 
             # Tool ausführen
             result = await self.tools.execute(action_name, params)
-            print(f"      Result: {result[:80]}...")
+            print(f"      → {result[:100]}")
 
-            # Step loggen
-            s = Step(
-                query=query,
-                action=action_name,
-                params=params,
-                result=result,
-                state_before=self.state.to_dict(),
-                state_after=self.state.to_dict(),
-                correlation_id=cid,
-            )
-            self.log.append(s)
+            self._log_step(query, action_name, params, result, cid)
 
-            # State beobachten
-            success = not result.startswith("[ERR]") and not result.startswith("[STUB]")
+            success = not result.startswith("[ERR]") and "[STUB]" not in result
             self.state.observe(result, success)
 
-            # Stop-Heuristik: wenn Tool erfolgreich, likely done
-            if success and "[STUB]" not in result:
-                print(f"  → Fertig nach {step_idx + 1} Schritten")
-                return result
+            if success:
+                tool_results.append(f"[{action_name}] {result[:300]}")
 
-        return f"[STOP] Max {max_steps} Schritte erreicht"
+        # Synthese: Modell formuliert finale Antwort aus den Tool-Ergebnissen
+        if tool_results:
+            return self._synthesize(query, tool_results)
+        elif tool_results is not None:
+            return self._fallback_answer(query)
+        return "[STOP] keine Tool-Ergebnisse"
 
-    def _choose_action(self, query: str, state: State) -> Optional[tuple]:
-        """Modell wählt nächste Action — P0.2: LLM-Inferencing mit Fallback."""
+    def _log_step(self, query: str, action: str, params: dict, result: str, cid: str):
+        """Schreibe einen Step ins Log (append-only wie ossifikat)."""
+        s = Step(
+            query=query,
+            action=action,
+            params=params,
+            result=result,
+            state_before=self.state.to_dict(),
+            state_after=self.state.to_dict(),
+            correlation_id=cid,
+        )
+        self.log.append(s)
+
+    def _synthesize(self, query: str, tool_results: list) -> str:
+        """Generiere finale Antwort aus Tool-Ergebnissen (Modell-Synthese)."""
+        try:
+            from agent_inference import ModelCoder
+            coder = ModelCoder(self.model_name)
+            if not coder.client:
+                # Kein Modell → einfache Zusammenfassung der Tool-Outputs
+                return "\n\n".join(tool_results)
+            context = "\n\n".join(tool_results)
+            prompt = (f"FRAGE: {query}\n\n"
+                      f"GEFUNDENE INFORMATIONEN:\n{context}\n\n"
+                      f"Beantworte die Frage auf Basis der gefundenen Informationen. "
+                      f"Antworte auf Deutsch, präzise und direkt.")
+            return coder.generate(prompt, temperature=0.2, max_tokens=600)
+        except Exception:
+            return "\n\n".join(tool_results)
+
+    def _fallback_answer(self, query: str) -> str:
+        """Antwort wenn keine Tools erfolgreich waren."""
+        return f"[WARN] Keine verwertbaren Informationen für '{query[:60]}' gefunden."
+
+    def _choose_action(self, query: str, state: State, recent_steps: list = None) -> Optional[tuple]:
+        """Modell wählt nächste Action — LLM-Inferencing mit Fallback."""
+        recent_steps = recent_steps or []
         try:
             from agent_inference import ActionDecider
-            decider = ActionDecider(model="qwen3:8b")
+            decider = ActionDecider(model=self.model_name)
+            # Tools inkl. 'done' (Stop-Signal)
+            available = state.tools_available + ["done"]
             action, params = decider.decide(
                 query=query,
-                available_tools=state.tools_available,
-                recent_steps=[]  # TODO: recent Steps aus Log laden
+                available_tools=available,
+                recent_steps=recent_steps,
             )
             if action:
                 return (action, params)
-        except Exception as e:
-            # Fallback: wenn Inferencing fehlschlägt, Heuristik
+        except Exception:
             pass
 
-        # Fallback-Heuristik (wenn Modell leer/fehlt)
+        # Fallback-Heuristik
         q = query.lower()
-        if "search" in q or "find" in q:
+        if "search" in q or "find" in q or "suche" in q:
             return ("search_vault", {"query": query})
-        elif "read" in q or "file" in q:
+        elif "read" in q or "file" in q or "lies" in q or "datei" in q:
             return ("read_file", {"path": "terminal.py"})
-        elif "verify" in q or "check" in q or "syntax" in q:
+        elif "verify" in q or "check" in q or "syntax" in q or "prüf" in q:
             return ("verify", {"statement": query})
         else:
             return ("query_ossifikat", {"query": query})

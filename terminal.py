@@ -21,6 +21,16 @@ import time
 import pickle
 import numpy as np
 import requests
+from dotenv import load_dotenv
+
+# Lade .env-Datei am Anfang (explizit vom Projektverzeichnis)
+# override=True damit bestehende Umgebungsvariablen überschrieben werden
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_env_path = os.path.join(_script_dir, '.env')
+if os.path.exists(_env_path):
+    load_dotenv(_env_path, override=True)
+else:
+    load_dotenv(override=True)  # Fallback auf Standard-Suche
 
 try:
     from adapters import TerminalAdapter
@@ -55,14 +65,31 @@ VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", "qwen2.5-coder:1.5b
 # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder für Analyse).
 # Empfehlung: qwen3:8b (bestes Reasoning) oder qwen2.5:3b (parallel-fit).
 ANALYSIS_MODEL = os.environ.get("VIBELIKE_ANALYSIS_MODEL", "qwen3:8b")
-# Code-Gen-Backend: "claude" (Frontier-API, semantische Instruktionstreue) oder
-# "ollama" (lokal, ~7b-Decke). Default claude — fällt auf lokal zurück wenn Key/Paket fehlt.
+# Code-Gen-Backend: "claude" (Frontier-API), "gemini" (Gemini-API),
+# "council" (Lokal + Claude + Gemini parallel → Sonnet-Synthese), oder "ollama" (lokal).
+# Default claude — fällt auf lokal zurück wenn Key/Paket fehlt.
 CODEGEN_BACKEND = os.environ.get("VIBELIKE_CODEGEN_BACKEND", "claude").lower()
 CODEGEN_MODEL = os.environ.get("VIBELIKE_CODEGEN_MODEL", "claude-sonnet-4-6")
 # Rat-Modus (Council, via '??'-Präfix): A=lokal (KNOWLEDGE_ANSWER_MODEL/qwen3),
 # B=zugeschaltetes Frontier (Haiku), Synthese=stärkeres Modell (Sonnet) → Konsens+Unterschiede.
 COUNCIL_MODEL = os.environ.get("VIBELIKE_COUNCIL_MODEL", "claude-haiku-4-5-20251001")
 SYNTH_MODEL = os.environ.get("VIBELIKE_SYNTH_MODEL", "claude-sonnet-4-6")
+
+# ==== GEMINI-FLASH INTEGRATION - BEGIN ====
+# Gemini-Rat-Modi: ??g = lokal + gemini-2.5-flash, ??a = lokal + Haiku + gemini-2.5-flash
+GEMINI_COUNCIL_MODEL = os.environ.get("VIBELIKE_GEMINI_COUNCIL_MODEL", "gemini-2.5-flash")
+# HINWEIS: Die Gemini API hat Quote-Limits. Bei hohen max_output_tokens kommt 503-Fehler.
+# Mit max_output_tokens <= 256 funktioniert es, aber Antworten sind kurz.
+GEMINI_SYNTH_MODEL = os.environ.get("VIBELIKE_GEMINI_SYNTH_MODEL", "gemini-2.5-pro")
+# ==== GEMINI-FLASH INTEGRATION - END ====
+
+# ==== MISTRAL INTEGRATION - BEGIN ====
+# Mistral-Rat-Modi: ??m = lokal + mistral-large, ??a erweitert um Mistral
+MISTRAL_COUNCIL_MODEL = os.environ.get("VIBELIKE_MISTRAL_COUNCIL_MODEL", "mistral-large-latest")
+MISTRAL_SYNTH_MODEL = os.environ.get("VIBELIKE_MISTRAL_SYNTH_MODEL", "mistral-large-latest")
+# RÜCKGÄNGIG MACHEN: Lösche diese beiden Zeilen.
+# ==== MISTRAL INTEGRATION - END ====
+
 # Großer Wissens-Vault: general-knowledge Korpus (188k Docs), PARALLEL zum Code-Vault
 # abgefragt. Beide werden je Query durchsucht (ChaosRetrieval-Recall) und per Cosine
 # auf gemeinsamer Skala fair zusammengeführt. VIBELIKE_DUAL_VAULT=0 schaltet ihn aus.
@@ -362,7 +389,7 @@ class CodeRetriever:
             payload = {"query": query, "k": k}
             if source_boost:
                 payload["source_boost"] = source_boost
-            resp = requests.post(f"{self.remote_url}/search", json=payload, timeout=30)
+            resp = requests.post(f"{self.remote_url}/search", json=payload, timeout=60)
             resp.raise_for_status()
             docs = resp.json().get("docs", [])
         except Exception as e:
@@ -727,6 +754,163 @@ class ClaudeCoder:
             return f"[ERR] {str(e)}"
 
 
+# ==== GEMINI-FLASH INTEGRATION - BEGIN ====
+class GeminiCoder:
+    """Google Gemini-API-Backend mit QwenCoder-kompatiblem Interface.
+
+    Gleiche generate()-Signatur wie QwenCoder/ClaudeCoder für Drop-in-Kompatibilität.
+    Nutzt google-genai SDK. .usable == False wenn Key oder Paket fehlt.
+    
+    RÜCKGÄNGIG MACHEN: Lösche diese Klasse und alle Referenzen auf GeminiCoder.
+    """
+
+    def __init__(self, model: str = None, num_predict: int = 8192, **_ignored):
+        self.model = model or GEMINI_COUNCIL_MODEL
+        # Mit dem kostenpflichtigen Google Plan: max_output_tokens bis 8192 möglich!
+        self.num_predict = num_predict
+        self._client = None
+        self.usable = False
+
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            print("[WARN] GEMINI_API_KEY nicht gesetzt — GeminiCoder nicht nutzbar")
+            return
+        try:
+            import google.genai as genai
+        except ImportError:
+            print("[WARN] google-genai Paket fehlt — `pip install google-genai`")
+            return
+        try:
+            self._client = genai.Client(api_key=api_key)
+            # Client erstellt = Verbindung OK (kein models.list() - zu langsam)
+            self.usable = True
+            print(f"[OK] Gemini-API bereit (model={self.model})")
+        except Exception as e:
+            print(f"[WARN] Gemini-Init fehlgeschlagen: {e}")
+
+    def generate(self, prompt: str, system: str = None, temperature: float = 0.2,
+                 stream: bool = False, fmt=None, cache_prefix: str = None) -> str:
+        """Generiere via Gemini-API. stream=True schreibt Tokens live nach stdout.
+        Rückgabe ist in beiden Fällen der volle Antworttext. Fehler → '[ERR] ...'.
+        
+        fmt: nur für Signatur-Kompat mit QwenCoder — hier ignoriert.
+        cache_prefix: nur für Signatur-Kompat — hier ignoriert.
+        
+        ==== GEMINI-FLASH INTEGRATION - FIX ====
+        Korrigierte API: google-genai nutzt models.generate_content() statt chat.completions
+        """
+        if not self.usable:
+            return "[ERR] GeminiCoder nicht initialisiert (GEMINI_API_KEY fehlt)"
+
+        try:
+            from google.genai import types
+            # Korrekte google-genai-API: System gehört in config.system_instruction
+            # (NICHT als 'system'-Rolle in contents — die kennt Gemini nicht), Streaming
+            # ist eine EIGENE Methode generate_content_stream (kein stream=-Flag).
+            cfg = types.GenerateContentConfig(
+                system_instruction=system or None,
+                max_output_tokens=self.num_predict,
+                temperature=temperature,
+            )
+            # HINWEIS: Google Generative AI streaming gibt oft unvollständige chunks zurück
+            # Daher nutzen wir immer non-streaming und geben die volle antwort aus
+            r = self._client.models.generate_content(
+                model=self.model, contents=prompt, config=cfg)
+            text = r.text or ""
+            if stream and text:
+                # Wenn stream=True gewünscht, zumindest die volle antwort ausgeben
+                print(text, flush=True)
+            return text
+        except Exception as e:
+            return f"[ERR] {type(e).__name__}: {e}"
+
+
+# ==== GEMINI-FLASH INTEGRATION - END ====
+
+# ==== MISTRAL INTEGRATION - BEGIN ====
+class MistralCoder:
+    """Mistral-API-Backend mit QwenCoder-kompatiblem Interface.
+
+    Gleiche generate()-Signatur wie QwenCoder/ClaudeCoder/GeminiCoder für Drop-in-Kompatibilität.
+    Nutzt mistralai SDK. .usable == False wenn Key oder Paket fehlt.
+    
+    RÜCKGÄNGIG MACHEN: Lösche diese Klasse und alle Referenzen auf MistralCoder.
+    """
+
+    def __init__(self, model: str = None, num_predict: int = 8192, **_ignored):
+        self.model = model or MISTRAL_COUNCIL_MODEL
+        self.num_predict = num_predict
+        self._client = None
+        self.usable = False
+
+        api_key = os.environ.get("MISTRAL_API_KEY")
+        if not api_key:
+            print("[WARN] MISTRAL_API_KEY nicht gesetzt — MistralCoder nicht nutzbar")
+            return
+        try:
+            from mistralai.client import Mistral
+        except ImportError:
+            print("[WARN] mistralai Paket fehlt — `pip install mistralai`")
+            return
+        try:
+            self._client = Mistral(api_key=api_key)
+            self.usable = True
+            print(f"[OK] Mistral-API bereit (model={self.model})")
+        except Exception as e:
+            print(f"[WARN] Mistral-Init fehlgeschlagen: {e}")
+
+    def generate(self, prompt: str, system: str = None, temperature: float = 0.2,
+                 stream: bool = False, fmt=None, cache_prefix: str = None) -> str:
+        """Generiere via Mistral-API. stream=True schreibt Tokens live nach stdout.
+        Rückgabe ist in beiden Fällen der volle Antworttext. Fehler → '[ERR] ...'.
+        
+        ==== MISTRAL INTEGRATION - FIX ====
+        Korrigierte API: mistralai v2 nutzt client.chat.complete() statt client.chat()
+        
+        fmt: nur für Signatur-Kompat mit QwenCoder — hier ignoriert.
+        cache_prefix: nur für Signatur-Kompat — hier ignoriert.
+        """
+        if not self.usable:
+            return "[ERR] MistralCoder nicht initialisiert (MISTRAL_API_KEY fehlt)"
+
+        try:
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": prompt})
+
+            if not stream:
+                response = self._client.chat.complete(
+                    model=self.model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=self.num_predict,
+                )
+                return response.choices[0].message.content or ""
+
+            # Streaming
+            chunks = []
+            response = self._client.chat.stream(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=self.num_predict,
+            )
+            for chunk in response:
+                if hasattr(chunk, 'choices') and chunk.choices:
+                    text = chunk.choices[0].delta.content or ""
+                    if text:
+                        print(text, end="", flush=True)
+                        chunks.append(text)
+            print()  # Newline nach dem Stream
+            return "".join(chunks)
+        except Exception as e:
+            return f"[ERR] {str(e)}"
+
+
+# ==== MISTRAL INTEGRATION - END ====
+
+
 # =============================================================================
 # System Prompt Builder
 # =============================================================================
@@ -840,6 +1024,238 @@ def run_council(query: str, system_prompt: str, local_coder, council_coder, synt
     return synth or f"{ans_a}\n\n---\n\n{ans_b}"
 
 
+# ==== GEMINI-FLASH INTEGRATION - BEGIN ====
+def run_council_gemini(query: str, system_prompt: str, local_coder, gemini_council_coder, gemini_synth_coder) -> str:
+    """Gemini-Rat-Modus: lokale Antwort (A) + gemini-2.5-flash (B) + gemini-2.5-pro Synthese.
+    
+    ==== GEMINI-FLASH INTEGRATION - FIX ====
+    Fehlerbehandlung für API-Fehler (z.B. 503 UNAVAILABLE) hinzugefügt.
+    
+    RÜCKGÄNGIG MACHEN: Lösche diese Funktion und alle Aufrufe.
+    """
+    sep = "-" * 60
+    
+    def _is_valid_answer(ans):
+        """Prüfe ob eine Antwort gültig ist (nicht leer und kein Fehler)."""
+        if not ans or not isinstance(ans, str):
+            return False
+        if ans.strip().startswith("[ERR]"):
+            return False
+        return bool(ans.strip())
+
+    # A — lokal (grounded, wie sonst)
+    print(f"\n── Antwort A (lokal · {local_coder.model}) ──\n{sep}")
+    ans_a = local_coder.generate(query, system=system_prompt, stream=True)
+    ans_a = re.sub(r"<think>.*?</think>", "", ans_a, flags=re.DOTALL).strip()
+    print(sep)
+
+    # B — gemini-2.5-flash
+    if not (gemini_council_coder and gemini_council_coder.usable):
+        print("[WARN] Gemini-Rat-Modell nicht nutzbar (GEMINI_API_KEY?) — nur lokale Antwort A.")
+        return ans_a
+    print(f"\n── Antwort B ({gemini_council_coder.model}) ──\n{sep}")
+    ans_b = gemini_council_coder.generate(query, system=system_prompt, stream=True)
+    print(sep)
+    
+    # Prüfe ob die Antwort gültig ist (kein API-Fehler)
+    if not _is_valid_answer(ans_b):
+        print(f"[WARN] Gemini lieferte keinen gültigen Text — nur A. Grund: {str(ans_b).strip()[:160]}")
+        return ans_a
+
+    # Synthese — gemini-2.5-pro
+    if not (gemini_synth_coder and gemini_synth_coder.usable):
+        print("[WARN] Gemini-Synthese-Modell nicht nutzbar — A und B stehen oben nebeneinander.")
+        return f"{ans_a}\n\n---\n\n{ans_b}"
+    synth_prompt = (
+        f"FRAGE:\n{query}\n\n"
+        f"ANTWORT A (lokales Modell):\n{ans_a}\n\n"
+        f"ANTWORT B (Gemini-Flash):\n{ans_b}\n\n"
+        "Vergleiche A und B. Antworte auf Deutsch in genau zwei Abschnitten:\n"
+        "KONSENS: worauf sich beide einigen (das Verlässliche), knapp.\n"
+        "UNTERSCHIEDE: jeder Punkt, an dem sie divergieren — konkret benannt, mit ehrlicher "
+        "Einschätzung, welche Seite plausibler ist und warum (oder dass es offen bleibt). "
+        "Glätte den Dissens NICHT weg — die Unterschiede sind das Wichtigste."
+    )
+    synth_system = ("Du bist ein präziser Schiedsrichter zweier Modell-Antworten. Ehrlich, "
+                    "knapp, kein Geschwafel; Unsicherheit offen markieren.")
+    print(f"\n── 🜂 Synthese ({gemini_synth_coder.model}) ──\n{sep}")
+    synth = gemini_synth_coder.generate(synth_prompt, system=synth_system, stream=True)
+    print(sep)
+    return synth or f"{ans_a}\n\n---\n\n{ans_b}"
+
+
+# ==== MISTRAL INTEGRATION - BEGIN ====
+def run_council_mistral(query: str, system_prompt: str, local_coder, mistral_council_coder, mistral_synth_coder) -> str:
+    """Mistral-Rat-Modus: lokale Antwort (A) + mistral-large (B) + mistral-large Synthese.
+    
+    ==== MISTRAL INTEGRATION - FIX ====
+    Fehlerbehandlung für API-Fehler hinzugefügt.
+    
+    RÜCKGÄNGIG MACHEN: Lösche diese Funktion und alle Aufrufe.
+    """
+    sep = "-" * 60
+    
+    def _is_valid_answer(ans):
+        """Prüfe ob eine Antwort gültig ist (nicht leer und kein Fehler)."""
+        if not ans or not isinstance(ans, str):
+            return False
+        if ans.strip().startswith("[ERR]"):
+            return False
+        return bool(ans.strip())
+
+    # A — lokal (grounded, wie sonst)
+    print(f"\n── Antwort A (lokal · {local_coder.model}) ──\n{sep}")
+    ans_a = local_coder.generate(query, system=system_prompt, stream=True)
+    ans_a = re.sub(r"<think>.*?</think>", "", ans_a, flags=re.DOTALL).strip()
+    print(sep)
+
+    # B — mistral-large
+    if not (mistral_council_coder and mistral_council_coder.usable):
+        print("[WARN] Mistral-Rat-Modell nicht nutzbar (MISTRAL_API_KEY?) — nur lokale Antwort A.")
+        return ans_a
+    print(f"\n── Antwort B ({mistral_council_coder.model}) ──\n{sep}")
+    ans_b = mistral_council_coder.generate(query, system=system_prompt, stream=True)
+    print(sep)
+    
+    # Prüfe ob die Antwort gültig ist (kein API-Fehler)
+    if not _is_valid_answer(ans_b):
+        print(f"[WARN] Mistral lieferte keinen gültigen Text — nur A. Grund: {str(ans_b).strip()[:160]}")
+        return ans_a
+
+    # Synthese — mistral-large (gleiches Modell)
+    if not (mistral_synth_coder and mistral_synth_coder.usable):
+        print("[WARN] Mistral-Synthese-Modell nicht nutzbar — A und B stehen oben nebeneinander.")
+        return f"{ans_a}\n\n---\n\n{ans_b}"
+    synth_prompt = (
+        f"FRAGE:\n{query}\n\n"
+        f"ANTWORT A (lokales Modell):\n{ans_a}\n\n"
+        f"ANTWORT B (Mistral):\n{ans_b}\n\n"
+        "Vergleiche A und B. Antworte auf Deutsch in genau zwei Abschnitten:\n"
+        "KONSENS: worauf sich beide einigen (das Verlässliche), knapp.\n"
+        "UNTERSCHIEDE: jeder Punkt, an dem sie divergieren — konkret benannt, mit ehrlicher "
+        "Einschätzung, welche Seite plausibler ist und warum (oder dass es offen bleibt). "
+        "Glätte den Dissens NICHT weg — die Unterschiede sind das Wichtigste."
+    )
+    synth_system = ("Du bist ein präziser Schiedsrichter zweier Modell-Antworten. Ehrlich, "
+                    "knapp, kein Geschwafel; Unsicherheit offen markieren.")
+    print(f"\n── 🜂 Synthese ({mistral_synth_coder.model}) ──\n{sep}")
+    synth = mistral_synth_coder.generate(synth_prompt, system=synth_system, stream=True)
+    print(sep)
+    return synth or f"{ans_a}\n\n---\n\n{ans_b}"
+
+
+# ==== MISTRAL INTEGRATION - END ====
+
+def run_council_all(query: str, system_prompt: str, local_coder, council_coder, gemini_council_coder, synth_coder, mistral_council_coder=None, mistral_synth_coder=None) -> str:
+    """ALL-IN Rat-Modus: lokal + Haiku + gemini-2.5-flash + mistral-large mit Synthese.
+    
+    A = lokal, B = Haiku, C = gemini-2.5-flash, D = mistral-large (falls verfügbar)
+    Synthese = stärkstes verfügbares Modell.
+    
+    ==== GEMINI-FLASH + MISTRAL INTEGRATION - FIX ====
+    Fehlerbehandlung für API-Fehler (z.B. 503 UNAVAILABLE) hinzugefügt.
+    Antworten die mit [ERR] beginnen werden als ungültig behandelt.
+    
+    RÜCKGÄNGIG MACHEN: Lösche diese Funktion und alle Aufrufe.
+    """
+    sep = "-" * 60
+    
+    def _is_valid_answer(ans):
+        """Prüfe ob eine Antwort gültig ist (nicht leer und kein Fehler)."""
+        if not ans or not isinstance(ans, str):
+            return False
+        # Fehler-Antworten erkennen
+        if ans.strip().startswith("[ERR]"):
+            return False
+        return bool(ans.strip())
+
+    # A — lokal
+    print(f"\n── Antwort A (lokal · {local_coder.model}) ──\n{sep}")
+    ans_a = local_coder.generate(query, system=system_prompt, stream=True)
+    ans_a = re.sub(r"<think>.*?</think>", "", ans_a, flags=re.DOTALL).strip()
+    print(sep)
+
+    # B — Haiku
+    if not (council_coder and council_coder.usable):
+        print("[WARN] Haiku-Modell nicht nutzbar (ANTHROPIC_API_KEY?) — nur lokal + Gemini falls verfügbar")
+        ans_b = None
+    else:
+        print(f"\n── Antwort B ({council_coder.model}) ──\n{sep}")
+        ans_b = council_coder.generate(query, system=system_prompt, stream=True)
+        print(sep)
+
+    # C — gemini-2.5-flash
+    if not (gemini_council_coder and gemini_council_coder.usable):
+        print("[WARN] Gemini-Flash-Modell nicht nutzbar (GEMINI_API_KEY?) — nur lokal + Haiku falls verfügbar")
+        ans_c = None
+    else:
+        print(f"\n── Antwort C ({gemini_council_coder.model}) ──\n{sep}")
+        ans_c = gemini_council_coder.generate(query, system=system_prompt, stream=True)
+        print(sep)
+        # Prüfe ob die Antwort gültig ist (kein API-Fehler)
+        if not _is_valid_answer(ans_c):
+            print(f"[WARN] Gemini-Flash-Antwort ungültig (API-Fehler wie 503) — werde ignoriert")
+            ans_c = None
+
+    # D — mistral-large (optional)
+    ans_d = None
+    if mistral_council_coder and mistral_council_coder.usable:
+        print(f"\n── Antwort D ({mistral_council_coder.model}) ──\n{sep}")
+        ans_d = mistral_council_coder.generate(query, system=system_prompt, stream=True)
+        print(sep)
+        # Prüfe ob die Antwort gültig ist (kein API-Fehler)
+        if not _is_valid_answer(ans_d):
+            print(f"[WARN] Mistral-Antwort ungültig (API-Fehler) — werde ignoriert")
+            ans_d = None
+
+    # Synthese — stärkeres Modell vergleicht A, B, C, D
+    if not (synth_coder and synth_coder.usable):
+        # Falls Synthese-Modell nicht nutzbar, alle gültigen Antworten zusammenfassen
+        print("[WARN] Synthese-Modell nicht nutzbar — alle Antworten stehen oben nebeneinander.")
+        result = [a for a in [ans_a, ans_b, ans_c, ans_d] if _is_valid_answer(a)]
+        return "\n\n---\n\n".join(result) if result else ans_a
+
+    # Build synth prompt nur mit gültigen Antworten
+    answers = []
+    if _is_valid_answer(ans_a):
+        answers.append(f"ANTWORT A (lokales Modell):\n{ans_a}")
+    if _is_valid_answer(ans_b):
+        answers.append(f"ANTWORT B (Haiku):\n{ans_b}")
+    if _is_valid_answer(ans_c):
+        answers.append(f"ANTWORT C (Gemini-Flash):\n{ans_c}")
+    if _is_valid_answer(ans_d):
+        answers.append(f"ANTWORT D (Mistral):\n{ans_d}")
+    
+    # Wenn weniger als 2 gültige Antworten, keine Synthese möglich
+    if len(answers) < 2:
+        print(f"[WARN] Nur {len(answers)} gültige Antwort(en) für Synthese — Synthese übersprungen")
+        # Extrahiere nur die Antwort-Inhalte (ohne "ANTWORT X:"-Prefix)
+        valid_answers = []
+        for a in [ans_a, ans_b, ans_c, ans_d]:
+            if _is_valid_answer(a):
+                valid_answers.append(a)
+        return "\n\n---\n\n".join(valid_answers)
+
+    synth_prompt = (
+        f"FRAGE:\n{query}\n\n"
+        + "\n\n".join(answers) + "\n\n"
+        "Vergleiche alle Antworten. Antworte auf Deutsch in genau zwei Abschnitten:\n"
+        "KONSENS: worauf sich alle einigen (das Verlässliche), knapp.\n"
+        "UNTERSCHIEDE: jeder Punkt, an dem sie divergieren — konkret benannt, mit ehrlicher "
+        "Einschätzung, welche Antwort plausibler ist und warum (oder dass es offen bleibt). "
+        "Glätte den Dissens NICHT weg — die Unterschiede sind das Wichtigste."
+    )
+    synth_system = ("Du bist ein präziser Schiedsrichter mehrerer Modell-Antworten. Ehrlich, "
+                    "knapp, kein Geschwafel; Unsicherheit offen markieren.")
+    print(f"\n── 🜂 Synthese ({synth_coder.model}) ──\n{sep}")
+    synth = synth_coder.generate(synth_prompt, system=synth_system, stream=True)
+    print(sep)
+    return synth or "\n\n---\n\n".join(a for a in [ans_a, ans_b, ans_c, ans_d] if _is_valid_answer(a))
+
+
+# ==== GEMINI-FLASH + MISTRAL INTEGRATION - END ====
+
+
 # =============================================================================
 # CLI Interface
 # =============================================================================
@@ -854,7 +1270,12 @@ def print_header():
     print("CODE-VAULT TERMINAL")
     print("=" * 60)
     print("[q] beenden | [l] logs | [s] state | [r] review | [c] clear | [w] workflow")
-    print("[??frage] Rat-Modus: lokal + Frontier + Synthese (Konsens & Unterschiede)")
+    print("[Agent-Modus] search_vault · read_file · query_ossifikat · verify · done")
+    # ==== GEMINI-FLASH + MISTRAL INTEGRATION - BEGIN ====
+    print("[??h] Rat: lokal + Haiku + Sonnet | [??g] Rat: lokal + Gemini-Flash + Pro")
+    print("[??m] Rat: lokal + Mistral | [??a] Rat: ALLE 4 (lokal + Haiku + Gemini + Mistral)")
+    # RÜCKGÄNGIG MACHEN: Ersetze durch die alte Version ohne Mistral.
+    # ==== GEMINI-FLASH + MISTRAL INTEGRATION - END ====
     print("-" * 60)
 
 
@@ -1067,6 +1488,17 @@ def main():
     history = []  # gehaltener Gesprächskontext: [(frage, antwort), …] für Folgefragen
     council_coder = None  # lazy: Frontier-Modelle erst beim ersten '??' (Rat-Modus)
     synth_coder = None
+    _agent_loop = [None]  # lazy: Agent-Loop erst beim ersten Query (Liste für mutability)
+    # ==== GEMINI-FLASH INTEGRATION - BEGIN ====
+    gemini_council_coder = None  # lazy: Gemini-Modelle erst beim ersten '??g' oder '??a'
+    gemini_synth_coder = None    # lazy: Gemini-Synthese erst beim ersten '??g' oder '??a'
+    # RÜCKGÄNGIG MACHEN: Lösche diese beiden Zeilen und alle Referenzen darauf.
+    # ==== GEMINI-FLASH INTEGRATION - END ====
+    # ==== MISTRAL INTEGRATION - BEGIN ====
+    mistral_council_coder = None  # lazy: Mistral-Modelle erst beim ersten '??m' oder '??a'
+    mistral_synth_coder = None    # lazy: Mistral-Synthese erst beim ersten '??m' oder '??a'
+    # RÜCKGÄNGIG MACHEN: Lösche diese beiden Zeilen und alle Referenzen darauf.
+    # ==== MISTRAL INTEGRATION - END ====
     print()
 
     while True:
@@ -1119,13 +1551,39 @@ def main():
                     print("[ERR] Keine Aufgabe nach 'briefing:' eingegeben")
                 continue
 
-            # Rat-Modus: '??' vor der Frage schaltet die Frontier-Modelle zu (Council)
+            # ==== GEMINI-FLASH + MISTRAL INTEGRATION - BEGIN ====
+            # Rat-Modus: Präfixe für verschiedene Modi
+            # ??h = lokal + Haiku (Claude) + Sonnet-Synthese
+            # ??g = lokal + gemini-2.5-flash + gemini-2.5-pro-Synthese
+            # ??m = lokal + mistral-large + mistral-large-Synthese
+            # ??a = ALL-IN: lokal + Haiku + gemini-2.5-flash + mistral-large + Synthese
+            # ?? = Backward-Kompat: wie ??h (lokal + Haiku)
+            council_h = query.startswith("??h")
+            council_g = query.startswith("??g")
+            council_m = False  # Mistral deaktiviert (Abo gekündigt)
+            council_a = query.startswith("??a")
             council = query.startswith("??")
-            if council:
+            
+            # Bestimme den Modus und bereinige Query
+            mode = None
+            if council_a:
+                mode = "all"
+                query = query[3:].strip()
+            elif council_g:
+                mode = "gemini"
+                query = query[3:].strip()
+            elif council_h:
+                mode = "haiku"
+                query = query[3:].strip()
+            elif council:
+                mode = "haiku"  # Backward-Kompat: ?? = ??h
                 query = query[2:].strip()
-                if not query:
-                    print("[ERR] Keine Frage nach '??'")
-                    continue
+            
+            if council and not query:
+                print("[ERR] Keine Frage nach dem Rat-Präfix")
+                continue
+            # ==== GEMINI-FLASH + MISTRAL INTEGRATION - END ====
+            # RÜCKGÄNGIG MACHEN: Ersetze die 4 council_*-Zeilen durch die alten 2 Zeilen (council_h, council_g) und lösche die Mistral-Referenzen.
 
             # Suche in beiden Vaults (Code + Wissen), fair gemerged
             print("[SEARCH] Suche in den Vaults...")
@@ -1160,17 +1618,52 @@ def main():
                 sys_full += "\n\nBISHERIGES GESPRÄCH (Kontext für Folgefragen, nicht wiederholen):\n" + convo
                 print(f"[💬 {min(len(history),2)} Turn(s) Kontext]")
 
-            # Generieren — Rat-Modus (3 Rollen) oder normal (nur lokal)
-            if council:
-                if council_coder is None:  # lazy: erst beim ersten '??' Frontier zuschalten
+            # Generieren — Rat-Modus oder normal (nur lokal)
+            # ==== GEMINI-FLASH + MISTRAL INTEGRATION - BEGIN ====
+            if mode == "gemini":
+                if gemini_council_coder is None:
+                    print("[RAT] Schalte Gemini-Modelle zu…")
+                    gemini_council_coder = GeminiCoder(model=GEMINI_COUNCIL_MODEL)
+                    gemini_synth_coder = GeminiCoder(model=GEMINI_SYNTH_MODEL)
+                response = run_council_gemini(query, sys_full, coder, gemini_council_coder, gemini_synth_coder)
+            elif mode == "all":
+                if council_coder is None:
+                    print("[RAT] Schalte Frontier-Modelle zu…")
+                    council_coder = ClaudeCoder(model=COUNCIL_MODEL)
+                    synth_coder = ClaudeCoder(model=SYNTH_MODEL)
+                if gemini_council_coder is None:
+                    print("[RAT] Schalte Gemini-Modelle zu…")
+                    gemini_council_coder = GeminiCoder(model=GEMINI_COUNCIL_MODEL)
+                # Für ALL-Modus: Synthese mit verfügbarem Modell (Sonnet oder gemini-2.5-pro)
+                if synth_coder and synth_coder.usable:
+                    pass  # Sonnet bereit
+                elif gemini_synth_coder is not None and gemini_synth_coder.usable:
+                    synth_coder = gemini_synth_coder  # gemini-2.5-pro
+                else:
+                    if synth_coder is None:
+                        synth_coder = ClaudeCoder(model=SYNTH_MODEL)
+                response = run_council_all(query, sys_full, coder, council_coder, gemini_council_coder, synth_coder, None, None)
+            elif mode == "haiku":
+                if council_coder is None:
                     print("[RAT] Schalte Frontier-Modelle zu…")
                     council_coder = ClaudeCoder(model=COUNCIL_MODEL)
                     synth_coder = ClaudeCoder(model=SYNTH_MODEL)
                 response = run_council(query, sys_full, coder, council_coder, synth_coder)
             else:
-                print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
-                response = coder.generate(query, system=sys_full, stream=True)
-                print("-" * 60)
+                # Agent-Mode (Normal: immer Agent-Loop statt direktem Retrieval+Generate)
+                # ==== GEMINI-FLASH + MISTRAL INTEGRATION - END ====
+                try:
+                    import asyncio
+                    from agent_loop import AgentLoop
+                    if _agent_loop[0] is None:
+                        _agent_loop[0] = AgentLoop(model_name=KNOWLEDGE_ANSWER_MODEL)
+                    response = asyncio.run(_agent_loop[0].step(query))
+                except Exception as e:
+                    # Fallback: alter direkter Flow wenn Agent-Loop scheitert
+                    print(f"[WARN] Agent-Loop Fehler ({e}) → Fallback auf direkten Flow")
+                    print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
+                    response = coder.generate(query, system=sys_full, stream=True)
+                    print("-" * 60)
 
             # Historie pflegen (<think> raus, gekappt) + Triplet loggen
             clean = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
