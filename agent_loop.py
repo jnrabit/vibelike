@@ -222,6 +222,7 @@ class AgentLoop:
         self.tools = ToolRegistry()
         self.state = State()
         self._decider = None  # lazy, einmal erstellt
+        self._coder = None   # lazy ModelCoder (kein Socket-Check pro Query)
 
     async def step(self, query: str, correlation_id: Optional[str] = None, max_steps: int = 5) -> str:
         """Ein Agent-Durchlauf: query → Schritte → Antwort.
@@ -248,6 +249,11 @@ class AgentLoop:
                 break
 
             action_name, params = action
+            # Wenn Modell search_vault/query_ossifikat/verify ohne params wählt → query einsetzen
+            if action_name in ("search_vault", "query_ossifikat") and "query" not in params:
+                params = {"query": query}
+            elif action_name == "verify" and "statement" not in params:
+                params = {"statement": query}
             print(f"  [{step_idx}] {action_name}({list(params.keys())})")
 
             # done-Action = Modell signalisiert "genug Infos" (Healthpoint-Anker)
@@ -302,7 +308,9 @@ class AgentLoop:
         """Generiere finale Antwort aus Tool-Ergebnissen (oder direkt wenn keine Tools)."""
         try:
             from agent_inference import ModelCoder
-            coder = ModelCoder(self.model_name)
+            if self._coder is None:
+                self._coder = ModelCoder(self.model_name)
+            coder = self._coder
             if not coder.client:
                 return "\n\n".join(tool_results) if tool_results else f"[WARN] keine Antwort für '{query[:60]}'"
             if tool_results:
