@@ -967,10 +967,11 @@ def build_system_prompt(context: list) -> str:
     for i, d in enumerate(sources[:4]):  # Top 4 für Fokus, vault-übergreifend gerankt
         vault = d.get("vault", "")
         tag = d.get("source", "vault") + (f" · {vault}" if vault else "")
-        src.append(
-            f"QUELLE {i+1} (d={d.get('distance', 0):.2f}, {tag}):\n"
-            f"{d.get('content', '')[:450]}"
-        )
+        dist = d.get("distance", 0) or 0
+        # content kann in seltenen Vault-Docs ein Dict/Objekt sein → immer str
+        raw = d.get("content", "") or ""
+        content = str(raw)[:450] if not isinstance(raw, str) else raw[:450]
+        src.append(f"QUELLE {i+1} (d={dist:.2f}, {tag}):\n{content}")
 
     rules = ("Du bist ein präziser Recherche- und Fachassistent.\n\n"
              "REGELN:\n"
