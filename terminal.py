@@ -1490,6 +1490,12 @@ def main():
     council_coder = None  # lazy: Frontier-Modelle erst beim ersten '??' (Rat-Modus)
     synth_coder = None
     _agent_loop = [None]  # lazy: Agent-Loop erst beim ersten Query (Liste für mutability)
+    # Warmen Retriever in VaultTool injizieren → kein Doppel-Load beim ersten Agent-Step
+    try:
+        from agent_tools import ToolsFactory
+        ToolsFactory.inject_retriever(retriever)
+    except Exception:
+        pass
     # ==== GEMINI-FLASH INTEGRATION - BEGIN ====
     gemini_council_coder = None  # lazy: Gemini-Modelle erst beim ersten '??g' oder '??a'
     gemini_synth_coder = None    # lazy: Gemini-Synthese erst beim ersten '??g' oder '??a'

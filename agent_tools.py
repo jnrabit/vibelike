@@ -15,33 +15,36 @@ ROOT = Path(__file__).parent
 
 
 class VaultTool:
-    """Wrapper um terminal.py Retrieval (Code + Wissen Vaults)."""
+    """Wrapper um terminal.py Retrieval (Code + Wissen Vaults).
+
+    Retriever wird von außen gesetzt (inject_retriever) — der Agent nutzt den bereits
+    warmen Retriever aus terminal.py statt einen neuen zu laden (kein 40s-Doppel-Load).
+    """
 
     def __init__(self):
-        self.retriever = None
-        self._init_retriever()
+        self.retriever = None  # wird per inject_retriever gesetzt
+
+    def inject_retriever(self, retriever) -> None:
+        """Setzt den bereits geladenen CodeRetriever (aus terminal.py main())."""
+        self.retriever = retriever
 
     def _init_retriever(self):
-        """Lazy-Init CodeRetriever (kostspieliger Vault-Load).
-
-        P0.1-Note: workflow_agent.py hat Syntax-Fehler aus Mistral-Integration (Indentation).
-        Fallback: lokales Retrieval mit Heuristik statt terminal.py-Loader.
-        """
+        """Fallback: eigenen Retriever laden wenn keiner injiziert wurde."""
         if self.retriever is not None:
             return
         try:
             sys.path.insert(0, str(ROOT))
-            # Versuche echten CodeRetriever
             from terminal import CodeRetriever
-            self.retriever = CodeRetriever(remote_url=None)  # lokal
-            print("[OK] VaultTool: CodeRetriever (live) initialisiert")
-        except (ImportError, SyntaxError) as e:
-            # Fallback: Mock-Retriever für P0.1 Tests (beweist Struktur funktioniert)
+            self.retriever = CodeRetriever(remote_url=None)
+            print("[OK] VaultTool: CodeRetriever (eigen) initialisiert")
+        except Exception as e:
             print(f"[WARN] VaultTool: CodeRetriever nicht verfügbar ({type(e).__name__}), nutze Mock")
-            self.retriever = "mock"  # Marker: Mock-Modus
+            self.retriever = "mock"
 
     def search(self, query: str, k: int = 5) -> str:
         """Suche in Code + Wissen Vaults (Dual-Vault)."""
+        if self.retriever is None:
+            self._init_retriever()  # Fallback: selbst laden
         if self.retriever is None:
             return "[ERR] VaultTool nicht initialisiert"
 
@@ -181,6 +184,11 @@ class ToolsFactory:
         if cls._vault_tool is None:
             cls._vault_tool = VaultTool()
         return cls._vault_tool
+
+    @classmethod
+    def inject_retriever(cls, retriever) -> None:
+        """Setzt den warmen Retriever aus terminal.py — kein Doppel-Load."""
+        cls.vault().inject_retriever(retriever)
 
     @classmethod
     def ossifikat(cls) -> OssifikatTool:
