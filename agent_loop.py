@@ -238,8 +238,10 @@ class AgentLoop:
         for step_idx in range(max_steps):
             self.state.step_count = step_idx
 
-            # Recent Steps aus Log (letzte 3) als Kontext ans Modell
-            recent = [vars(s) for s in self.log.recent(3)]
+            # Recent Steps NUR aus diesem Query-Lauf (cid-gefiltert) — verhindert
+            # dass done-Antworten aus vorherigen Queries das Modell vergiften
+            recent = [vars(s) for s in self.log.recent(6)
+                      if s.correlation_id == cid]
 
             action = self._choose_action(query, self.state, recent)
             if not action:
@@ -249,15 +251,20 @@ class AgentLoop:
             print(f"  [{step_idx}] {action_name}({list(params.keys())})")
 
             # done-Action = Modell signalisiert "genug Infos" (Healthpoint-Anker)
+            # Guard: done auf Schritt 0 ohne Tool-Ergebnisse → erst recherchieren
             if action_name == "done":
-                answer = params.get("answer", "").strip()
-                if answer:
-                    print(f"  → done nach {step_idx} Schritten")
-                    self._log_step(query, "done", params, answer, cid)
-                    return answer
-                # done ohne Antwort → direkte Synthese ohne Tool-Kontext
-                print(f"  → done (kein answer) — direkte Antwort")
-                return self._synthesize(query, [])
+                if step_idx == 0 and not tool_results:
+                    # Kein Kontext gesammelt → erzwinge search_vault
+                    action_name, params = "search_vault", {"query": query}
+                    print(f"    (done ohne Kontext → search_vault erzwungen)")
+                else:
+                    answer = params.get("answer", "").strip()
+                    if answer:
+                        print(f"  → done nach {step_idx} Schritten")
+                        # done NICHT ins Log — würde nächsten Query vergiften
+                        return answer
+                    print(f"  → done (kein answer) — direkte Antwort")
+                    return self._synthesize(query, tool_results or [])
 
             # Tool ausführen
             result = await self.tools.execute(action_name, params)
