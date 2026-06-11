@@ -255,7 +255,9 @@ class AgentLoop:
                     print(f"  → done nach {step_idx} Schritten")
                     self._log_step(query, "done", params, answer, cid)
                     return answer
-                break
+                # done ohne Antwort → direkte Synthese ohne Tool-Kontext
+                print(f"  → done (kein answer) — direkte Antwort")
+                return self._synthesize(query, [])
 
             # Tool ausführen
             result = await self.tools.execute(action_name, params)
@@ -290,21 +292,24 @@ class AgentLoop:
         self.log.append(s)
 
     def _synthesize(self, query: str, tool_results: list) -> str:
-        """Generiere finale Antwort aus Tool-Ergebnissen (Modell-Synthese)."""
+        """Generiere finale Antwort aus Tool-Ergebnissen (oder direkt wenn keine Tools)."""
         try:
             from agent_inference import ModelCoder
             coder = ModelCoder(self.model_name)
             if not coder.client:
-                # Kein Modell → einfache Zusammenfassung der Tool-Outputs
-                return "\n\n".join(tool_results)
-            context = "\n\n".join(tool_results)
-            prompt = (f"FRAGE: {query}\n\n"
-                      f"GEFUNDENE INFORMATIONEN:\n{context}\n\n"
-                      f"Beantworte die Frage auf Basis der gefundenen Informationen. "
-                      f"Antworte auf Deutsch, präzise und direkt.")
-            return coder.generate(prompt, temperature=0.2, max_tokens=600)
+                return "\n\n".join(tool_results) if tool_results else f"[WARN] keine Antwort für '{query[:60]}'"
+            if tool_results:
+                context = "\n\n".join(tool_results)
+                prompt = (f"FRAGE: {query}\n\n"
+                          f"GEFUNDENE INFORMATIONEN:\n{context}\n\n"
+                          f"Beantworte die Frage auf Basis der gefundenen Informationen. "
+                          f"Antworte auf Deutsch, präzise und direkt.")
+            else:
+                # Kein Tool-Kontext → direkte Antwort (z.B. Begrüßungen, einfache Fragen)
+                prompt = (f"{query}\n\nAntworte auf Deutsch, natürlich und hilfreich.")
+            return coder.generate(prompt, temperature=0.3, max_tokens=600)
         except Exception:
-            return "\n\n".join(tool_results)
+            return "\n\n".join(tool_results) if tool_results else ""
 
     def _fallback_answer(self, query: str) -> str:
         """Antwort wenn keine Tools erfolgreich waren."""

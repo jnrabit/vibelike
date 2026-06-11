@@ -164,8 +164,8 @@ class HardwareLogger:
             "id": c.get("id"),
             "distance": c.get("distance", 0),
             "source": c.get("source", ""),
-            "content_hash": hash(c.get("content", "")) % 2**32,
-            "content_len": len(c.get("content", ""))
+            "content_hash": hash(str(c.get("content", "") or "")) % 2**32,
+            "content_len": len(str(c.get("content", "") or ""))
         } for c in context]
         
         entry = {
