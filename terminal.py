@@ -1659,6 +1659,10 @@ def main():
                     if _agent_loop[0] is None:
                         _agent_loop[0] = AgentLoop(model_name=KNOWLEDGE_ANSWER_MODEL)
                     response = asyncio.run(_agent_loop[0].step(query))
+                    # Agent gibt String zurück (kein Streaming) → explizit ausgeben
+                    print("\n" + "-" * 60)
+                    print(response or "[kein Output]")
+                    print("-" * 60)
                 except Exception as e:
                     # Fallback: alter direkter Flow wenn Agent-Loop scheitert
                     print(f"[WARN] Agent-Loop Fehler ({e}) → Fallback auf direkten Flow")
