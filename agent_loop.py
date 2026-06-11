@@ -221,6 +221,7 @@ class AgentLoop:
         self.log = AgentLog()
         self.tools = ToolRegistry()
         self.state = State()
+        self._decider = None  # lazy, einmal erstellt
 
     async def step(self, query: str, correlation_id: Optional[str] = None, max_steps: int = 5) -> str:
         """Ein Agent-Durchlauf: query → Schritte → Antwort.
@@ -314,10 +315,10 @@ class AgentLoop:
         recent_steps = recent_steps or []
         try:
             from agent_inference import ActionDecider
-            decider = ActionDecider(model=self.model_name)
-            # Tools inkl. 'done' (Stop-Signal)
+            if self._decider is None:
+                self._decider = ActionDecider(model=self.model_name)
             available = state.tools_available + ["done"]
-            action, params = decider.decide(
+            action, params = self._decider.decide(
                 query=query,
                 available_tools=available,
                 recent_steps=recent_steps,

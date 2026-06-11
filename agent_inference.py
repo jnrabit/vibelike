@@ -61,12 +61,15 @@ class ModelCoder:
                 model=self.model,
                 prompt=prompt,
                 stream=False,
+                think=False,  # qwen3:8b Extended Thinking ausschalten → response-Feld gefüllt
                 options={
                     "temperature": temperature,
                     "num_predict": max_tokens,
                 }
             )
-            return response.get("response", "").strip() if response else ""
+            # GenerateResponse ist ein Objekt, kein Dict → .response Attribut
+            text = getattr(response, "response", None) or ""
+            return text.strip()
         except Exception as e:
             print(f"[WARN] ModelCoder.generate() fehlgeschlagen: {e}")
             return ""
