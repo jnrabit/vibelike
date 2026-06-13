@@ -22,6 +22,12 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Header, Depends
 from dotenv import load_dotenv, dotenv_values
 
+# Import tier map from privacy_router
+try:
+    from privacy_router import TIER_MAP
+except ImportError:
+    TIER_MAP = {}  # Fallback if privacy_router not available
+
 ROOT = Path(__file__).resolve().parent.parent
 HERE = Path(__file__).resolve().parent
 ENV_FILE = Path.home() / ".vibeweb.env"
