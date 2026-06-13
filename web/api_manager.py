@@ -21,7 +21,6 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Header, Depends, Body
 from pydantic import BaseModel
-from dotenv import load_dotenv, dotenv_values
 
 # Import tier map from privacy_router
 try:
@@ -45,10 +44,6 @@ class ModelsRequest(BaseModel):
 ROOT = Path(__file__).resolve().parent.parent
 HERE = Path(__file__).resolve().parent
 ENV_FILE = Path.home() / ".vibeweb.env"
-
-# Load bestehende .vibeweb.env wenn vorhanden
-if ENV_FILE.exists():
-    load_dotenv(ENV_FILE)
 
 router = APIRouter(prefix="/api", tags=["backends"])
 
@@ -145,10 +140,6 @@ async def set_backend_key(
         lines = [f"{k}={v}" for k, v in existing.items()]
         env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        # Reload dotenv
-        load_dotenv(env_file)
-
-        # Teste ob Backend jetzt verfügbar wird
         return {
             "status": "ok",
             "key_var": key_var,
