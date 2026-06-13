@@ -21,6 +21,7 @@ import time
 import pickle
 import numpy as np
 import requests
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Lade .env-Datei am Anfang (explizit vom Projektverzeichnis)
@@ -1731,7 +1732,7 @@ async def main():
                         from agent_loop import AgentLoop
                         if _agent_loop[0] is None:
                             _agent_loop[0] = AgentLoop(model_name=KNOWLEDGE_ANSWER_MODEL)
-                        response = asyncio.run(_agent_loop[0].step(query))
+                        response = await _agent_loop[0].step(query)
                         print("\n" + "-" * 60)
                         print(response or "[kein Output]")
                         print("-" * 60)
