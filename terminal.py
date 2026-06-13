@@ -1659,90 +1659,25 @@ async def main():
                     synth_coder = ClaudeCoder(model=SYNTH_MODEL)
                 response = run_council(query, sys_full, coder, council_coder, synth_coder)
             else:
-                # Agent-Mode (Normal: immer Agent-Loop statt direktem Retrieval+Generate)
-                # ==== GEMINI-FLASH + MISTRAL INTEGRATION - END ====
+                # Agent-Mode: Single-Agent (qwen2.5-coder:1.5b)
+                # P3 (Multi-Agent) disabled due to model-routing complexity
                 try:
                     import asyncio
                     from agent_loop import AgentLoop
-                    from agent_pool import AgentPool, AgentResult
-                    from privacy_router import PrivacyClassifier, ModelRouter
-                    from consensus import Consensus
 
-                    # P3: Multi-Agent-Pool + Privacy-Routing + Consensus
-                    classifier = PrivacyClassifier()
-                    privacy_level = classifier.classify(query)
-
-                    # Lade ausgewählte Modelle von Web-UI (oder Standard)
-                    models_file = Path.home() / ".vibeweb_models.json"
-                    if models_file.exists():
-                        try:
-                            import json as json_lib
-                            models_data = json_lib.loads(models_file.read_text(encoding="utf-8"))
-                            selected_models = models_data.get("models", ["qwen3", "claude"])
-                        except Exception:
-                            selected_models = ["qwen3", "claude"]
-                    else:
-                        selected_models = ["qwen3", "claude"]
-
-                    router = ModelRouter()
-                    allowed = router.allowed_models(privacy_level, selected_models)
-
-                    print(f"[PRIVACY] {privacy_level.value} → Modelle: {allowed}")
-
-                    # Parallele Ausführung aller Agents
-                    pool = AgentPool(allowed)
-                    responses = await asyncio.gather(
-                        *[pool.agents[m].step(query) for m in allowed],
-                        return_exceptions=True
-                    )
-
-                    # Konvertiere Antworten zu AgentResult-Format
-                    response_dict = {}
-                    for i, model in enumerate(allowed):
-                        resp = responses[i]
-                        if isinstance(resp, Exception):
-                            response_dict[model] = AgentResult(
-                                model=model,
-                                answer="",
-                                error=str(resp)
-                            )
-                        else:
-                            response_dict[model] = AgentResult(
-                                model=model,
-                                answer=resp,
-                                step_count=2,
-                                vault_hits=1
-                            )
-
-                    # Consensus-Bewertung
-                    consensus = Consensus()
-                    result = await consensus.evaluate_and_fill(response_dict, query, pool)
-                    response = result.winner_answer
+                    if _agent_loop[0] is None:
+                        _agent_loop[0] = AgentLoop(model_name=KNOWLEDGE_ANSWER_MODEL)
+                    response = await _agent_loop[0].step(query)
 
                     print("\n" + "-" * 60)
-                    print(f"[KONSENS] {result.winner.upper()} ({result.winner_score:.0%})")
                     print(response or "[kein Output]")
-                    if result.gaps_filled:
-                        print(f"\n[✓ Lücken auto-ergänzt: {result.gaps_filled}]")
                     print("-" * 60)
-
                 except Exception as e:
-                    # Fallback: Single Agent wenn Pool scheitert
-                    print(f"[WARN] Agent-Pool Fehler ({e}) → Fallback auf Single-Agent")
-                    try:
-                        from agent_loop import AgentLoop
-                        if _agent_loop[0] is None:
-                            _agent_loop[0] = AgentLoop(model_name=KNOWLEDGE_ANSWER_MODEL)
-                        response = await _agent_loop[0].step(query)
-                        print("\n" + "-" * 60)
-                        print(response or "[kein Output]")
-                        print("-" * 60)
-                    except Exception as e2:
-                        # Fallback: direkter Flow
-                        print(f"[WARN] Single-Agent auch kaputt ({e2}) → direkter Flow")
-                        print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
-                        response = coder.generate(query, system=sys_full, stream=True)
-                        print("-" * 60)
+                    # Fallback: direkter Flow
+                    print(f"[WARN] Agent-Loop Fehler ({e}) → direkter Flow")
+                    print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
+                    response = coder.generate(query, system=sys_full, stream=True)
+                    print("-" * 60)
 
             # Historie pflegen (<think> raus, gekappt) + Triplet loggen
             clean = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
