@@ -292,8 +292,14 @@ function attachTermTouch(node) {
 }
 
 // ── Models / Backends ───────────────────────────────────────────────────
+function getToken() {
+  const el = document.getElementById('tm-token');
+  if (!el) return null;
+  return (el.value || '').trim();
+}
+
 async function loadBackends() {
-  const token = (document.getElementById('tm-token').value || '').trim();
+  const token = getToken();
   if (!token) { throw new Error('Token fehlt — zuerst im Terminal connecten'); }
   const r = await fetch('/api/backends', {
     headers: { 'Authorization': `Bearer ${token}` }
@@ -303,8 +309,8 @@ async function loadBackends() {
 }
 
 async function setBackendKey(name, key) {
-  const token = (document.getElementById('tm-token').value || '').trim();
-  if (!token) throw new Error('Token fehlt');
+  const token = getToken();
+  if (!token) throw new Error('Token fehlt — im Terminal connecten');
   const r = await fetch(`/api/backends/${name}/key`, {
     method: 'POST',
     headers: {
@@ -321,8 +327,8 @@ async function setBackendKey(name, key) {
 }
 
 async function setPrivacyLevel(level) {
-  const token = (document.getElementById('tm-token').value || '').trim();
-  if (!token) throw new Error('Token fehlt');
+  const token = getToken();
+  if (!token) throw new Error('Token fehlt — im Terminal connecten');
   const r = await fetch('/api/privacy/level', {
     method: 'POST',
     headers: {
@@ -342,6 +348,17 @@ async function viewModels() {
   const c = $('#content'); c.innerHTML = '';
 
   try {
+    // Prüfe ob Terminal-Tab sichtbar ist (und damit Token vorhanden sein könnte)
+    const token = getToken();
+    if (!token) {
+      c.innerHTML = `<div class="empty">
+        <strong>⚠️ Erst im Terminal connecten</strong><br><br>
+        Gehe zum Terminal-Tab und verbinde dich mit einem Bearer-Token.
+        Danach können Sie hier API-Keys verwalten.
+      </div>`;
+      return;
+    }
+
     const backends = await loadBackends();
     const pane = el(`<div class="models-panel">`);
 
