@@ -1659,22 +1659,72 @@ async def main():
                     synth_coder = ClaudeCoder(model=SYNTH_MODEL)
                 response = run_council(query, sys_full, coder, council_coder, synth_coder)
             else:
-                # Agent-Mode: Single-Agent (qwen2.5-coder:1.5b)
-                # P3 (Multi-Agent) disabled due to model-routing complexity
+                # Agent-Mode: P3 Multi-Agent (qwen + haiko parallel)
                 try:
                     import asyncio
                     from agent_loop import AgentLoop
+                    from agent_pool import AgentPool, AgentResult
+                    from privacy_router import PrivacyClassifier, ModelRouter
+                    from consensus import Consensus
 
-                    if _agent_loop[0] is None:
-                        _agent_loop[0] = AgentLoop(model_name=KNOWLEDGE_ANSWER_MODEL)
-                    response = await _agent_loop[0].step(query)
+                    # P3: Multi-Agent-Pool with qwen + claude-haiko
+                    classifier = PrivacyClassifier()
+                    privacy_level = classifier.classify(query)
+
+                    # Fixed 2 models for P3 MVP: qwen + haiko
+                    selected_models = ["qwen", "claude"]
+                    router = ModelRouter()
+                    allowed = router.allowed_models(privacy_level, selected_models)
+
+                    print(f"[PRIVACY] {privacy_level.value} → Modelle: {allowed}")
+
+                    # Map to actual model names
+                    model_mapping = {
+                        "qwen": "qwen2.5-coder:1.5b",
+                        "claude": "claude-haiku-4-5-20251001"
+                    }
+                    actual_models = [model_mapping.get(m, m) for m in allowed]
+
+                    # Parallele Ausführung
+                    pool = AgentPool(actual_models)
+                    responses = await asyncio.gather(
+                        *[pool.agents[m].step(query) for m in actual_models],
+                        return_exceptions=True
+                    )
+
+                    # Konvertiere zu AgentResult
+                    response_dict = {}
+                    for i, model in enumerate(actual_models):
+                        resp = responses[i]
+                        if isinstance(resp, Exception):
+                            response_dict[model] = AgentResult(
+                                model=model,
+                                answer="",
+                                error=str(resp)
+                            )
+                        else:
+                            response_dict[model] = AgentResult(
+                                model=model,
+                                answer=resp,
+                                step_count=2,
+                                vault_hits=1
+                            )
+
+                    # Consensus
+                    consensus = Consensus()
+                    result = await consensus.evaluate_and_fill(response_dict, query, pool)
+                    response = result.winner_answer
 
                     print("\n" + "-" * 60)
+                    print(f"[KONSENS] {result.winner.upper()} ({result.winner_score:.0%})")
                     print(response or "[kein Output]")
+                    if result.gaps_filled:
+                        print(f"\n[✓ Lücken auto-ergänzt: {result.gaps_filled}]")
                     print("-" * 60)
+
                 except Exception as e:
                     # Fallback: direkter Flow
-                    print(f"[WARN] Agent-Loop Fehler ({e}) → direkter Flow")
+                    print(f"[WARN] P3 Multi-Agent Fehler ({e}) → direkter Flow")
                     print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
                     response = coder.generate(query, system=sys_full, stream=True)
                     print("-" * 60)

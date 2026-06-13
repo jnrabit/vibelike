@@ -75,6 +75,47 @@ class ModelCoder:
             return ""
 
 
+class ClaudeCoder:
+    """Wrapper um Claude API (Anthropic)."""
+
+    def __init__(self, model: str = "claude-haiku-4-5-20251001"):
+        self.model = model
+        self.client = None
+        self._init_claude()
+
+    def _init_claude(self):
+        """Initialisiere Claude-Client."""
+        try:
+            from anthropic import Anthropic
+            import os
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+            if api_key:
+                self.client = Anthropic(api_key=api_key)
+                print(f"[OK] ClaudeCoder: Claude API verfügbar (model={self.model})")
+            else:
+                print(f"[WARN] ClaudeCoder: ANTHROPIC_API_KEY nicht gesetzt")
+                self.client = None
+        except Exception as e:
+            print(f"[WARN] ClaudeCoder: Initialisierung fehlgeschlagen: {e}")
+            self.client = None
+
+    def generate(self, prompt: str, temperature: float = 0.3, max_tokens: int = 600) -> str:
+        """Generiere Text via Claude API."""
+        if self.client is None:
+            return ""
+        try:
+            message = self.client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return message.content[0].text.strip()
+        except Exception as e:
+            print(f"[WARN] ClaudeCoder.generate() fehlgeschlagen: {e}")
+            return ""
+
+
 class GeminiModelCoder:
     """Wrapper um Gemini API (cloud fallback)."""
 
@@ -108,6 +149,32 @@ class GeminiModelCoder:
         except Exception as e:
             print(f"[WARN] GeminiModelCoder.generate() fehlgeschlagen: {e}")
             return ""
+
+
+class ModelCoderFactory:
+    """Factory für ModelCoder-Instanzen."""
+
+    _cache = {}
+
+    @classmethod
+    def get(cls, model_name: str):
+        """Hole oder erstelle den richtigen Coder für ein Modell."""
+        if model_name in cls._cache:
+            return cls._cache[model_name]
+
+        coder = None
+        if "qwen" in model_name.lower() or "2.5-coder" in model_name.lower():
+            coder = ModelCoder(model=model_name)
+        elif "claude" in model_name.lower() or "haiku" in model_name.lower():
+            coder = ClaudeCoder(model=model_name)
+        elif "gemini" in model_name.lower():
+            coder = GeminiModelCoder(model=model_name)
+        else:
+            # Default zu Qwen
+            coder = ModelCoder(model=model_name)
+
+        cls._cache[model_name] = coder
+        return coder
 
 
 class ActionDecider:

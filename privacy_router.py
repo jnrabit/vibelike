@@ -31,37 +31,31 @@ class TierInfo:
     throwaway: bool         # Free-Cloud-Tier (Daten können gesammelt werden)?
 
 
-# Metadaten aller Backend-Tiers
+# Metadaten aller Backend-Tiers (nur qwen + claude für P3 MVP)
 TIER_MAP = {
     "qwen3": TierInfo(
-        label="lokal",
+        label="qwen2.5-coder:1.5b (lokal, GPU)",
+        zero_retention=True,
+        free=True,
+        throwaway=False
+    ),
+    "qwen": TierInfo(
+        label="qwen2.5-coder:1.5b (lokal, GPU)",
         zero_retention=True,
         free=True,
         throwaway=False
     ),
     "claude": TierInfo(
-        label="paid+zero-ret",
+        label="claude-haiko (API, zero-ret)",
         zero_retention=True,
         free=False,
         throwaway=False
     ),
-    "gemini": TierInfo(
-        label="paid",
-        zero_retention=False,
+    "haiko": TierInfo(
+        label="claude-haiko (API, zero-ret)",
+        zero_retention=True,
         free=False,
         throwaway=False
-    ),
-    "mistral": TierInfo(
-        label="paid",
-        zero_retention=False,
-        free=False,
-        throwaway=False
-    ),
-    "openrouter": TierInfo(
-        label="free-cloud",
-        zero_retention=False,
-        free=True,
-        throwaway=True
     ),
 }
 

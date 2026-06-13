@@ -307,19 +307,14 @@ class AgentLoop:
     def _synthesize(self, query: str, tool_results: list) -> str:
         """Generiere finale Antwort aus Tool-Ergebnissen (Cloud → Lokal Fallback)."""
         try:
-            from agent_backends import get_registry
-            from agent_inference import ModelCoder, GeminiModelCoder
-            
-            registry = get_registry()
-            gemini_coder = GeminiModelCoder()
-            local_coder = ModelCoder(self.model_name) if self._coder is None else self._coder
-            if self._coder is None:
-                self._coder = local_coder
+            from agent_inference import ModelCoderFactory
 
-            # Try backends in priority order: Cloud → Lokal
-            for coder in [gemini_coder, local_coder]:
-                if coder.client is None:
-                    continue
+            coder = ModelCoderFactory.get(self.model_name)
+            if self._coder is None:
+                self._coder = coder
+
+            # Use the right coder for this model
+            if coder and coder.client:
                 if tool_results:
                     context = "\n\n".join(tool_results)
                     prompt = (f"FRAGE: {query}\n\n"
