@@ -28,13 +28,25 @@ class CachedTool:
 class ToolCache:
     """Verwaltet den Cache für Tools und deren Abhängigkeiten."""
 
-    def __init__(self, cache_dir: Path = Path("/vibelike/tools/.cache")):
+    def __init__(self, cache_dir: Optional[Path] = None):
         """
         Initialisiert den Tool-Cache.
 
         Args:
-            cache_dir: Verzeichnis für den Cache (Default: /vibelike/tools/.cache)
+            cache_dir: Verzeichnis für den Cache (Default: config.TOOLS_CACHE_DIR)
         """
+        if cache_dir is None:
+            try:
+                from config import TOOLS_CACHE_DIR
+                cache_dir = TOOLS_CACHE_DIR
+            except ImportError:
+                try:
+                    from vibelike.config import TOOLS_CACHE_DIR
+                    cache_dir = TOOLS_CACHE_DIR
+                except ImportError:
+                    from pathlib import Path as P
+                    cache_dir = P.cwd() / "cache"
+
         self.cache_dir = Path(cache_dir)
         self.cache_db = self.cache_dir / "index.db"
         self._init_db()

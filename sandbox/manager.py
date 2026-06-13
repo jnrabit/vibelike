@@ -11,11 +11,13 @@ try:
     from tools.registry import ToolRegistry
     from tools.cache import ToolCache
     from tools.models import Tool
+    from config import SANDBOX_BASE, TOOLS_DIR, SANDBOX_USER_UID, SANDBOX_USER_GID
 except ImportError:
     from vibelike.sandbox.models import Sandbox
     from vibelike.tools.registry import ToolRegistry
     from vibelike.tools.cache import ToolCache
     from vibelike.tools.models import Tool
+    from vibelike.config import SANDBOX_BASE, TOOLS_DIR, SANDBOX_USER_UID, SANDBOX_USER_GID
 
 
 class SandboxManager:
@@ -23,22 +25,28 @@ class SandboxManager:
 
     def __init__(
         self,
-        sandbox_base: Path = Path("/sandbox"),
-        tools_dir: Path = Path("/host/tools"),
-        user_uid: int = 10000,
-        user_gid: int = 10000,
+        sandbox_base: Optional[Path] = None,
+        tools_dir: Optional[Path] = None,
+        user_uid: Optional[int] = None,
+        user_gid: Optional[int] = None,
         cache: Optional[ToolCache] = None
     ):
         """
         Initialisiert den Sandbox-Manager.
 
         Args:
-            sandbox_base: Basisverzeichnis für Sandboxen
-            tools_dir: Verzeichnis mit den Tools
-            user_uid: User-ID für Sandbox-Prozesse
-            user_gid: Group-ID für Sandbox-Prozesse
+            sandbox_base: Basisverzeichnis für Sandboxen (default: config.SANDBOX_BASE)
+            tools_dir: Verzeichnis mit den Tools (default: config.TOOLS_DIR)
+            user_uid: User-ID für Sandbox-Prozesse (default: config.SANDBOX_USER_UID)
+            user_gid: Group-ID für Sandbox-Prozesse (default: config.SANDBOX_USER_GID)
             cache: Optional: ToolCache-Instanz
         """
+        # Use config defaults if not provided
+        sandbox_base = sandbox_base or SANDBOX_BASE
+        tools_dir = tools_dir or TOOLS_DIR
+        user_uid = user_uid if user_uid is not None else SANDBOX_USER_UID
+        user_gid = user_gid if user_gid is not None else SANDBOX_USER_GID
+
         self.sandbox_base = Path(sandbox_base)
         self.tools_dir = tools_dir
         self.user_uid = user_uid

@@ -1,6 +1,14 @@
 """Adapter to store terminal interactions as ossifikat triples."""
 
+import sys
+from pathlib import Path
 from typing import Optional
+
+# Add ossifikat to path for local development
+_root = Path(__file__).parent.parent
+if str(_root / "ossifikat") not in sys.path:
+    sys.path.insert(0, str(_root / "ossifikat"))
+
 try:
     from ossifikat.store import OssifikatStore
 except ImportError:
@@ -19,7 +27,7 @@ class TerminalAdapter:
     """Stores terminal queries and responses as knowledge triples."""
 
     def __init__(self, ossifikat_db_path: str = "ossifikat/data/ossifikat.db", logdb_path: str = "logs/execution.db"):
-        self.store = OssifikatStore(ossifikat_db_path)
+        self.store = OssifikatStore(ossifikat_db_path) if OssifikatStore else None
         self.logdb = LogDB(logdb_path) if LogDB else None
 
     def store_query_response(

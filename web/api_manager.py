@@ -181,6 +181,38 @@ async def test_backend(
         raise HTTPException(500, f"Test-Fehler: {e}")
 
 
+@router.get("/models/status")
+async def get_models_status():
+    """Get live status of all models (für Sidebar live updates, no auth needed)."""
+    try:
+        from agent_backends import get_registry
+        from privacy_router import TIER_MAP
+
+        registry = get_registry()
+        result = []
+
+        for backend in registry.list_all():
+            shortname = backend.model_id.split(":")[0] if ":" in backend.model_id else backend.name
+            tier_info = TIER_MAP.get(shortname.lower(), None)
+
+            # Check ob Key gesetzt
+            key_env = f"{shortname.upper()}_API_KEY"
+            key_set = bool(os.environ.get(key_env, "").strip())
+
+            result.append({
+                "name": shortname,
+                "available": backend.available,
+                "status": "✓" if backend.available else "✗",
+                "reason": backend.reason or "ok",
+                "key_set": key_set,
+                "tier": tier_info.label if tier_info else "unknown",
+            })
+
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Status-Fehler: {e}")
+
+
 # ── Privacy Level ──
 
 # Persistiere Privacy-Level im HOME

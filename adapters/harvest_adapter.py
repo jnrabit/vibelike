@@ -1,6 +1,13 @@
 """Adapter to store harvested documents as ossifikat triples."""
 
+import sys
+from pathlib import Path
 from typing import Optional
+
+# Add ossifikat to path for local development
+_root = Path(__file__).parent.parent
+if str(_root / "ossifikat") not in sys.path:
+    sys.path.insert(0, str(_root / "ossifikat"))
 
 try:
     from ossifikat.store import OssifikatStore

@@ -272,11 +272,51 @@ def main():
     parser.add_argument(
         "--limit",
         type=int,
-        default=50,
-        help="Document limit per harvest operation (for --full-mode)"
+        default=200,
+        help="Document limit per harvest operation (for --full-mode, default: Wikipedia=all phases, RFCs=200, PEPs=300, Tools=50)"
+    )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Show queue and vault status, then exit"
     )
 
     args = parser.parse_args()
+
+    # Status mode: show queue and vault status, then exit
+    if args.status:
+        from harvest_scheduler import HarvestScheduler
+        from harvest import CodeVaultWriter
+
+        scheduler = HarvestScheduler(queue_db=args.queue_db)
+        status = scheduler.get_status()
+
+        print("\n" + "=" * 60)
+        print("VIBELIKE STATUS")
+        print("=" * 60)
+
+        print("\n📊 Queue Status:")
+        print(f"  Pending: {status['pending']}")
+        print(f"  Running: {status['running']}")
+        print(f"  Completed: {status['completed']}")
+        print(f"  Failed: {status['failed']}")
+
+        if status['next_request']:
+            print(f"\n⏭️  Next Job:")
+            print(f"  ID: {status['next_request']['req_id'][:12]}...")
+            print(f"  Priority: {status['next_request']['priority']}")
+
+        # Show vault stats
+        try:
+            vault = CodeVaultWriter(device="cpu")
+            print(f"\n📚 Code-Vault:")
+            print(f"  Documents: {len(vault.archive)}")
+            print(f"  Embeddings: {len(vault.cache)}")
+        except Exception as e:
+            print(f"\n⚠️  Could not load vault: {e}")
+
+        print("\n" + "=" * 60)
+        return
 
     # Initialize worker
     worker = HarvesterWorker(

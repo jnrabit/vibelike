@@ -87,6 +87,10 @@ class BackendRegistry:
                 available=gemini_ok,
                 reason=None if gemini_ok else "GEMINI_API_KEY nicht gesetzt"
             )
+            if gemini_ok:
+                self._gemini_client = google.genai.Client(api_key=gemini_key)
+            else:
+                self._gemini_client = None
         except ImportError:
             self.backends["gemini"] = BackendInfo(
                 name="Gemini 2.5 Flash",
@@ -96,6 +100,7 @@ class BackendRegistry:
                 available=False,
                 reason="google-genai-Paket nicht installiert"
             )
+            self._gemini_client = None
 
         # Mistral (Mistral API) — optional
         mistral_key = os.environ.get("MISTRAL_API_KEY", "").strip()
@@ -152,6 +157,29 @@ class BackendRegistry:
     def list_all(self) -> list[BackendInfo]:
         """Alle Backends + Status."""
         return list(self.backends.values())
+
+    def get_gemini_client(self):
+        """Hole Gemini-Client wenn verfügbar."""
+        return getattr(self, "_gemini_client", None)
+
+    def generate_with_gemini(self, prompt: str, temperature: float = 0.3, max_tokens: int = 600) -> str:
+        """Generiere Text via Gemini API."""
+        client = self.get_gemini_client()
+        if not client:
+            return ""
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config={
+                    "temperature": temperature,
+                    "max_output_tokens": max_tokens,
+                }
+            )
+            return (response.text or "").strip()
+        except Exception as e:
+            print(f"[WARN] Gemini generate fehlgeschlagen: {e}")
+            return ""
 
     def status_string(self) -> str:
         """Human-readable Status aller Backends."""

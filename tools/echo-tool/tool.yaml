@@ -1,0 +1,21 @@
+name: echo-tool
+type: utility
+version: 1.0
+binary: echo-tool.sh
+description: Simple echo tool for testing sandbox integration
+working_dir: /workspace
+env:
+  PATH: /usr/local/bin:/usr/bin:/bin
+  OUTPUT_DIR: /workspace/output
+
+triple_templates:
+  - subject: "tool:echo-tool"
+    predicate: "executed_by"
+    object: "request:{req_id}"
+    confidence: 0.9
+    condition: "success"
+  - subject: "request:{req_id}"
+    predicate: "tool_used"
+    object: "echo-tool"
+    confidence: 0.9
+    condition: "success"

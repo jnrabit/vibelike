@@ -305,24 +305,34 @@ class AgentLoop:
         self.log.append(s)
 
     def _synthesize(self, query: str, tool_results: list) -> str:
-        """Generiere finale Antwort aus Tool-Ergebnissen (oder direkt wenn keine Tools)."""
+        """Generiere finale Antwort aus Tool-Ergebnissen (Cloud → Lokal Fallback)."""
         try:
-            from agent_inference import ModelCoder
+            from agent_backends import get_registry
+            from agent_inference import ModelCoder, GeminiModelCoder
+            
+            registry = get_registry()
+            gemini_coder = GeminiModelCoder()
+            local_coder = ModelCoder(self.model_name) if self._coder is None else self._coder
             if self._coder is None:
-                self._coder = ModelCoder(self.model_name)
-            coder = self._coder
-            if not coder.client:
-                return "\n\n".join(tool_results) if tool_results else f"[WARN] keine Antwort für '{query[:60]}'"
-            if tool_results:
-                context = "\n\n".join(tool_results)
-                prompt = (f"FRAGE: {query}\n\n"
-                          f"GEFUNDENE INFORMATIONEN:\n{context}\n\n"
-                          f"Beantworte die Frage auf Basis der gefundenen Informationen. "
-                          f"Antworte auf Deutsch, präzise und direkt.")
-            else:
-                # Kein Tool-Kontext → direkte Antwort (z.B. Begrüßungen, einfache Fragen)
-                prompt = (f"{query}\n\nAntworte auf Deutsch, natürlich und hilfreich.")
-            return coder.generate(prompt, temperature=0.3, max_tokens=600)
+                self._coder = local_coder
+
+            # Try backends in priority order: Cloud → Lokal
+            for coder in [gemini_coder, local_coder]:
+                if coder.client is None:
+                    continue
+                if tool_results:
+                    context = "\n\n".join(tool_results)
+                    prompt = (f"FRAGE: {query}\n\n"
+                              f"GEFUNDENE INFORMATIONEN:\n{context}\n\n"
+                              f"Beantworte die Frage auf Basis der gefundenen Informationen. "
+                              f"Antworte auf Deutsch, präzise und direkt.")
+                else:
+                    prompt = (f"{query}\n\nAntworte auf Deutsch, natürlich und hilfreich.")
+                result = coder.generate(prompt, temperature=0.3, max_tokens=600)
+                if result:
+                    return result
+
+            return "\n\n".join(tool_results) if tool_results else f"[WARN] keine Antwort für '{query[:60]}'"
         except Exception:
             return "\n\n".join(tool_results) if tool_results else ""
 

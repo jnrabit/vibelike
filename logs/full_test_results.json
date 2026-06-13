@@ -1,0 +1,36 @@
+{
+  "test_id": "full-test-20260518-202713",
+  "timestamp": "2026-05-18T20:27:13.546379",
+  "phases": {
+    "data_layer": {
+      "status": "success",
+      "queue_status": {
+        "pending": 9,
+        "running": 0,
+        "completed": 3,
+        "failed": 2
+      }
+    },
+    "execution_layer": {
+      "status": "success",
+      "tool": "echo-tool",
+      "exit_code": 0,
+      "duration_ms": 10.501,
+      "output_files": 1
+    },
+    "knowledge_layer": {
+      "status": "success",
+      "triples_generated": 4,
+      "adapters": {
+        "harvest": "available",
+        "tools": "available"
+      }
+    }
+  },
+  "final_status": {
+    "pending": 8,
+    "running": 1,
+    "completed": 3,
+    "failed": 2
+  }
+}

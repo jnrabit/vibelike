@@ -291,6 +291,86 @@ function attachTermTouch(node) {
   node.addEventListener('touchend', () => { ty = null; }, { capture: true, passive: true });
 }
 
+// ── Models Status (Sidebar Live Updates) ──────────────────────────────
+let modelStatusInterval = null;
+
+async function loadModelStatus() {
+  try {
+    const r = await fetch('/api/models/status');
+    if (!r.ok) throw new Error(`${r.status}`);
+    return r.json();
+  } catch (e) {
+    console.warn('Model status fetch failed:', e);
+    return [];
+  }
+}
+
+function renderModelStatus(models) {
+  const container = document.getElementById('model-status');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  if (!models || models.length === 0) {
+    container.innerHTML = '<div class="model-status-item">Keine Modelle</div>';
+    return;
+  }
+
+  for (const m of models) {
+    const statusIcon = m.status === '✓' ? '✓' : '✗';
+    const statusColor = m.available ? '#6fc041' : '#999';
+    const item = document.createElement('div');
+    item.className = 'model-status-item';
+    item.innerHTML = `
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" class="model-checkbox" data-model="${m.name}"
+               ${m.available ? 'checked' : 'disabled'}>
+        <span style="color:${statusColor}; font-weight:bold;">${statusIcon}</span>
+        <span style="flex:1;">${m.name}</span>
+        <span style="font-size:11px; color:#999;">${m.tier}</span>
+      </label>
+    `;
+    container.appendChild(item);
+
+    // Checkbox-Handler
+    const checkbox = item.querySelector('.model-checkbox');
+    checkbox.addEventListener('change', updateSelectedModels);
+  }
+}
+
+async function updateSelectedModels() {
+  const token = getToken();
+  if (!token) return;
+
+  const selected = Array.from(document.querySelectorAll('.model-checkbox:checked'))
+    .map(cb => cb.dataset.model);
+
+  try {
+    await fetch('/api/models/selected', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ models: selected })
+    });
+  } catch (e) {
+    console.warn('Model selection save failed:', e);
+  }
+}
+
+function startModelStatusUpdates() {
+  if (modelStatusInterval) clearInterval(modelStatusInterval);
+
+  // Load once immediately
+  loadModelStatus().then(renderModelStatus);
+
+  // Update every 5 seconds
+  modelStatusInterval = setInterval(() => {
+    loadModelStatus().then(renderModelStatus);
+  }, 5000);
+}
+
 // ── Models / Backends ───────────────────────────────────────────────────
 function getToken() {
   const el = document.getElementById('tm-token');
@@ -480,3 +560,4 @@ document.querySelectorAll('.navbtn').forEach(b =>
   b.addEventListener('click', () => { state.view = b.dataset.view; state.detailId = null; closeNav(); render(); }));
 $('#refresh').addEventListener('click', render);
 render();
+startModelStatusUpdates();  // Live model status in sidebar

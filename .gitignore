@@ -13,3 +13,4 @@ data/chaos_tokens.db
 logs/web_terminal_audit.jsonl
 # Live-Geräteliste (churnt bei mint/revoke) — Laufzeit-Config
 web/capabilities.toml
+.aider*

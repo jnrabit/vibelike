@@ -115,7 +115,7 @@ class Request:
 
         # Tool-spezifische Triples
         for template in tool.triple_templates:
-            if template.evaluate(exit_code, **context):
+            if template.evaluate(**context):
                 subject, predicate, obj, confidence = template.render(**context)
                 triples.append({
                     "subject": subject,

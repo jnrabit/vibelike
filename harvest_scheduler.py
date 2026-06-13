@@ -68,11 +68,11 @@ class HarvestScheduler:
 
     def schedule_rfc_harvest(
         self,
-        limit: int = 50,
+        limit: int = 200,
         user: str = "scheduler",
         priority: int = 0
     ) -> str:
-        """Schedule an RFC harvest job."""
+        """Schedule an RFC harvest job (Internet Standards)."""
         request = Request(
             tool_name="harvest",
             operation="harvest_rfcs",
@@ -85,11 +85,11 @@ class HarvestScheduler:
 
     def schedule_pep_harvest(
         self,
-        limit: int = 50,
+        limit: int = 300,
         user: str = "scheduler",
         priority: int = 0
     ) -> str:
-        """Schedule a PEP harvest job."""
+        """Schedule a PEP harvest job (Python Enhancement Proposals)."""
         request = Request(
             tool_name="harvest",
             operation="harvest_peps",

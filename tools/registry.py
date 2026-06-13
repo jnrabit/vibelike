@@ -9,9 +9,11 @@ from typing import Optional, Any
 try:
     from tools.models import Tool, TripleTemplate
     from tools.cache import ToolCache
+    from config import TOOLS_DIR
 except ImportError:
     from vibelike.tools.models import Tool, TripleTemplate
     from vibelike.tools.cache import ToolCache
+    from vibelike.config import TOOLS_DIR
 
 
 class ToolRegistry:
@@ -20,7 +22,7 @@ class ToolRegistry:
     def __init__(
         self,
         config_path: str = "/etc/vibelike/tool_adapters.yaml",
-        tools_dir: Path = Path("/host/tools"),
+        tools_dir: Optional[Path] = None,
         cache: Optional[ToolCache] = None
     ):
         """
@@ -28,11 +30,11 @@ class ToolRegistry:
 
         Args:
             config_path: Pfad zur YAML-Konfiguration
-            tools_dir: Verzeichnis mit den Tools
+            tools_dir: Verzeichnis mit den Tools (default: config.TOOLS_DIR)
             cache: Optional: ToolCache-Instanz
         """
         self.config_path = Path(config_path)
-        self.tools_dir = tools_dir
+        self.tools_dir = tools_dir or TOOLS_DIR
         self.cache = cache or ToolCache()
         self._tools: dict[str, Tool] = {}
         self._load_config()

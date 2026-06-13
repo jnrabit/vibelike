@@ -7,6 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+# Add ossifikat to path for local development
+_root = Path(__file__).parent.parent
+if str(_root / "ossifikat") not in sys.path:
+    sys.path.insert(0, str(_root / "ossifikat"))
+
 try:
     from models.request import Request
     from sandbox.manager import SandboxManager
@@ -18,6 +23,10 @@ try:
     from reqqueue.reminders import ReminderManager
     from reqqueue.health import HealthCheck
     from logdb.db import LogDB
+    from config import (
+        QUEUE_DB, LOG_DB, OSSIFIKAT_DB, SANDBOX_BASE, TOOLS_DIR, RESULTS_DIR,
+        HEALTH_CHECK_FILE, HEALTH_CHECK_MAX_AGE
+    )
 except ImportError:
     from vibelike.models.request import Request
     from vibelike.sandbox.manager import SandboxManager
@@ -29,6 +38,10 @@ except ImportError:
     from vibelike.reqqueue.reminders import ReminderManager
     from vibelike.reqqueue.health import HealthCheck
     from vibelike.logdb.db import LogDB
+    from vibelike.config import (
+        QUEUE_DB, LOG_DB, OSSIFIKAT_DB, SANDBOX_BASE, TOOLS_DIR, RESULTS_DIR,
+        HEALTH_CHECK_FILE, HEALTH_CHECK_MAX_AGE
+    )
 
 try:
     from ossifikat.store import OssifikatStore
@@ -50,30 +63,40 @@ class RequestWorker:
 
     def __init__(
         self,
-        queue_db_path: str = "/vibelike/logs/queue.db",
-        log_db_path: str = "/vibelike/logs/execution.db",
-        ossifikat_db_path: str = "/vibelike/ossifikat/data/ossifikat.db",
-        tools_dir: Path = Path("/host/tools"),
-        results_dir: Path = Path("/host/results"),
+        queue_db_path: Optional[str] = None,
+        log_db_path: Optional[str] = None,
+        ossifikat_db_path: Optional[str] = None,
+        sandbox_base: Optional[Path] = None,
+        tools_dir: Optional[Path] = None,
+        results_dir: Optional[Path] = None,
         smtp_config: Optional[dict] = None
     ):
         """
         Initialisiert den Request-Worker.
 
         Args:
-            queue_db_path: Pfad zur Queue-Datenbank
-            log_db_path: Pfad zur Log-Datenbank
-            ossifikat_db_path: Pfad zur ossifikat-Datenbank
-            tools_dir: Verzeichnis mit den Tools
-            results_dir: Verzeichnis für Ergebnisse
+            queue_db_path: Pfad zur Queue-Datenbank (default: config.QUEUE_DB)
+            log_db_path: Pfad zur Log-Datenbank (default: config.LOG_DB)
+            ossifikat_db_path: Pfad zur ossifikat-Datenbank (default: config.OSSIFIKAT_DB)
+            sandbox_base: Basisverzeichnis für Sandboxen (default: config.SANDBOX_BASE)
+            tools_dir: Verzeichnis mit den Tools (default: config.TOOLS_DIR)
+            results_dir: Verzeichnis für Ergebnisse (default: config.RESULTS_DIR)
             smtp_config: SMTP-Konfiguration für E-Mail-Benachrichtigungen
         """
+        # Use config defaults if not provided
+        queue_db_path = queue_db_path or str(QUEUE_DB)
+        log_db_path = log_db_path or str(LOG_DB)
+        ossifikat_db_path = ossifikat_db_path or str(OSSIFIKAT_DB)
+        sandbox_base = sandbox_base or SANDBOX_BASE
+        tools_dir = tools_dir or TOOLS_DIR
+        results_dir = results_dir or RESULTS_DIR
+
         # Initialisiere Komponenten
         self.queue = RequestQueue(queue_db_path)
         self.log_db = LogDB(log_db_path)
         self.ossifikat_store = OssifikatStore(ossifikat_db_path) if OssifikatStore else None  # Feste Connection!
         self.sandbox_manager = SandboxManager(
-            sandbox_base=Path("/sandbox"),
+            sandbox_base=sandbox_base,
             tools_dir=tools_dir,
             cache=ToolCache()
         )
@@ -82,7 +105,7 @@ class RequestWorker:
             db_path=queue_db_path,
             smtp_config=smtp_config
         )
-        self.health_check = HealthCheck(queue_db_path=queue_db_path)
+        self.health_check = HealthCheck(queue_db_path=queue_db_path, health_file=str(HEALTH_CHECK_FILE), max_age_seconds=HEALTH_CHECK_MAX_AGE)
         self.results_dir = results_dir
         self.running = False
 

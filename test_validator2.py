@@ -1,26 +1,23 @@
-import pytest
-from validator2 import ExtendedReport, RegexPatternEngine, SECURITY_PATTERNS
+from validator2 import StaticValidatorV2
+
+
+def _check_line(code: str) -> bool:
+    v = StaticValidatorV2()
+    report = v.validate_code([{"path": "x.py", "content": code}], "")
+    return any(f.check == "security:none_comparison" for f in report.findings)
+
 
 def test_none_comparison_flags():
-    report = ExtendedReport()
-    line = "if x == None:"
-    RegexPatternEngine(SECURITY_PATTERNS).scan_line(line, 1, "test.py", report, disabled=set(), overrides={})
-    assert any(f.check == "none_comparison" for f in report.findings)
+    assert _check_line("if x == None:\n    pass\n")
+
 
 def test_none_comparison_flags_negative():
-    report = ExtendedReport()
-    line = "if x is None:"
-    RegexPatternEngine(SECURITY_PATTERNS).scan_line(line, 1, "test.py", report, disabled=set(), overrides={})
-    assert not any(f.check == "none_comparison" for f in report.findings)
+    assert not _check_line("if x is None:\n    pass\n")
+
 
 def test_not_none_comparison_flags():
-    report = ExtendedReport()
-    line = "if x != None:"
-    RegexPatternEngine(SECURITY_PATTERNS).scan_line(line, 1, "test.py", report, disabled=set(), overrides={})
-    assert any(f.check == "none_comparison" for f in report.findings)
+    assert _check_line("if x != None:\n    pass\n")
+
 
 def test_not_none_comparison_flags_negative():
-    report = ExtendedReport()
-    line = "if x is not None:"
-    RegexPatternEngine(SECURITY_PATTERNS).scan_line(line, 1, "test.py", report, disabled=set(), overrides={})
-    assert not any(f.check == "none_comparison" for f in report.findings)
+    assert not _check_line("if x is not None:\n    pass\n")

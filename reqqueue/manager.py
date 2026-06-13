@@ -10,11 +10,14 @@ from typing import Optional
 
 try:
     from models import Request
+    from config import QUEUE_DB
 except ImportError:
     try:
         from vibelike.models import Request
+        from vibelike.config import QUEUE_DB
     except ImportError:
         Request = None
+        QUEUE_DB = Path("/vibelike/logs/queue.db")
 
 
 @dataclass
@@ -25,20 +28,22 @@ class QueueStatus:
     completed: int = 0
     failed: int = 0
     timeout: int = 0
+    stale: int = 0
     next_request: Optional[dict] = None
 
 
 class RequestQueue:
     """Verwaltet eine SQLite-basierte Request-Queue für sequentielle Ausführung."""
 
-    def __init__(self, db_path: str = "/vibelike/logs/queue.db"):
+    def __init__(self, db_path: Optional[str] = None):
         """
         Initialisiert die Request-Queue.
 
         Args:
-            db_path: Pfad zur SQLite-Datenbank
+            db_path: Pfad zur SQLite-Datenbank (default: config.QUEUE_DB)
         """
-        self.db_path = Path(db_path)
+        self.db_path = Path(db_path) if db_path else QUEUE_DB
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
         self._health_check_path = Path("/tmp/vibelike_queue_health")
         self._update_health_check()

@@ -75,11 +75,58 @@ class ModelCoder:
             return ""
 
 
+class GeminiModelCoder:
+    """Wrapper um Gemini API (cloud fallback)."""
+
+    def __init__(self, model: str = "gemini-2.5-flash"):
+        self.model = model
+        self.client = None
+        self._init_gemini()
+
+    def _init_gemini(self):
+        """Initialisiere Gemini-Client via BackendRegistry."""
+        try:
+            from agent_backends import get_registry
+            registry = get_registry()
+            self.client = registry.get_gemini_client()
+            if self.client:
+                print(f"[OK] GeminiModelCoder: Gemini API verfügbar (model={self.model})")
+            else:
+                print(f"[WARN] GeminiModelCoder: Gemini API nicht verfügbar")
+        except Exception as e:
+            print(f"[WARN] GeminiModelCoder: Initialisierung fehlgeschlagen: {e}")
+            self.client = None
+
+    def generate(self, prompt: str, temperature: float = 0.3, max_tokens: int = 600) -> str:
+        """Generiere Text via Gemini API."""
+        if self.client is None:
+            return ""
+        try:
+            from agent_backends import get_registry
+            registry = get_registry()
+            return registry.generate_with_gemini(prompt, temperature, max_tokens)
+        except Exception as e:
+            print(f"[WARN] GeminiModelCoder.generate() fehlgeschlagen: {e}")
+            return ""
+
+
 class ActionDecider:
-    """Wähle die nächste Action via LLM (qwen3:8b)."""
+    """Wähle die nächste Action via LLM (Cloud → Lokal Fallback)."""
 
     def __init__(self, model: str = "qwen3:8b"):
-        self.coder = ModelCoder(model)
+        self.local_coder = ModelCoder(model)
+        self.gemini_coder = GeminiModelCoder()
+        from agent_backends import get_registry
+        self.registry = get_registry()
+
+    def _get_best_backend_for_actions(self):
+        """Bestimme bestes Backend für Action-Inference (Cloud → Lokal)."""
+        backend = self.registry.get_for_action_inference()
+        if backend.name == "qwen3:8b (Ollama lokal)":
+            return self.local_coder
+        elif "Gemini" in backend.name:
+            return self.gemini_coder
+        return self.local_coder
 
     def decide(
         self,
@@ -87,7 +134,7 @@ class ActionDecider:
         available_tools: list[str],
         recent_steps: list[Dict[str, Any]] = None,
     ) -> Tuple[Optional[str], Dict[str, Any]]:
-        """Entscheide Action + Params via Modell-Inferencing.
+        """Entscheide Action + Params via Modell-Inferencing (mit Fallback-Kette).
 
         Rückgabe: (action_name, params) oder (None, {}) bei Fehler/Heuristik-Fallback.
         """
@@ -96,18 +143,18 @@ class ActionDecider:
         # Prompt bauen
         prompt = self._build_prompt(query, available_tools, recent_steps)
 
-        # Modell-Inferencing
-        output = self.coder.generate(prompt)
-        if not output:
-            return None, {}
+        # Try backends in priority order: Cloud → Lokal
+        for coder in [self.gemini_coder, self.local_coder]:
+            if coder.client is None:
+                continue
+            output = coder.generate(prompt, temperature=0.2, max_tokens=300)
+            if output:
+                action, params = self._parse_output(output, available_tools)
+                if action is not None:
+                    return action, params
 
-        # Parse: extract JSON from output
-        action, params = self._parse_output(output, available_tools)
-        if action is None:
-            # Fallback: Heuristik (wenn Modell Müll liefert)
-            return self._heuristic_action(query, available_tools)
-
-        return action, params
+        # Fallback: Heuristik (wenn alle Modelle Müll liefern)
+        return self._heuristic_action(query, available_tools)
 
     def _build_prompt(
         self,

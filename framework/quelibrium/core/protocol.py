@@ -20,6 +20,11 @@ import hashlib
 from .vault import Vault
 from .paths import CODE_VAULT_FILE, CODE_CACHE_FILE, LIB_FILE as LIB_PATH
 
+try:
+    from .thermal_reader import maybe_override as _maybe_override_thermal
+except ImportError:
+    _maybe_override_thermal = None
+
 # Fallback-State wenn Engine offline
 _SHADOW_STATE = {
     "x1": 0.0, "y1": 0.0, "z1": 0.0, "w1": 0.0,
@@ -134,11 +139,15 @@ class Protocol:
             return _SHADOW_STATE.copy()
         data = (ctypes.c_float * 9)()
         self.lib.get_system_state(self.ctx, data)
+        temperature = float(data[5])
+        # Override mit echtem hwmon-Wert wenn Engine den Fallback (45.0/0.0) liefert
+        if _maybe_override_thermal is not None:
+            temperature = _maybe_override_thermal(temperature)
         return {
             "x1": float(data[0]), "y1": float(data[1]),
             "z1": float(data[2]), "w1": float(data[3]),
             "entropy":      float(data[4]),
-            "temperature":  float(data[5]),
+            "temperature":  temperature,
             "x2": float(data[6]), "y2": float(data[7]),
             "cortex_bias":  float(data[8]),
         }

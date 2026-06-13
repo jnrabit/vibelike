@@ -65,6 +65,16 @@ body {
 .sb__foot { margin-top: auto; font-size: 11px; color: var(--tm-faint); }
 .sb__foot .dot { color: var(--tm-success); }
 
+/* ── Model Status (Sidebar) ── */
+.sb__section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--tm-border); }
+.sb__label { font-size: 11px; color: var(--tm-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+.model-status-list { display: flex; flex-direction: column; gap: 6px; }
+.model-status-item { padding: 7px 8px; border-radius: var(--tm-radius-sm); font-size: 12px; }
+.model-status-item.loading { color: var(--tm-faint); font-style: italic; }
+.model-status-item label { margin: 0; font-weight: 400; }
+.model-status-item input[type="checkbox"] { margin: 0; cursor: pointer; }
+.model-status-item input[type="checkbox"]:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ── Main ── */
 /* Auf breiten Monitoren Inhalt auf eine lesbare Spalte (max 1240px) zentrieren —
    max() hält auf Laptops die normalen 34px, wächst erst auf großen Screens. */
@@ -188,6 +198,13 @@ body {
   padding: 8px 16px; font-size: 13px; font-weight: 600;
 }
 #tm-connect:hover { border-color: var(--tm-accent); }
+.tm-rat {
+  background: var(--tm-surface); color: var(--tm-muted); cursor: pointer;
+  border: 1px solid var(--tm-border-strong); border-radius: var(--tm-radius-sm);
+  padding: 8px 14px; font-size: 13px; font-weight: 600;
+}
+.tm-rat:hover { color: var(--tm-text); border-color: var(--tm-accent); }
+.tm-rat.is-on { background: var(--tm-accent-soft); color: var(--tm-accent); border-color: var(--tm-accent); }
 .tm-status { font-family: var(--tm-font-mono); font-size: 11.5px; color: var(--tm-muted); }
 #term {
   height: 70vh; background: #13130F; border: 1px solid var(--tm-border);
