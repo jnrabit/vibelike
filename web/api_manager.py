@@ -19,7 +19,8 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Header, Depends
+from fastapi import APIRouter, HTTPException, Header, Depends, Body
+from pydantic import BaseModel
 from dotenv import load_dotenv, dotenv_values
 
 # Import tier map from privacy_router
@@ -27,6 +28,19 @@ try:
     from privacy_router import TIER_MAP
 except ImportError:
     TIER_MAP = {}  # Fallback if privacy_router not available
+
+
+# Request models
+class KeyRequest(BaseModel):
+    key: str
+
+
+class PrivacyRequest(BaseModel):
+    level: str
+
+
+class ModelsRequest(BaseModel):
+    models: List[str]
 
 ROOT = Path(__file__).resolve().parent.parent
 HERE = Path(__file__).resolve().parent
@@ -99,12 +113,12 @@ async def list_backends(device: str = Depends(_require_backend_mgmt)):
 @router.post("/backends/{name}/key")
 async def set_backend_key(
     name: str,
-    request: Dict,
+    request: KeyRequest,
     device: str = Depends(_require_backend_mgmt)
 ):
     """Speichere API-Key für Backend in ~/.vibeweb.env"""
     try:
-        key = request.get("key", "").strip()
+        key = request.key.strip()
         if not key:
             raise ValueError("Key darf nicht leer sein")
 
@@ -196,12 +210,12 @@ async def get_privacy_level(device: str = Depends(_require_backend_mgmt)):
 
 @router.post("/privacy/level")
 async def set_privacy_level(
-    request: Dict,
+    request: PrivacyRequest,
     device: str = Depends(_require_backend_mgmt)
 ):
     """Setze Privacy-Level."""
     try:
-        level = request.get("level", "auto").lower()
+        level = request.level.lower()
         if level not in ["auto", "public", "internal", "secret", "substrat"]:
             raise ValueError(f"Ungültiger Privacy-Level: {level}")
 
@@ -232,12 +246,12 @@ async def get_selected_models(device: str = Depends(_require_backend_mgmt)):
 
 @router.post("/models/selected")
 async def set_selected_models(
-    request: Dict,
+    request: ModelsRequest,
     device: str = Depends(_require_backend_mgmt)
 ):
     """Setze ausgewählte Modelle."""
     try:
-        models = request.get("models", [])
+        models = request.models
         if not isinstance(models, list) or not models:
             raise ValueError("models muss eine nicht-leere Liste sein")
 
