@@ -26,6 +26,9 @@
     <div class="navbtn" data-view="terminal">
       <span>Terminal</span><span class="pill" id="nav-tm">⌘</span>
     </div>
+    <div class="navbtn" data-view="models">
+      <span>⚙ Modelle</span><span class="pill" id="nav-mdl">🔧</span>
+    </div>
     <div class="sb__foot">
       <span class="dot">●</span> <span id="health-text">verbinde…</span><br>
       <span style="color:var(--tm-faint)">read-only · Tier 1</span>
@@ -48,6 +51,8 @@
     <div id="content"></div>
     <!-- Terminal lebt in eigenem persistenten Pane: überlebt Tab-Wechsel (Session+Scrollback) -->
     <div id="term-pane" class="hidden"></div>
+    <!-- Modelle-Panel: Backend-Verwaltung -->
+    <div id="models-pane" class="hidden"></div>
   </main>
 
   <script src="/static/vendor/xterm.js"></script>

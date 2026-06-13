@@ -37,6 +37,10 @@ app = FastAPI(title="Vibelike Kommandozentrale", docs_url="/api/docs")
 from terminal_ws import router as terminal_router  # noqa: E402
 app.include_router(terminal_router)
 
+# P3.4: Backend-Management API
+from api_manager import router as api_router  # noqa: E402
+app.include_router(api_router)
+
 from auth import device_for_token, capabilities_for  # noqa: E402
 import ratification  # noqa: E402  (reversible park/archiv-Zustände überm Staging)
 

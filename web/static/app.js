@@ -179,8 +179,17 @@ async function ratifyTriple(id, action, card) {
 }
 
 // ── Terminal (xterm.js + WebSocket /ws/terminal) ────────────────────────
-let term = null, termFit = null, termWs = null, termBuilt = false;
+let term = null, termFit = null, termWs = null, termBuilt = false, ratMode = false;
 const setTmStatus = (s) => { const e = document.getElementById('tm-status'); if (e) e.textContent = s; };
+
+// Rat-Modus-Toggle: hängt '??' vor jede gesendete Zeile → Council (lokal+Frontier+Synthese).
+// Mechanik: beim Einschalten + nach jedem Enter wird '??' an den Prompt geschickt.
+function toggleRat() {
+  ratMode = !ratMode;
+  const btn = document.getElementById('tm-rat');
+  if (btn) { btn.classList.toggle('is-on', ratMode); btn.textContent = ratMode ? '🜂 Rat: AN' : '🜂 Rat'; }
+  if (ratMode && termWs && termWs.readyState === 1) termWs.send(JSON.stringify({ type: 'input', data: '??' }));
+}
 const termVisible = () => term && term.element && term.element.offsetParent !== null;
 const sendResize = () => {
   if (term && termWs && termWs.readyState === 1 && termVisible()) {
@@ -220,7 +229,12 @@ function connectTerminal() {
     const why = e.code === 4401 ? ' (Auth)' : e.code === 4403 ? ' (keine terminal-Capability)' : e.code >= 4400 ? ` (${e.code})` : '';
     setTmStatus('getrennt' + why);
   };
-  term.onData((d) => { if (termWs && termWs.readyState === 1) termWs.send(JSON.stringify({ type: 'input', data: d })); });
+  term.onData((d) => {
+    if (!(termWs && termWs.readyState === 1)) return;
+    termWs.send(JSON.stringify({ type: 'input', data: d }));
+    // Rat-Modus: nach Enter '??' an den nächsten Prompt voranstellen
+    if (ratMode && d.indexOf('\r') !== -1) termWs.send(JSON.stringify({ type: 'input', data: '??' }));
+  });
   window.addEventListener('resize', onWinResize);
 }
 
@@ -233,12 +247,14 @@ function ensureTermPane() {
   pane.appendChild(el(`<div class="tmbar">
     <input id="tm-token" type="password" autocomplete="off" placeholder="Bearer-Token (pair_admin / Pairing)" value="${esc(saved)}">
     <button id="tm-connect">Verbinden</button>
+    <button id="tm-rat" class="tm-rat" title="Rat-Modus: jede Zeile über lokal + Frontier + Synthese (Konsens & Unterschiede)">🜂 Rat</button>
     <span id="tm-status" class="tm-status">getrennt</span>
   </div>`));
   const termDiv = el('<div id="term"></div>');
   pane.appendChild(termDiv);
   attachTermTouch(termDiv);
   document.getElementById('tm-connect').addEventListener('click', connectTerminal);
+  document.getElementById('tm-rat').addEventListener('click', toggleRat);
   termBuilt = true;
   return pane;
 }
@@ -275,6 +291,123 @@ function attachTermTouch(node) {
   node.addEventListener('touchend', () => { ty = null; }, { capture: true, passive: true });
 }
 
+// ── Models / Backends ───────────────────────────────────────────────────
+async function loadBackends() {
+  const token = (document.getElementById('tm-token').value || '').trim();
+  if (!token) { throw new Error('Token fehlt — zuerst im Terminal connecten'); }
+  const r = await fetch('/api/backends', {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+  if (!r.ok) throw new Error(`${r.status} Backends laden`);
+  return r.json();
+}
+
+async function setBackendKey(name, key) {
+  const token = (document.getElementById('tm-token').value || '').trim();
+  if (!token) throw new Error('Token fehlt');
+  const r = await fetch(`/api/backends/${name}/key`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ key })
+  });
+  if (!r.ok) {
+    const err = await r.text();
+    throw new Error(`${r.status}: ${err}`);
+  }
+  return r.json();
+}
+
+async function setPrivacyLevel(level) {
+  const token = (document.getElementById('tm-token').value || '').trim();
+  if (!token) throw new Error('Token fehlt');
+  const r = await fetch('/api/privacy/level', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ level })
+  });
+  if (!r.ok) throw new Error(`${r.status} Privacy-Level setzen`);
+  return r.json();
+}
+
+async function viewModels() {
+  $('#view-title').textContent = '⚙ Modelle';
+  $('#view-sub').textContent = 'Backend-Verwaltung · API-Keys · Privacy-Level';
+  $('#stats').innerHTML = '';
+  const c = $('#content'); c.innerHTML = '';
+
+  try {
+    const backends = await loadBackends();
+    const pane = el(`<div class="models-panel">`);
+
+    // Backends mit Key-Input
+    for (const b of backends) {
+      const statusIcon = b.status === '✓' ? '✓ ' : '✗ ';
+      const card = el(`<div class="backend-card">
+        <div class="backend-header">
+          <span class="status">${statusIcon}</span>
+          <span class="name">${esc(b.name)}</span>
+          <span class="tier">${esc(b.tier)}</span>
+        </div>
+        <div class="backend-control">
+          <input type="password" class="api-key" placeholder="API Key" data-backend="${esc(b.name)}">
+          <button class="btn-save" data-backend="${esc(b.name)}">Speichern</button>
+        </div>
+        <div class="backend-status">${esc(b.reason)}</div>
+      </div>`);
+      pane.appendChild(card);
+
+      const btn = card.querySelector('.btn-save');
+      btn.addEventListener('click', async (e) => {
+        e.target.disabled = true;
+        const inp = card.querySelector('.api-key');
+        try {
+          await setBackendKey(b.name, inp.value);
+          const status = card.querySelector('.backend-status');
+          status.textContent = '✓ Gespeichert';
+          inp.value = '';
+        } catch (err) {
+          const status = card.querySelector('.backend-status');
+          status.textContent = `✗ ${err.message}`;
+        } finally {
+          e.target.disabled = false;
+        }
+      });
+    }
+
+    // Privacy-Level Radio-Buttons
+    const privacyDiv = el(`<div class="privacy-panel">
+      <h3>Privacy-Level</h3>
+      <label><input type="radio" name="privacy" value="auto" checked> Auto</label>
+      <label><input type="radio" name="privacy" value="public"> Public</label>
+      <label><input type="radio" name="privacy" value="internal"> Internal</label>
+      <label><input type="radio" name="privacy" value="secret"> Secret</label>
+      <label><input type="radio" name="privacy" value="substrat"> Substrat-Pass</label>
+    </div>`);
+    pane.appendChild(privacyDiv);
+
+    // Radio-Handler
+    privacyDiv.querySelectorAll('input[name="privacy"]').forEach(r =>
+      r.addEventListener('change', async () => {
+        try {
+          await setPrivacyLevel(r.value);
+        } catch (e) {
+          alert('Fehler: ' + e.message);
+        }
+      })
+    );
+
+    c.appendChild(pane);
+  } catch (e) {
+    c.innerHTML = `<div class="empty">Fehler: ${esc(e.message)}</div>`;
+  }
+}
+
 // ── Router ──────────────────────────────────────────────────────────────
 async function render() {
   document.querySelectorAll('.navbtn').forEach(b => b.classList.toggle('is-active', b.dataset.view === state.view));
@@ -291,8 +424,10 @@ async function render() {
     if (state.view === 'workflows') {
       if (state.detailId) await viewWorkflowDetail(state.detailId);
       else await viewWorkflows();
-    } else {
+    } else if (state.view === 'knowledge') {
       await viewKnowledge();
+    } else if (state.view === 'models') {
+      await viewModels();
     }
   } catch (e) {
     $('#content').innerHTML = `<div class="empty">Fehler: ${esc(e.message)}<br>Läuft das Backend? <code>python3 web/server.py</code></div>`;

@@ -1479,7 +1479,7 @@ def start_workflow():
         traceback.print_exc()
 
 
-def main():
+async def main():
     print_header()
 
     # Initialisierung
@@ -1662,19 +1662,75 @@ def main():
                 try:
                     import asyncio
                     from agent_loop import AgentLoop
-                    if _agent_loop[0] is None:
-                        _agent_loop[0] = AgentLoop(model_name=KNOWLEDGE_ANSWER_MODEL)
-                    response = asyncio.run(_agent_loop[0].step(query))
-                    # Agent gibt String zurück (kein Streaming) → explizit ausgeben
+                    from agent_pool import AgentPool, AgentResult
+                    from privacy_router import PrivacyClassifier, ModelRouter
+                    from consensus import Consensus
+
+                    # P3: Multi-Agent-Pool + Privacy-Routing + Consensus
+                    classifier = PrivacyClassifier()
+                    privacy_level = classifier.classify(query)
+
+                    # Bestimme erlaubte Modelle (Standard: qwen3 + claude)
+                    selected_models = ["qwen3", "claude"]  # TODO: von Web-UI laden
+                    router = ModelRouter()
+                    allowed = router.allowed_models(privacy_level, selected_models)
+
+                    print(f"[PRIVACY] {privacy_level.value} → Modelle: {allowed}")
+
+                    # Parallele Ausführung aller Agents
+                    pool = AgentPool(allowed)
+                    responses = await asyncio.gather(
+                        *[pool.agents[m].step(query) for m in allowed],
+                        return_exceptions=True
+                    )
+
+                    # Konvertiere Antworten zu AgentResult-Format
+                    response_dict = {}
+                    for i, model in enumerate(allowed):
+                        resp = responses[i]
+                        if isinstance(resp, Exception):
+                            response_dict[model] = AgentResult(
+                                model=model,
+                                answer="",
+                                error=str(resp)
+                            )
+                        else:
+                            response_dict[model] = AgentResult(
+                                model=model,
+                                answer=resp,
+                                step_count=2,
+                                vault_hits=1
+                            )
+
+                    # Consensus-Bewertung
+                    consensus = Consensus()
+                    result = await consensus.evaluate_and_fill(response_dict, query, pool)
+                    response = result.winner_answer
+
                     print("\n" + "-" * 60)
+                    print(f"[KONSENS] {result.winner.upper()} ({result.winner_score:.0%})")
                     print(response or "[kein Output]")
+                    if result.gaps_filled:
+                        print(f"\n[✓ Lücken auto-ergänzt: {result.gaps_filled}]")
                     print("-" * 60)
+
                 except Exception as e:
-                    # Fallback: alter direkter Flow wenn Agent-Loop scheitert
-                    print(f"[WARN] Agent-Loop Fehler ({e}) → Fallback auf direkten Flow")
-                    print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
-                    response = coder.generate(query, system=sys_full, stream=True)
-                    print("-" * 60)
+                    # Fallback: Single Agent wenn Pool scheitert
+                    print(f"[WARN] Agent-Pool Fehler ({e}) → Fallback auf Single-Agent")
+                    try:
+                        from agent_loop import AgentLoop
+                        if _agent_loop[0] is None:
+                            _agent_loop[0] = AgentLoop(model_name=KNOWLEDGE_ANSWER_MODEL)
+                        response = asyncio.run(_agent_loop[0].step(query))
+                        print("\n" + "-" * 60)
+                        print(response or "[kein Output]")
+                        print("-" * 60)
+                    except Exception as e2:
+                        # Fallback: direkter Flow
+                        print(f"[WARN] Single-Agent auch kaputt ({e2}) → direkter Flow")
+                        print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
+                        response = coder.generate(query, system=sys_full, stream=True)
+                        print("-" * 60)
 
             # Historie pflegen (<think> raus, gekappt) + Triplet loggen
             clean = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
@@ -1695,4 +1751,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
