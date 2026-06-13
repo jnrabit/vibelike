@@ -1670,8 +1670,18 @@ async def main():
                     classifier = PrivacyClassifier()
                     privacy_level = classifier.classify(query)
 
-                    # Bestimme erlaubte Modelle (Standard: qwen3 + claude)
-                    selected_models = ["qwen3", "claude"]  # TODO: von Web-UI laden
+                    # Lade ausgewählte Modelle von Web-UI (oder Standard)
+                    models_file = Path.home() / ".vibeweb_models.json"
+                    if models_file.exists():
+                        try:
+                            import json as json_lib
+                            models_data = json_lib.loads(models_file.read_text(encoding="utf-8"))
+                            selected_models = models_data.get("models", ["qwen3", "claude"])
+                        except Exception:
+                            selected_models = ["qwen3", "claude"]
+                    else:
+                        selected_models = ["qwen3", "claude"]
+
                     router = ModelRouter()
                     allowed = router.allowed_models(privacy_level, selected_models)
 

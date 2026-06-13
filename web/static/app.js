@@ -362,11 +362,12 @@ async function viewModels() {
     const backends = await loadBackends();
     const pane = el(`<div class="models-panel">`);
 
-    // Backends mit Key-Input
+    // Backends mit Checkbox + Key-Input
     for (const b of backends) {
       const statusIcon = b.status === '✓' ? '✓ ' : '✗ ';
       const card = el(`<div class="backend-card">
         <div class="backend-header">
+          <input type="checkbox" class="model-select" data-backend="${esc(b.name)}" ${b.available ? 'checked' : ''}>
           <span class="status">${statusIcon}</span>
           <span class="name">${esc(b.name)}</span>
           <span class="tier">${esc(b.tier)}</span>
@@ -378,6 +379,25 @@ async function viewModels() {
         <div class="backend-status">${esc(b.reason)}</div>
       </div>`);
       pane.appendChild(card);
+
+      // Checkbox-Handler: speichere Modell-Auswahl
+      const checkbox = card.querySelector('.model-select');
+      checkbox.addEventListener('change', async () => {
+        const selected = Array.from(pane.querySelectorAll('.model-select:checked'))
+          .map(cb => cb.dataset.backend);
+        try {
+          await fetch('/api/models/selected', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${getToken()}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ models: selected })
+          });
+        } catch (e) {
+          alert('Modell-Auswahl speichern fehlgeschlagen: ' + e.message);
+        }
+      });
 
       const btn = card.querySelector('.btn-save');
       btn.addEventListener('click', async (e) => {
