@@ -757,6 +757,162 @@ RFC_NUMBERS = [
     7515, 7516, 7517, 7518, 7519,
 ]
 
+# Phase 9 - NATURE: Naturwissenschaften, Physik, Biologie, Astronomie
+NATURE_SEEDS_DE = [
+    "Physik", "Quantenmechanik", "Relativitätstheorie", "Klassische Mechanik",
+    "Thermodynamik", "Elektrodynamik", "Optik", "Akustik",
+    "Chemie", "Organische Chemie", "Anorganische Chemie", "Biochemie",
+    "Atom", "Molekül", "Periodensystem", "Chemische Bindung", "Reaktion (Chemie)",
+    "Biologie", "Evolutionstheorie", "Ökologie", "Genetik", "Zellbiologie", "Mikrobiologie",
+    "DNA", "Protein", "Enzyme", "Zelle (Biologie)", "Organismus",
+    "Astronomie", "Astrophysik", "Weltall", "Kosmologie", "Urknall",
+    "Planet", "Sonne", "Stern", "Galaxie", "Schwarzes Loch",
+    "Klima", "Klimawandel", "Wetter", "Atmosphäre", "Treibhauseffekt",
+    "Wasser", "Erde (Planet)", "Jahreszeit", "Wasser (Chemie)", "Meereswissenschaften",
+]
+NATURE_SEEDS_EN = [
+    "Physics", "Quantum mechanics", "Special relativity", "General relativity", "Classical mechanics",
+    "Thermodynamics", "Electromagnetism", "Optics", "Acoustics",
+    "Chemistry", "Organic chemistry", "Inorganic chemistry", "Biochemistry",
+    "Atom", "Molecule", "Periodic table", "Chemical bond", "Chemical reaction",
+    "Biology", "Evolution", "Ecology", "Genetics", "Cell biology", "Microbiology",
+    "DNA", "Protein", "Enzyme", "Cell (biology)", "Organism",
+    "Astronomy", "Astrophysics", "Universe", "Cosmology", "Big Bang",
+    "Planet", "Sun", "Star", "Galaxy", "Black hole",
+    "Climate", "Climate change", "Weather", "Atmosphere", "Greenhouse effect",
+    "Water", "Earth (planet)", "Season", "Oceanography", "Meteorology",
+]
+
+# Phase 10 - HISTORY: Weltgeschichte, Kriege, Epochen, Persönlichkeiten
+HISTORY_SEEDS_DE = [
+    "Antike", "Mittelalter", "Neuzeit", "Moderne", "Industrielle Revolution",
+    "Französische Revolution", "Amerikanische Revolution", "Russische Revolution",
+    "Römisches Reich", "Byzantinisches Reich", "Islamisches Kalifat", "Heiliges Römisches Reich",
+    "Deutscher Krieg", "Hundertjähriger Krieg", "Dreißigjähriger Krieg",
+    "Napoleonische Kriege", "Ersten Weltkrieg", "Zweiten Weltkrieg",
+    "Kalter Krieg", "Vietnamkrieg", "Golf-Krieg", "Arabisch-Israelischer Konflikt",
+    "Abraham Lincoln", "Napoleon Bonaparte", "Winston Churchill", "Franklin D. Roosevelt",
+    "Adolf Hitler", "Josef Stalin", "Mahatma Gandhi", "Nelson Mandela",
+    "Karl Marx", "Sigmund Freud", "Albert Einstein", "Charles Darwin",
+    "Feudalismus", "Absolutismus", "Kapitalismus", "Kommunismus", "Nationalismus",
+]
+HISTORY_SEEDS_EN = [
+    "Antiquity", "Middle Ages", "Early Modern", "Modernity", "Industrial Revolution",
+    "French Revolution", "American Revolution", "Russian Revolution",
+    "Roman Empire", "Byzantine Empire", "Islamic Caliphate", "Holy Roman Empire",
+    "German Wars", "Hundred Years War", "Thirty Years War",
+    "Napoleonic Wars", "World War I", "World War II",
+    "Cold War", "Vietnam War", "Gulf War", "Arab-Israeli conflict",
+    "Abraham Lincoln", "Napoleon Bonaparte", "Winston Churchill", "Franklin D. Roosevelt",
+    "Adolf Hitler", "Joseph Stalin", "Mahatma Gandhi", "Nelson Mandela",
+    "Karl Marx", "Sigmund Freud", "Albert Einstein", "Charles Darwin",
+    "Feudalism", "Absolutism", "Capitalism", "Communism", "Nationalism",
+]
+
+# Phase 11 - GEOGRAPHY: Länder, Hauptstädte, Kontinente, Natur
+GEOGRAPHY_SEEDS_DE = [
+    "Europa", "Asien", "Afrika", "Amerika", "Australien", "Antarktis",
+    "Deutschland", "Frankreich", "Vereinigtes Königreich", "Spanien", "Italien",
+    "Russland", "Vereinigte Staaten", "Kanada", "Mexiko", "Brasilien",
+    "China", "Indien", "Japan", "Australien", "Neuseeland",
+    "Afrika", "Ägypten", "Nigeria", "Südafrika", "Äthiopien",
+    "Alpen", "Himalaja", "Anden", "Rocky Mountains", "Atlas (Gebirge)",
+    "Atlantischer Ozean", "Pazifischer Ozean", "Indischer Ozean", "Arktischer Ozean",
+    "Nil", "Amazonas", "Jangtse", "Moskwa", "Donau",
+    "Grönland", "Madagaskar", "Neuguinea", "Borneo", "Sumatra",
+    "Wüste", "Dschungel", "Savanne", "Tundra", "Steppe",
+]
+GEOGRAPHY_SEEDS_EN = [
+    "Europe", "Asia", "Africa", "Americas", "Australia", "Antarctica",
+    "Germany", "France", "United Kingdom", "Spain", "Italy",
+    "Russia", "United States", "Canada", "Mexico", "Brazil",
+    "China", "India", "Japan", "Australia", "New Zealand",
+    "Egypt", "Nigeria", "South Africa", "Ethiopia", "Kenya",
+    "Alps", "Himalayas", "Andes", "Rocky Mountains", "Atlas Mountains",
+    "Atlantic Ocean", "Pacific Ocean", "Indian Ocean", "Arctic Ocean", "Southern Ocean",
+    "Nile", "Amazon", "Yangtze", "Volga", "Danube",
+    "Greenland", "Madagascar", "New Guinea", "Borneo", "Sumatra",
+    "Desert", "Jungle", "Savanna", "Tundra", "Steppe",
+]
+
+# Phase 12 - CULTURE: Kunst, Musik, Literatur, Film
+CULTURE_SEEDS_DE = [
+    "Malerei", "Bildhauerei", "Architektur", "Kunstgeschichte",
+    "Renaissance", "Barock", "Klassizismus", "Romantik", "Impressionismus",
+    "Moderne Kunst", "Abstrakte Kunst", "Surrealismus", "Expressionismus",
+    "Leonardo da Vinci", "Michelangelo", "Rembrandt", "Pablo Picasso", "Vincent van Gogh",
+    "Musik", "Klassische Musik", "Jazz", "Blues", "Rock", "Pop", "Hip-Hop",
+    "Beethoven", "Mozart", "Bach", "Chopin", "Rachmaninoff",
+    "Literatur", "Roman", "Lyrik", "Drama", "Märchen", "Fabel",
+    "Goethe", "Schiller", "Kafka", "Hesse", "Remarque",
+    "Film", "Kino", "Filmgeschichte", "Regisseur", "Szenographie",
+    "Theater", "Oper", "Ballett", "Tanz", "Schauspiel",
+]
+CULTURE_SEEDS_EN = [
+    "Painting", "Sculpture", "Architecture", "Art history",
+    "Renaissance", "Baroque", "Neoclassicism", "Romanticism", "Impressionism",
+    "Modern art", "Abstract art", "Surrealism", "Expressionism",
+    "Leonardo da Vinci", "Michelangelo", "Rembrandt", "Pablo Picasso", "Vincent van Gogh",
+    "Music", "Classical music", "Jazz", "Blues", "Rock", "Pop", "Hip hop",
+    "Beethoven", "Wolfgang Amadeus Mozart", "Johann Sebastian Bach", "Frédéric Chopin",
+    "Literature", "Novel", "Poetry", "Drama", "Fairy tale", "Fable",
+    "William Shakespeare", "Charles Dickens", "Jane Austen", "Mark Twain",
+    "Film", "Cinema", "Film history", "Film director", "Set design",
+    "Theatre", "Opera", "Ballet", "Dance", "Acting",
+]
+
+# Phase 13 - PHILOSOPHY: Philosophen, Ethik, Erkenntnistheorie
+PHILOSOPHY_SEEDS_DE = [
+    "Philosophie", "Antike Philosophie", "Mittelalter Philosophie", "Neuzeit Philosophie",
+    "Metaphysik", "Erkenntnistheorie", "Logik", "Ontologie", "Ästhetik",
+    "Ethik", "Kantische Ethik", "Utilitarismus", "Existentialismus",
+    "Platon", "Aristoteles", "Immanuel Kant", "René Descartes", "Friedrich Nietzsche",
+    "Jean-Paul Sartre", "Michel Foucault", "Jean-Jacques Rousseau", "David Hume",
+    "Religions-Philosophie", "Theologie", "Atheismus", "Theismus", "Agnostizismus",
+    "Buddhismus", "Taoismus", "Konfuzianismus", "Stoizismus",
+    "Freiheit", "Willensfreiheit", "Determinismus", "Kausalität",
+    "Wirklichkeit", "Objektivität", "Relativismus", "Skeptizismus",
+    "Schönheit", "Wahrheit", "Gerechtigkeit", "Tugend",
+]
+PHILOSOPHY_SEEDS_EN = [
+    "Philosophy", "Ancient philosophy", "Medieval philosophy", "Early modern philosophy",
+    "Metaphysics", "Epistemology", "Logic", "Ontology", "Aesthetics",
+    "Ethics", "Kantian ethics", "Utilitarianism", "Existentialism",
+    "Plato", "Aristotle", "Immanuel Kant", "René Descartes", "Friedrich Nietzsche",
+    "Jean-Paul Sartre", "Michel Foucault", "Jean-Jacques Rousseau", "David Hume",
+    "Philosophy of religion", "Theology", "Atheism", "Theism", "Agnosticism",
+    "Buddhism", "Taoism", "Confucianism", "Stoicism",
+    "Freedom", "Free will", "Determinism", "Causality",
+    "Reality", "Objectivity", "Relativism", "Skepticism",
+    "Beauty", "Truth", "Justice", "Virtue",
+]
+
+# Phase 14 - SOCIETY: Politik, Wirtschaft, Psychologie, Soziologie
+SOCIETY_SEEDS_DE = [
+    "Politik", "Demokratie", "Diktatur", "Monarchie", "Oligarchie",
+    "Parlamentarisches System", "Präsidialsystem", "Wahlsystem",
+    "Konstitutionelle Monarchie", "Republik", "Föderalismus", "Unitarismus",
+    "Menschenrechte", "Menschenwürde", "Freiheit", "Gleichheit", "Gerechtigkeit",
+    "Wirtschaft", "Kapitalismus", "Sozialismus", "Marktwirtschaft", "Planwirtschaft",
+    "Geld", "Inflation", "Arbeitslosigkeit", "Armut", "Reichtum",
+    "Banksystem", "Zentralbank", "Börse", "Investition", "Unternehmertum",
+    "Psychologie", "Kognitive Psychologie", "Sozialpsychologie", "Persönlichkeit",
+    "Stress", "Depression", "Angststörung", "Schizophrenie", "Autismus",
+    "Soziologie", "Kultur", "Gesellschaft", "Soziale Klasse", "Geschlecht",
+]
+SOCIETY_SEEDS_EN = [
+    "Politics", "Democracy", "Dictatorship", "Monarchy", "Oligarchy",
+    "Parliamentary system", "Presidential system", "Electoral system",
+    "Constitutional monarchy", "Republic", "Federalism", "Unitarism",
+    "Human rights", "Human dignity", "Liberty", "Equality", "Justice",
+    "Economics", "Capitalism", "Socialism", "Market economy", "Planned economy",
+    "Money", "Inflation", "Unemployment", "Poverty", "Wealth",
+    "Banking", "Central bank", "Stock exchange", "Investment", "Entrepreneurship",
+    "Psychology", "Cognitive psychology", "Social psychology", "Personality",
+    "Stress", "Depression", "Anxiety disorder", "Schizophrenia", "Autism",
+    "Sociology", "Culture", "Society", "Social class", "Gender",
+]
+
 
 # ═════════════════════════════════════════════════════════════════════
 # CodeVaultWriter - schreibt Docs + Embeddings in Code-Vault
@@ -984,6 +1140,190 @@ def harvest_wikipedia_seeds(writer: "CodeVaultWriter", seeds: list, lang: str,
 
 # ═════════════════════════════════════════════════════════════════════
 # RFCCollector
+# ═════════════════════════════════════════════════════════════════════
+# RSS Collector - sammelt aktuelle Nachrichten aus RSS-Feeds
+# ═════════════════════════════════════════════════════════════════════
+
+RSS_FEEDS = [
+    {"id": "spiegel-top",    "url": "https://www.spiegel.de/schlagzeilen/tops/index.rss",   "lang": "de"},
+    {"id": "zeit-news",      "url": "https://newsfeed.zeit.de/news/index",                   "lang": "de"},
+    {"id": "bbc-world",      "url": "http://feeds.bbci.co.uk/news/world/rss.xml",            "lang": "en"},
+    {"id": "guardian-world", "url": "https://www.theguardian.com/world/rss",                 "lang": "en"},
+    {"id": "sciencedaily",   "url": "https://www.sciencedaily.com/rss/all.xml",              "lang": "en"},
+    {"id": "nature-news",    "url": "https://www.nature.com/nature.rss",                     "lang": "en"},
+]
+
+
+def harvest_rss(writer: "CodeVaultWriter", feeds: list = None):
+    """Sammle aktuelle Nachrichten aus RSS-Feeds."""
+    if feeds is None:
+        feeds = RSS_FEEDS
+
+    try:
+        import feedparser
+    except ImportError:
+        print("[WARN] harvest_rss: feedparser not installed. Install with: pip install feedparser")
+        return
+
+    added = 0
+    skipped = 0
+
+    for feed in feeds:
+        feed_id = feed["id"]
+        feed_url = feed["url"]
+        print(f"[RSS] Fetching feed: {feed_id} ({feed_url})")
+
+        try:
+            parsed = feedparser.parse(feed_url)
+            if not parsed.entries:
+                print(f"  → no entries")
+                continue
+
+            for entry in parsed.entries[:20]:  # Limit to 20 entries per feed
+                link = entry.get("link", entry.get("id", ""))
+                title = entry.get("title", "")
+                summary = entry.get("summary", entry.get("description", ""))
+
+                if not link or not title:
+                    continue
+
+                # doc_id: RSS-{feed_id}-{sha8(link)}
+                import hashlib
+                sha8 = hashlib.sha256(link.encode()).hexdigest()[:8]
+                doc_id = f"RSS-{feed_id}-{sha8}"
+
+                if writer.has(doc_id):
+                    skipped += 1
+                    continue
+
+                content = f"{title}\n\n{summary}"
+                doc = {
+                    "id": doc_id,
+                    "title": title,
+                    "content": content,
+                    "source": feed_id,
+                    "url": link,
+                    "type": "news_rss"
+                }
+
+                writer.add(doc)
+                added += 1
+                print(f"  [+] {doc_id}")
+
+            time.sleep(1.0)  # Be friendly to RSS servers
+
+        except Exception as e:
+            print(f"  [ERR] {e}")
+            continue
+
+    writer.flush()
+    print(f"[RSS] Done: +{added} docs, ~{skipped} skipped")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Gutenberg Collector - sammelt klassische Bücher
+# ═════════════════════════════════════════════════════════════════════
+
+GUTENBERG_BOOKS = [
+    # Deutsche Literatur
+    74065,   # Goethe — Faust I
+    2229,    # Nietzsche — Also sprach Zarathustra
+    5229,    # Marx — Das Kapital I
+    28285,   # Einstein — Über die spezielle und allgemeine Relativitätstheorie
+    # Englische Literatur
+    1342,    # Austen — Pride and Prejudice
+    84,      # Shelley — Frankenstein
+    2701,    # Melville — Moby Dick
+    11,      # Carroll — Alice's Adventures in Wonderland
+    1661,    # Doyle — A Study in Scarlet
+    4300,    # Joyce — Ulysses
+    996,     # Cervantes — Don Quixote
+    2650,    # Tolstoy — War and Peace
+    16389,   # Shakespeare — The Complete Works
+    # Philosophie & Sachbücher
+    3825,    # Plato — The Republic
+    4363,    # Aristotle — Metaphysics
+]
+
+
+def harvest_gutenberg(writer: "CodeVaultWriter", book_ids: list = None):
+    """Sammle klassische Bücher von Project Gutenberg."""
+    if book_ids is None:
+        book_ids = GUTENBERG_BOOKS
+
+    added = 0
+    skipped = 0
+
+    for book_id in book_ids:
+        doc_id = f"GUTENBERG-{book_id}"
+
+        if writer.has(doc_id):
+            skipped += 1
+            continue
+
+        # Try main URL first
+        url = f"https://www.gutenberg.org/ebooks/{book_id}.txt.utf-8"
+        print(f"[GUTENBERG] Fetching book {book_id}...")
+
+        try:
+            import urllib.request
+            import urllib.error
+
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "VibelikeGutenbergHarvester/1.0 (github.com/jnrabit/vibelike; jakobnotter89@googlemail.com)"}
+            )
+
+            try:
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    text = response.read().decode("utf-8", errors="ignore")
+            except urllib.error.HTTPError:
+                # Fallback URL
+                url_fallback = f"https://gutenberg.org/cache/epub/{book_id}/pg{book_id}.txt"
+                req = urllib.request.Request(
+                    url_fallback,
+                    headers={"User-Agent": "VibelikeGutenbergHarvester/1.0"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    text = response.read().decode("utf-8", errors="ignore")
+
+            # Extract title heuristically (first ~20 lines)
+            lines = text.split("\n")
+            title = ""
+            for line in lines[:20]:
+                if line.strip() and len(line.strip()) > 10:
+                    title = line.strip()
+                    break
+            if not title:
+                title = f"Project Gutenberg #{book_id}"
+
+            # Take first 8000 chars
+            content = text[:8000]
+
+            doc = {
+                "id": doc_id,
+                "title": title,
+                "content": content,
+                "source": "gutenberg",
+                "book_id": book_id,
+                "type": "book_gutenberg"
+            }
+
+            writer.add(doc)
+            added += 1
+            print(f"  [+] {doc_id}: {title[:60]}...")
+
+            # Sleep to be friendly
+            time.sleep(1.5)
+
+        except Exception as e:
+            print(f"  [ERR] {e}")
+            continue
+
+    writer.flush()
+    print(f"[GUTENBERG] Done: +{added} docs, ~{skipped} skipped")
+
+
 # ═════════════════════════════════════════════════════════════════════
 
 RFC_URL = "https://www.rfc-editor.org/rfc/rfc{n}.txt"
@@ -1288,11 +1628,18 @@ PHASE_MAP = {
     "devops":     (DEVOPS_SEEDS_DE, DEVOPS_SEEDS_EN, "DEVOPS", "WIKI_CS_DEVOPS"),
     "algorithms": (ALGORITHMS_SEEDS_DE, ALGORITHMS_SEEDS_EN, "ALGORITHMS", "WIKI_CS_ALGORITHMS"),
     "tools":      (TOOLS_SEEDS_DE, TOOLS_SEEDS_EN, "TOOLS", "WIKI_CS_TOOLS"),
+    "nature":     (NATURE_SEEDS_DE, NATURE_SEEDS_EN, "NATURE", "WIKI_NATURE"),
+    "history":    (HISTORY_SEEDS_DE, HISTORY_SEEDS_EN, "HISTORY", "WIKI_HISTORY"),
+    "geography":  (GEOGRAPHY_SEEDS_DE, GEOGRAPHY_SEEDS_EN, "GEOGRAPHY", "WIKI_GEOGRAPHY"),
+    "culture":    (CULTURE_SEEDS_DE, CULTURE_SEEDS_EN, "CULTURE", "WIKI_CULTURE"),
+    "philosophy": (PHILOSOPHY_SEEDS_DE, PHILOSOPHY_SEEDS_EN, "PHILOSOPHY", "WIKI_PHILOSOPHY"),
+    "society":    (SOCIETY_SEEDS_DE, SOCIETY_SEEDS_EN, "SOCIETY", "WIKI_SOCIETY"),
 }
 
 ALL_PHASES = ["basics", "languages", "network", "advanced",
-              "databases", "security", "devops", "algorithms", "tools", "rfc", "pep",
-              "selfcode"]
+              "databases", "security", "devops", "algorithms", "tools",
+              "nature", "history", "geography", "culture", "philosophy", "society",
+              "rfc", "pep", "selfcode", "rss", "gutenberg"]
 
 
 def main():
@@ -1321,6 +1668,10 @@ def main():
             total_added += harvest_selfcode(writer)
         elif phase == "tools":
             total_added += harvest_tool_docs(writer)
+        elif phase == "rss":
+            harvest_rss(writer, RSS_FEEDS)
+        elif phase == "gutenberg":
+            harvest_gutenberg(writer, GUTENBERG_BOOKS)
         else:
             seeds_de, seeds_en, sector, source_tag = PHASE_MAP[phase]
             total_added += harvest_wikipedia_seeds(writer, seeds_de, "de", sector, source_tag)
