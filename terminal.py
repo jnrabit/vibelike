@@ -64,8 +64,9 @@ from framework.quelibrium.intelligence.resonance import ResonanceField
 MODEL = os.environ.get("VIBELIKE_QWEN_MODEL", "qwen2.5-coder:latest")
 VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", "qwen2.5-coder:1.5b")
 # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder für Analyse).
-# Empfehlung: qwen3:8b (bestes Reasoning) oder qwen2.5:3b (parallel-fit).
-ANALYSIS_MODEL = os.environ.get("VIBELIKE_ANALYSIS_MODEL", "qwen3:8b")
+# GPU-optimiert: qwen2.5-coder:1.5b (100% GPU fit auf 8GB VRAM, 0.3s warm)
+# Nicht qwen3:8b (7.4GB → CPU/GPU split, 28% CPU, sehr langsam)
+ANALYSIS_MODEL = os.environ.get("VIBELIKE_ANALYSIS_MODEL", "qwen2.5-coder:1.5b")
 # Code-Gen-Backend: "claude" (Frontier-API), "gemini" (Gemini-API),
 # "council" (Lokal + Claude + Gemini parallel → Sonnet-Synthese), oder "ollama" (lokal).
 # Default claude — fällt auf lokal zurück wenn Key/Paket fehlt.
