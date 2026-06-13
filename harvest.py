@@ -48,6 +48,10 @@ warnings.filterwarnings("ignore")
 from framework.quelibrium.core.vault import Vault
 from framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE
 
+# General Knowledge Vault (für Allgemeinwissen)
+GENERAL_KNOWLEDGE_VAULT = os.path.join(os.path.dirname(CODE_VAULT_FILE), "..", "collect", "data", "monolith_archive.monolith")
+GENERAL_KNOWLEDGE_CACHE = os.path.join(os.path.dirname(CODE_VAULT_FILE), "..", "collect", "data", "monolith_embedding_cache.pkl")
+
 
 # ═════════════════════════════════════════════════════════════════════
 # Seed-Listen (4 priorisierte Phasen)
@@ -929,12 +933,14 @@ class CodeVaultWriter:
 
     EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 
-    def __init__(self, device: str = "cuda"):
+    def __init__(self, device: str = "cuda", vault_file: str = None, cache_file: str = None):
         print(f"[code-vault] Loading model: {self.EMBEDDING_MODEL} (device={device})")
         from sentence_transformers import SentenceTransformer
         self.model = SentenceTransformer(self.EMBEDDING_MODEL, device=device)
 
-        self.vault = Vault(CODE_VAULT_FILE)
+        self.vault_file = vault_file or CODE_VAULT_FILE
+        self.cache_file = cache_file or CODE_CACHE_FILE
+        self.vault = Vault(self.vault_file)
         try:
             self.archive = self.vault.load() or []
         except Exception:
@@ -942,9 +948,9 @@ class CodeVaultWriter:
         print(f"[code-vault] Existing docs: {len(self.archive)}")
 
         # Embedding-Cache
-        if os.path.exists(CODE_CACHE_FILE):
+        if os.path.exists(self.cache_file):
             try:
-                with open(CODE_CACHE_FILE, "rb") as f:
+                with open(self.cache_file, "rb") as f:
                     self.cache = pickle.load(f)
             except Exception:
                 self.cache = {}
@@ -991,10 +997,10 @@ class CodeVaultWriter:
 
         # Auf Disk
         self.vault.save(self.archive)
-        tmp = CODE_CACHE_FILE + ".tmp"
+        tmp = self.cache_file + ".tmp"
         with open(tmp, "wb") as f:
             pickle.dump(self.cache, f, protocol=4)
-        os.replace(tmp, CODE_CACHE_FILE)
+        os.replace(tmp, self.cache_file)
         return n
 
 
@@ -1653,13 +1659,36 @@ def main():
                         help="cuda (GPU) oder cpu für embedding")
     args = parser.parse_args()
 
-    writer = CodeVaultWriter(device=args.device)
+    # Try CUDA, fallback to CPU if unavailable (e.g., ROCm vs NVIDIA mismatch)
+    device = args.device
+    try:
+        writer_code = CodeVaultWriter(device=device)
+        writer_general = CodeVaultWriter(device=device,
+                                        vault_file=GENERAL_KNOWLEDGE_VAULT,
+                                        cache_file=GENERAL_KNOWLEDGE_CACHE)
+    except RuntimeError as e:
+        if "NVIDIA driver" in str(e) and device == "cuda":
+            print(f"[WARN] CUDA init failed: {e}")
+            print(f"[INFO] Falling back to CPU...")
+            writer_code = CodeVaultWriter(device="cpu")
+            writer_general = CodeVaultWriter(device="cpu",
+                                            vault_file=GENERAL_KNOWLEDGE_VAULT,
+                                            cache_file=GENERAL_KNOWLEDGE_CACHE)
+        else:
+            raise
+
     total_added = 0
     start = time.time()
 
     phases = ALL_PHASES if args.phase == "all" else [args.phase]
 
+    # Define which phases go to which vault
+    general_knowledge_phases = {"nature", "history", "geography", "culture", "philosophy", "society", "rss", "gutenberg"}
+
     for phase_idx, phase in enumerate(phases):
+        # Choose writer based on phase
+        writer = writer_general if phase in general_knowledge_phases else writer_code
+
         if phase == "rfc":
             total_added += harvest_rfcs(writer, RFC_NUMBERS)
         elif phase == "pep":
