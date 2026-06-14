@@ -1753,7 +1753,8 @@ async def main():
                         if agent_result.error:
                             print(f"  ❌ Error: {agent_result.error}")
                         else:
-                            print(f"  {agent_result.answer[:200]}..." if len(agent_result.answer) > 200 else f"  {agent_result.answer}")
+                            # Vollständiger Output (nicht gekürzt)
+                            print(f"  {agent_result.answer}")
 
                     # Winner-Answer für History
                     response = result.winner_answer
