@@ -178,10 +178,12 @@ class ModelCoderFactory:
 
 
 class ActionDecider:
-    """Wähle die nächste Action via LLM (Cloud → Lokal Fallback)."""
+    """Wähle die nächste Action via LLM — IMMER lokal (qwen), nie Cloud."""
 
     def __init__(self, model: str = "qwen3:8b"):
-        self.local_coder = ModelCoder(model)
+        # ActionDecider nutzt IMMER nur lokal qwen für schnelle Action-Entscheidungen
+        # Cloud-Models (claude, gemini) sind zu langsam für Step-by-Step Loop
+        self.local_coder = ModelCoder(model="qwen2.5-coder:1.5b")  # Force lokal
         from agent_backends import get_registry
         self.registry = get_registry()
 
