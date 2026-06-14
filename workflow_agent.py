@@ -32,99 +32,121 @@ from pathlib import Path
 from datetime import datetime
 
 # Imports
+from agent_loop import AgentLoop
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / "ossifikat"))
 
 
+from task_classifier import TaskClassifier
+from agent_loop import AgentLoop
+
+
 class WorkflowAgent:
-    """6-Phasen Workflow Agent mit Qwen2.5-Coder + paralleler Phase-Validierung."""
+    """Orchestriert einen 6-Phasen-Workflow über den primitiven AgentLoop."""
 
     def __init__(self):
-        # Import QwenCoder + Modell-Konstanten lokal (circular-import-Schutz)
-        from terminal import (QwenCoder, ClaudeCoder, CODEGEN_BACKEND, VIBELIKE_ARCH,
-                              MODEL, VALIDATOR_MODEL, ANALYSIS_MODEL, CodeRetriever)
-        from validator2 import StaticValidatorV2
-        from task_classifier import TaskClassifier
+        # Der WorkflowAgent nutzt den AgentLoop für alle Aktionen.
+        self.loop = AgentLoop()
 
-        # Retriever für Code-Vault-Integration in Planning-Phasen
-        try:
-            self.retriever = CodeRetriever()
-        except Exception:
-            self.retriever = None
-
-        # "Ehrliche Mitte" (VIBELIKE_ARCH=mitte): Claude plant + reviewt, qwen-coder
-        # codet als Worker. Sonst: Default (Claude codet direkt).
-        self.reviewer = None
-        self.arch = VIBELIKE_ARCH
-        mitte = False
-        if VIBELIKE_ARCH == "mitte":
-            reviewer = ClaudeCoder(num_predict=8192)
-            if reviewer.usable:
-                mitte = True
-            else:
-                print("[WARN] Mitte-Modus braucht Claude → nicht usable, Fallback auf default")
-                self.arch = "default"
-
-        # Foreground: Code-Gen. Default Claude-API (semantische Instruktionstreue,
-        # die ~7b lokal nicht liefert); Fallback auf lokales qwen wenn Key/Paket fehlt.
-        # Mit Frontier-Backend wird der 1.5b-Code-Review zu Rauschen → deaktiviert.
-        self.code_review_enabled = True
-        if mitte:
-            # Mitte: qwen-coder = Draft-Worker, Claude = Reviewer + Reasoning
-            self.qwen = QwenCoder(model=MODEL, num_predict=8192, keep_alive="30m")
-            self.reviewer = reviewer
-            self.code_review_enabled = False  # 1.5b reviewt Claude-Plan = Noise
-            print("[🧪 ARCH=mitte: Claude plant+reviewt, qwen-coder codet]")
-        elif CODEGEN_BACKEND == "claude":
-            claude = ClaudeCoder()
-            if claude.usable:
-                self.qwen = claude
-                self.code_review_enabled = False  # weak-reviewt-strong = Noise
-            else:
-                print("[WARN] Claude-Backend nicht verfügbar → Fallback auf lokales qwen2.5-coder")
-                self.qwen = QwenCoder()
-        else:
-            self.qwen = QwenCoder()
-        # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder).
-        # Mitte: Claude (Frontier > 8b, verhindert Drift an der Wurzel).
-        if mitte:
-            self.analyzer_qwen = ClaudeCoder(num_predict=4096)
-        else:
-            self.analyzer_qwen = QwenCoder(
-                model=ANALYSIS_MODEL,
-                num_predict=2048,
-                keep_alive="30m",
-            )
-        # Background: kleines Modell für parallelen LLM-Critic.
-        # num_predict niedrig halten — Critic soll kurz sein, nicht den Input echoen.
-        self.validator_qwen = QwenCoder(
-            model=VALIDATOR_MODEL,
-            num_predict=350,
-            keep_alive="60m",
-        )
-        # Deterministischer Static-Validator (kein LLM, keine Halluzination).
-        self.static_validator = StaticValidatorV2()
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        # TaskClassifier nutzt den Analyzer-Coder vom AgentLoop (Lazy-loaded bei Bedarf)
+        # Verhindert doppelte Model-Initialisierungen
+        self.classifier = TaskClassifier(self.loop.analyzer_coder)
 
         self.root = Path(__file__).parent
         self.workflow_log = self.root / "logs" / "workflows.jsonl"
         self.workflow_log.parent.mkdir(parents=True, exist_ok=True)
-        self.current_workflow = None
-        self._monolith_cache = None  # lazy: MONOLITH.md (immer-geladener Projekt-Anker)
-        self.block_select_enabled = True  # MSA-Glied 1: semantischer Block-Selektor (Fallback: Keyword)
 
-        # Task-Klassifikator (Phase 0) -- nutzt das Reasoning-Modell
-        self.classifier = TaskClassifier(self.analyzer_qwen)
 
-        # Healthpoint: versiegelter Ziel-Anker gegen Phasen-Drift (warn-only).
-        # Pro Workflow neu versiegelt, an Phasengrenzen gegen-geprueft.
-        self.healthpoint = None
-        self.healthpoint_enabled = True
+    async def run_workflow(self, task: str, search_mode: str = "balanced"):
+        """
+        Führt den gesamten 6-Phasen-Workflow als eine Sequenz von primitiven
+        Schritten über den AgentLoop aus.
+        """
+        print("\n" + "="*70)
+        print(f"🚀 Starte Workflow für: {task}")
+        print("="*70)
 
-        # Modell-Setup zeigen
-        print(f"[🧠 Reasoning  : {self.analyzer_qwen.model}]")
-        print(f"[💻 Code-Gen   : {self.qwen.model}]")
-        print(f"[🔍 Critic     : {self.validator_qwen.model}]")
+        # PHASE 1: BRIEFING
+        print("\nPHASE 1: BRIEFING")
+        briefing_result = await self.loop.step(
+            query=f"Erstelle ein Briefing für die Aufgabe '{task}'",
+            # Parameter für das 'generate_briefing' Tool
+            params={"task": task, "search_mode": search_mode}
+        )
+        if "[ERR]" in briefing_result:
+            print(f"❌ Workflow abgebrochen in Phase 1 (Briefing): {briefing_result}")
+            return
+
+        approval = self._ask_approval("Briefing")
+        if approval["action"] != "approve":
+            print("❌ Workflow vom Benutzer abgebrochen.")
+            return
+
+        # PHASE 2: STRATEGIE
+        print("\nPHASE 2: STRATEGIE")
+        strategy_result = await self.loop.step(
+            query="Erstelle eine Strategie basierend auf dem Briefing",
+            params={"briefing": briefing_result}
+        )
+        if "[ERR]" in strategy_result:
+            print(f"❌ Workflow abgebrochen in Phase 2 (Strategie): {strategy_result}")
+            return
+
+        approval = self._ask_approval("Strategie")
+        if approval["action"] != "approve":
+            print("❌ Workflow vom Benutzer abgebrochen.")
+            return
+        
+        # PHASE 3: DETAIL-PLAN
+        print("\nPHASE 3: DETAIL-PLAN")
+        plan_result = await self.loop.step(
+            query="Erstelle einen detaillierten Plan basierend auf der Strategie",
+            params={"strategy": strategy_result}
+        )
+        if "[ERR]" in plan_result:
+            print(f"❌ Workflow abgebrochen in Phase 3 (Detail-Plan): {plan_result}")
+            return
+            
+        approval = self._ask_approval("Detail-Plan")
+        if approval["action"] != "approve":
+            print("❌ Workflow vom Benutzer abgebrochen.")
+            return
+
+        # PHASE 4: EXECUTION
+        print("\nPHASE 4: EXECUTION")
+        code_result = await self.loop.step(
+            query="Generiere Code basierend auf dem Plan",
+            params={"plan": plan_result, "relevant_code": ""} # TODO: relevanten Code übergeben
+        )
+        if "[ERR]" in code_result:
+            print(f"❌ Workflow abgebrochen in Phase 4 (Execution): {code_result}")
+            return
+            
+        print("\n--- Generierter Code ---")
+        print(code_result)
+        # Hier würde normalerweise der Code auf die Festplatte geschrieben (Dry Run)
+        
+        approval = self._ask_approval("Code-Generierung")
+        if approval["action"] != "approve":
+            print("❌ Workflow vom Benutzer abgebrochen.")
+            return
+
+        # PHASE 5: VERIFY
+        print("\nPHASE 5: VERIFY")
+        test_result = await self.loop.step(query="Führe die Verifizierungs-Tests aus")
+        if "[ERR]" in test_result:
+            print(f"❌ Workflow abgebrochen in Phase 5 (Verify): {test_result}")
+            return
+
+        print(f"Testergebnisse: {test_result}")
+        if "passed" not in test_result.lower():
+            print("🔥 Tests fehlgeschlagen. Breche den Workflow ab.")
+            return
+
+        # PHASE 6: COMMIT (Placeholder)
+        print("\nPHASE 6: COMMIT")
+        print("✅ Alle Phasen erfolgreich. Code würde jetzt committet werden.")
+
 
     # =========================================================================
     # PARALLELE VALIDIERUNG (Critic)

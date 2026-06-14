@@ -150,6 +150,23 @@ class AgentLoop:
         self._decider = None  # lazy, einmal erstellt
         self._coder = None   # lazy ModelCoder (kein Socket-Check pro Query)
 
+        # Analyzer-Coder für Reasoning-Tasks (z.B. TaskClassifier)
+        # Lazy-loaded bei erster Verwendung
+        self._analyzer_coder = None
+
+    @property
+    def analyzer_coder(self):
+        """Lazy-loaded Analyzer-Coder (für TaskClassifier + Reasoning)."""
+        if self._analyzer_coder is None:
+            try:
+                from terminal import QwenCoder, ANALYSIS_MODEL
+                self._analyzer_coder = QwenCoder(model=ANALYSIS_MODEL)
+            except Exception as e:
+                print(f"[WARN] analyzer_coder init failed: {e}, falling back to default")
+                from agent_inference import ModelCoder
+                self._analyzer_coder = ModelCoder()
+        return self._analyzer_coder
+
     async def step(self, query: str, correlation_id: Optional[str] = None, max_steps: int = 5) -> str:
         """Ein Agent-Durchlauf: query → Schritte → Antwort.
 
