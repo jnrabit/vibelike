@@ -1,0 +1,48 @@
+"""Gemeinsame Datenmodelle, um zirkuläre Importe zu vermeiden."""
+
+from dataclasses import dataclass, field, asdict
+from typing import Any, Dict, List, Optional
+from pathlib import Path
+import json
+import time
+
+ROOT = Path(__file__).parent
+AGENT_LOG = ROOT / "data" / "agent_log.jsonl"
+
+@dataclass
+class Step:
+    """Eine Iteration des Agent-Loops: was wurde versucht, was passierte."""
+    query: str
+    action: str
+    params: Dict[str, Any]
+    result: str
+    state_before: Dict[str, Any]
+    state_after: Dict[str, Any]
+    timestamp: float = field(default_factory=time.time)
+    correlation_id: Optional[str] = None
+
+    def to_json(self) -> str:
+        d = asdict(self)
+        d["timestamp"] = self.timestamp
+        return json.dumps(d, ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, line: str) -> "Step":
+        d = json.loads(line)
+        return cls(**d)
+
+
+class AgentLog:
+    def __init__(self, log_path: Path = AGENT_LOG):
+        self.log_path = log_path
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def append(self, step: Step) -> None:
+        with open(self.log_path, "a", encoding="utf-8") as f:
+            f.write(step.to_json() + "\n")
+
+    def read_all(self) -> List[Step]:
+        if not self.log_path.exists():
+            return []
+        with open(self.log_path, "r", encoding="utf-8") as f:
+            return [Step.from_json(line) for line in f if line.strip()]

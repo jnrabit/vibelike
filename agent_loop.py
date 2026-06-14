@@ -21,85 +21,11 @@ from typing import Any, Dict, List, Optional, Callable
 from pathlib import Path
 from datetime import datetime
 
+# Import Step + AgentLog from shared_models (избегаем дублирования)
+from shared_models import Step, AgentLog
+
 ROOT = Path(__file__).parent
 AGENT_LOG = ROOT / "data" / "agent_log.jsonl"
-
-
-@dataclass
-class Step:
-    """Eine Iteration des Agent-Loops: was wurde versucht, was passierte."""
-    query: str                    # ursprüngliche Frage oder Kontext
-    action: str                   # "search_vault" | "read_file" | "run_sandboxed" | "verify" | ...
-    params: Dict[str, Any]        # Argumente für die Action
-    result: str                   # Antwort der Action (Text, Länge gekürzt)
-    state_before: Dict[str, Any]  # {model_choice, tools_available, error_context}
-    state_after: Dict[str, Any]
-    timestamp: float = field(default_factory=time.time)
-    correlation_id: Optional[str] = None  # Trace-ID für zusammenhängende Queries
-
-    def to_json(self) -> str:
-        """Serialisiere als JSONL-Zeile."""
-        d = asdict(self)
-        d["timestamp"] = self.timestamp
-        return json.dumps(d, ensure_ascii=False)
-
-    @classmethod
-    def from_json(cls, line: str) -> "Step":
-        """Deserialisiere aus JSONL-Zeile."""
-        d = json.loads(line)
-        return cls(**d)
-
-
-class AgentLog:
-    """Append-only Log der Steps (wie ossifikat für Tripel)."""
-
-    def __init__(self, log_path: Path = AGENT_LOG):
-        self.log_path = log_path
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    def append(self, step: Step) -> None:
-        """Speichere einen Step (append-only)."""
-        with open(self.log_path, "a", encoding="utf-8") as f:
-            f.write(step.to_json() + "\n")
-
-    def read_all(self) -> List[Step]:
-        """Alle Steps lesen (für Kontext/Analysen)."""
-        steps = []
-        if not self.log_path.exists():
-            return steps
-        with open(self.log_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    steps.append(Step.from_json(line))
-                except json.JSONDecodeError:
-                    continue
-        return steps
-
-    def recent(self, n: int = 5) -> List[Step]:
-        """Letzte N Steps (für Modell-Kontext)."""
-        return self.read_all()[-n:]
-
-    def by_correlation(self, cid: str) -> List[Step]:
-        """Alle Steps einer Query-Familie."""
-        return [s for s in self.read_all() if s.correlation_id == cid]
-
-    def stats(self) -> Dict[str, Any]:
-        """Einfache Statistiken."""
-        steps = self.read_all()
-        if not steps:
-            return {"total": 0, "by_action": {}}
-        actions = {}
-        for s in steps:
-            actions[s.action] = actions.get(s.action, 0) + 1
-        return {
-            "total": len(steps),
-            "by_action": actions,
-            "first": steps[0].timestamp,
-            "last": steps[-1].timestamp,
-        }
 
 
 class ToolRegistry:
