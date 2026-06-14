@@ -127,11 +127,11 @@ class MistralCoder:
     def _init_mistral(self):
         """Initialisiere Mistral-Client."""
         try:
-            from mistralai.client import MistralClient
+            from mistralai.client import Mistral
             import os
             api_key = os.environ.get("MISTRAL_API_KEY", "").strip()
             if api_key:
-                self.client = MistralClient(api_key=api_key)
+                self.client = Mistral(api_key=api_key)
                 print(f"[OK] MistralCoder: Mistral API verfügbar (model={self.model})")
             else:
                 print(f"[WARN] MistralCoder: MISTRAL_API_KEY nicht gesetzt")
@@ -146,7 +146,7 @@ class MistralCoder:
             return ""
         try:
             from mistralai.models.chat_message import ChatMessage
-            message = self.client.chat(
+            message = self.client.chat.complete(
                 model=self.model,
                 messages=[ChatMessage(role="user", content=prompt)],
                 temperature=temperature,
