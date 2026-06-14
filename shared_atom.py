@@ -25,50 +25,107 @@ class StackConfig:
 
 # Vordefinierte Stacks — KONSTANTEN
 STACK_CONFIGS: Dict[str, StackConfig] = {
-    # Model-Success-Stacks
+    # Model-Success-Stacks (HYBRID: slow decay 20-30min)
     "model:qwen:success": StackConfig(
         name="model:qwen:success",
         size=5.0,
-        decay_tau=900,  # 15 Minuten decay
+        decay_tau=1200,  # 20 Minuten
         weight=1.0,
         reset_behavior="sticky"
     ),
     "model:claude:success": StackConfig(
         name="model:claude:success",
         size=5.0,
-        decay_tau=900,
+        decay_tau=1200,  # 20 Minuten
         weight=1.0,
         reset_behavior="sticky"
     ),
 
-    # Tool-Success-Stacks
+    # Tool-Success-Stacks (HYBRID: fast decay 5-10min)
     "tool:search_vault:hits": StackConfig(
         name="tool:search_vault:hits",
         size=3.0,
-        decay_tau=600,  # 10 Minuten
+        decay_tau=420,  # 7 Minuten
         weight=0.8,
         reset_behavior="cycle"
     ),
     "tool:query_ossifikat:hits": StackConfig(
         name="tool:query_ossifikat:hits",
         size=3.0,
-        decay_tau=600,
+        decay_tau=420,  # 7 Minuten
         weight=0.8,
         reset_behavior="cycle"
     ),
 
-    # Strategy-Stacks
+    # Query-Complexity (5min decay — schneller Trend)
+    "query:complex:detected": StackConfig(
+        name="query:complex:detected",
+        size=4.0,
+        decay_tau=300,  # 5 Minuten
+        weight=0.7,
+        reset_behavior="cycle"
+    ),
+    "query:simple:detected": StackConfig(
+        name="query:simple:detected",
+        size=3.0,
+        decay_tau=300,  # 5 Minuten
+        weight=0.5,
+        reset_behavior="cycle"
+    ),
+
+    # Tool-Effectiveness (Rate-Tracking)
+    "tool:effectiveness:high": StackConfig(
+        name="tool:effectiveness:high",
+        size=5.0,
+        decay_tau=600,  # 10 Minuten
+        weight=1.0,
+        reset_behavior="sticky"
+    ),
+    "tool:effectiveness:low": StackConfig(
+        name="tool:effectiveness:low",
+        size=2.0,
+        decay_tau=300,  # 5 Minuten
+        weight=0.4,
+        reset_behavior="cycle"
+    ),
+
+    # Fallback-Frequency (wie oft nötig?)
+    "fallback:triggered": StackConfig(
+        name="fallback:triggered",
+        size=3.0,
+        decay_tau=420,  # 7 Minuten
+        weight=0.6,
+        reset_behavior="cycle"
+    ),
+
+    # Result-Quality (Automatische oder User-Feedback)
+    "result:quality:good": StackConfig(
+        name="result:quality:good",
+        size=5.0,
+        decay_tau=900,  # 15 Minuten
+        weight=1.1,
+        reset_behavior="sticky"
+    ),
+    "result:quality:poor": StackConfig(
+        name="result:quality:poor",
+        size=2.0,
+        decay_tau=300,  # 5 Minuten
+        weight=0.5,
+        reset_behavior="cycle"
+    ),
+
+    # Strategy-Stacks (20-30min decay)
     "strategy:parallel:works": StackConfig(
         name="strategy:parallel:works",
         size=4.0,
-        decay_tau=1200,  # 20 Minuten
+        decay_tau=1500,  # 25 Minuten
         weight=1.2,
         reset_behavior="sticky"
     ),
     "strategy:fallback:needed": StackConfig(
         name="strategy:fallback:needed",
         size=2.0,
-        decay_tau=300,  # 5 Minuten (schneller decay)
+        decay_tau=420,  # 7 Minuten
         weight=0.5,
         reset_behavior="cycle"
     ),
@@ -189,6 +246,43 @@ class SharedAtom:
         else:
             for name in self.stacks:
                 self.stacks[name]["hits"] = []
+
+    def track_query_complexity(self, query: str):
+        """Auto-detect Query-Komplexität und update Stacks."""
+        # Einfache Heuristik: Länge, Keywords, Fragen
+        is_complex = (
+            len(query) > 100 or
+            sum(1 for c in query if c in '?!;') > 1 or
+            any(kw in query.lower() for kw in ["warum", "wie", "vergleich", "unterschied", "explain"])
+        )
+        if is_complex:
+            self.push("query:complex:detected")
+        else:
+            self.push("query:simple:detected")
+
+    def track_tool_effectiveness(self, success: bool, tool_name: str = None):
+        """Track ob ein Tool erfolgreich war."""
+        if success:
+            self.push("tool:effectiveness:high")
+            if tool_name:
+                self.push(f"tool:{tool_name}:hits")
+        else:
+            self.push("tool:effectiveness:low")
+
+    def track_result_quality(self, quality: str):
+        """
+        Track Result-Qualität.
+        quality: "good" | "poor" | "neutral"
+        """
+        if quality == "good":
+            self.push("result:quality:good")
+        elif quality == "poor":
+            self.push("result:quality:poor")
+
+    def track_fallback_triggered(self):
+        """Fallback-Strategie wurde nötig."""
+        self.push("fallback:triggered")
+        self.push("strategy:fallback:needed")
 
 
 # Globale Instanz (Pro Session)

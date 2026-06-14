@@ -217,7 +217,7 @@ class AgentLoop:
         """Extrahiere generischen Model-Namen (z.B. 'qwen' aus 'qwen2.5-coder:1.5b')."""
         if "qwen" in model_name.lower():
             return "qwen"
-        elif "claude" in model_name.lower():
+        elif "claude" in model_name.lower() or "haiku" in model_name.lower():
             return "claude"
         elif "gemini" in model_name.lower():
             return "gemini"
@@ -246,6 +246,10 @@ class AgentLoop:
         """
         cid = correlation_id or f"{int(time.time() * 1000)}"
         print(f"\n[AGENT] Starte '{query[:60]}' (cid={cid})")
+
+        # SharedAtom: Track Query-Komplexität
+        atom = get_shared_atom()
+        atom.track_query_complexity(query)
 
         tool_results = []  # alle Tool-Ergebnisse für die Synthese
 
