@@ -257,12 +257,12 @@ MODELS_FILE = Path.home() / ".vibeweb_models.json"
 
 @router.get("/models/selected")
 async def get_selected_models(device: str = Depends(_require_backend_mgmt)):
-    """Hole aktuell ausgewählte Modelle (default: qwen3, claude)."""
+    """Hole aktuell ausgewählte Modelle (default: qwen3, claude, mistral)."""
     try:
         if MODELS_FILE.exists():
             data = json.loads(MODELS_FILE.read_text(encoding="utf-8"))
-            return {"models": data.get("models", ["qwen3", "claude"])}
-        return {"models": ["qwen3", "claude"]}
+            return {"models": data.get("models", ["qwen3", "claude", "mistral"])}
+        return {"models": ["qwen3", "claude", "mistral"]}
     except Exception as e:
         raise HTTPException(500, f"Fehler beim Laden der Modell-Auswahl: {e}")
 
