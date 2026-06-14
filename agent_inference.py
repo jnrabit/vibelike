@@ -182,7 +182,6 @@ class ActionDecider:
 
     def __init__(self, model: str = "qwen3:8b"):
         self.local_coder = ModelCoder(model)
-        self.gemini_coder = GeminiModelCoder()
         from agent_backends import get_registry
         self.registry = get_registry()
 
@@ -210,17 +209,17 @@ class ActionDecider:
         # Prompt bauen
         prompt = self._build_prompt(query, available_tools, recent_steps)
 
-        # Try backends in priority order: Cloud → Lokal
-        for coder in [self.gemini_coder, self.local_coder]:
-            if coder.client is None:
-                continue
-            output = coder.generate(prompt, temperature=0.2, max_tokens=300)
+        # Try only local backend (qwen) for action decision (MVP)
+        if self.local_coder.client is not None:
+            output = self.local_coder.generate(prompt, temperature=0.2, max_tokens=300)
             if output:
                 action, params = self._parse_output(output, available_tools)
                 if action is not None:
+                    # Repair häufige Param-Mismatches bevor Fehler entstehen
+                    params = self._repair_params(action, params)
                     return action, params
 
-        # Fallback: Heuristik (wenn alle Modelle Müll liefern)
+        # Fallback: Heuristik (wenn Modell Müll liefert oder nicht verfügbar)
         return self._heuristic_action(query, available_tools)
 
     def _build_prompt(
@@ -287,6 +286,48 @@ ANTWORTE NUR MIT JSON:"""
             return action, params
         except (json.JSONDecodeError, ValueError):
             return None, {}
+
+    def _repair_params(self, action: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Repariere häufige Param-Mismatches (z.B. 'file' → 'path').
+
+        Dies verhindert TypeError-Fehler beim Tool-Aufruf, wenn das Modell
+        den falschen Parameter-Namen verwendet.
+        """
+        repairs = {
+            "read_file": {
+                "file": "path",
+                "filename": "path",
+                "path_to_file": "path",
+            },
+            "query_ossifikat": {
+                "file": "query",
+                "subject": "query",
+                "topic": "query",
+                "search_term": "query",
+            },
+            "verify": {
+                "file": "statement",
+                "code": "statement",
+                "text": "statement",
+                "input": "statement",
+            },
+            "search_vault": {
+                "term": "query",
+                "search": "query",
+                "subject": "query",
+            },
+        }
+
+        if action not in repairs:
+            return params
+
+        mapping = repairs[action]
+        for wrong_name, correct_name in mapping.items():
+            if wrong_name in params and correct_name not in params:
+                params[correct_name] = params.pop(wrong_name)
+                print(f"[REPAIR] {action}: '{wrong_name}' → '{correct_name}'")
+
+        return params
 
     def _heuristic_action(self, query: str, available_tools: list[str]) -> Tuple[str, Dict[str, Any]]:
         """Fallback-Heuristik wenn Modell-Output Müll ist."""

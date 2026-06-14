@@ -16,6 +16,7 @@ import json
 import os
 import time
 import sys
+import threading
 from dataclasses import dataclass, asdict, field
 from typing import Any, Dict, List, Optional, Callable
 from pathlib import Path
@@ -29,32 +30,82 @@ AGENT_LOG = ROOT / "data" / "agent_log.jsonl"
 
 
 class ToolRegistry:
-    """Verfügbare Tools für den Agent."""
+    """Verfügbare Tools für den Agent — SHARED SINGLETON für P3 Parallel-Agents."""
+
+    _instance = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls):
+        """Thread-safe Singleton getter. Alle AgentLoops teilen sich eine ToolRegistry."""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
+
+    @classmethod
+    def _reset_for_testing(cls):
+        """Test-Helper: Setze Singleton zurück (für Tests)."""
+        with cls._lock:
+            cls._instance = None
 
     def __init__(self):
         self.tools: Dict[str, Callable] = {}
+        self._param_schema: Dict[str, Dict[str, type]] = {}  # Signatur-Validierung
         self._register_builtins()
 
     def _register_builtins(self):
-        """Built-in Tools: Platzhalter, werden später gefüllt."""
-        self.register("search_vault", self._tool_search_vault)
-        self.register("read_file", self._tool_read_file)
-        self.register("run_sandboxed", self._tool_run_sandboxed)
-        self.register("query_ossifikat", self._tool_query_ossifikat)
-        self.register("verify", self._tool_verify)
+        """Built-in Tools mit Signatur-Metadaten für Validierung."""
+        self.register(
+            "search_vault",
+            self._tool_search_vault,
+            params={"query": str, "scope": str}
+        )
+        self.register(
+            "read_file",
+            self._tool_read_file,
+            params={"path": str}
+        )
+        self.register(
+            "run_sandboxed",
+            self._tool_run_sandboxed,
+            params={"command": str, "timeout": int}
+        )
+        self.register(
+            "query_ossifikat",
+            self._tool_query_ossifikat,
+            params={"query": str, "confirmed_only": bool}
+        )
+        self.register(
+            "verify",
+            self._tool_verify,
+            params={"statement": str, "method": str}
+        )
 
-    def register(self, name: str, func: Callable) -> None:
-        """Registriere ein Tool."""
+    def register(self, name: str, func: Callable, params: Dict[str, type] = None) -> None:
+        """Registriere ein Tool mit optionaler Signatur."""
         self.tools[name] = func
+        if params:
+            self._param_schema[name] = params
 
     def available(self) -> List[str]:
         """Liste der verfügbaren Tools."""
         return list(self.tools.keys())
 
     async def execute(self, action: str, params: Dict[str, Any]) -> str:
-        """Führe ein Tool aus."""
+        """Führe ein Tool aus mit Param-Validierung."""
         if action not in self.tools:
             return f"[ERR] Tool '{action}' nicht bekannt. Verfügbar: {self.available()}"
+
+        # Validiere Params gegen bekannte Signatur
+        if action in self._param_schema:
+            schema = self._param_schema[action]
+            for param_name in params:
+                if param_name not in schema:
+                    expected_keys = list(schema.keys())
+                    return f"[ERR] Tool '{action}' erwartet kein param '{param_name}'. Gültig: {expected_keys}"
+
         try:
             result = self.tools[action](**params)
             # Falls async, warten (für jetzt sync)
@@ -62,6 +113,9 @@ class ToolRegistry:
                 import asyncio
                 result = await result
             return str(result)[:500]  # Gekürzt
+        except TypeError as e:
+            # Fange Parameter-Mismatch (z.B. missing required arg)
+            return f"[ERR] Param-Mismatch in '{action}': {e}"
         except Exception as e:
             return f"[ERR] {type(e).__name__}: {e}"
 
@@ -121,7 +175,8 @@ class State:
     def __init__(self):
         self.error_context: Optional[str] = None
         self.model_choice: Optional[str] = None
-        self.tools_available = ToolRegistry().available()
+        # Nutze SHARED Singleton ToolRegistry
+        self.tools_available = ToolRegistry.get_instance().available()
         self.step_count = 0
 
     def to_dict(self) -> Dict[str, Any]:
@@ -140,12 +195,13 @@ class State:
 
 
 class AgentLoop:
-    """Der Kern: Schritt für Schritt, primitiv verwaltet."""
+    """Der Kern: Schritt für Schritt, primitiv verwaltet. Nutzt SHARED ToolRegistry."""
 
     def __init__(self, model_name: str = "qwen3:8b"):
         self.model_name = model_name
         self.log = AgentLog()
-        self.tools = ToolRegistry()
+        # Nutze SHARED Singleton ToolRegistry (für P3 Parallel-Agents)
+        self.tools = ToolRegistry.get_instance()
         self.state = State()
         self._decider = None  # lazy, einmal erstellt
         self._coder = None   # lazy ModelCoder (kein Socket-Check pro Query)

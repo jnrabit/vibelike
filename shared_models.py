@@ -46,3 +46,16 @@ class AgentLog:
             return []
         with open(self.log_path, "r", encoding="utf-8") as f:
             return [Step.from_json(line) for line in f if line.strip()]
+
+    def recent(self, n: int = 10) -> List[Step]:
+        """Letzte N Steps aus dem Log."""
+        all_steps = self.read_all()
+        return all_steps[-n:] if all_steps else []
+
+    def stats(self) -> Dict[str, Any]:
+        """Statistiken über das Log."""
+        all_steps = self.read_all()
+        by_action = {}
+        for s in all_steps:
+            by_action[s.action] = by_action.get(s.action, 0) + 1
+        return {"total": len(all_steps), "by_action": by_action}

@@ -19,6 +19,7 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
 from agent_loop import AgentLoop
+from shared_models import AgentLog
 from agent_backends import get_registry
 
 
