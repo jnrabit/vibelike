@@ -162,26 +162,23 @@ class Consensus:
 
         print(f"[CONSENSUS] Erkannte Lücken: {significant_gaps}")
 
-        # Auto-Fill: Schwächsten Agent mit Hint aufrufen
-        weakest = min(result.scores, key=result.scores.get)
-        if weakest not in pool.agents:
-            return result
-
-        print(f"[AUTO-FILL] Frage {weakest} nochmal mit Hinweis...")
-
-        gap_hint = ", ".join(significant_gaps[weakest][:3])  # Erste 3 Topics
-        gap_query = f"{query}\n[Ergänze bitte: {gap_hint}]"
-
-        try:
-            filled_answer = await pool.agents[weakest].step(gap_query, max_steps=2)
-            responses[weakest].answer = filled_answer
-            responses[weakest].step_count += 2
-
-            # Neuberechnung nach Fill
-            result = self.evaluate(responses, query)
-            result.gaps_filled = gap_hint
-        except Exception as e:
-            print(f"[WARN] Auto-Fill fehlgeschlagen: {e}")
+        # Auto-Fill: DISABLED für jetzt (zu aggressiv, verursacht Fehler bei schwachen Modellen)
+        # Wird aktiviert wenn P3 stabiler läuft
+        # weakest = min(result.scores, key=result.scores.get)
+        # if weakest not in pool.agents:
+        #     return result
+        #
+        # print(f"[AUTO-FILL] Frage {weakest} nochmal mit Hinweis...")
+        # gap_hint = ", ".join(significant_gaps[weakest][:3])
+        # gap_query = f"{query}\n[Ergänze bitte: {gap_hint}]"
+        # try:
+        #     filled_answer = await pool.agents[weakest].step(gap_query, max_steps=2)
+        #     responses[weakest].answer = filled_answer
+        #     responses[weakest].step_count += 2
+        #     result = self.evaluate(responses, query)
+        #     result.gaps_filled = gap_hint
+        # except Exception as e:
+        #     print(f"[WARN] Auto-Fill fehlgeschlagen: {e}")
 
         return result
 
