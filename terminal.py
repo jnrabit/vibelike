@@ -1495,6 +1495,11 @@ def start_workflow():
 
 
 async def main():
+    # UTF-8 Encoding-Fix für Terminal-Input (verhindert UnicodeDecodeError)
+    if sys.stdin.encoding != 'utf-8':
+        import io
+        sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8', errors='replace')
+
     print_header()
 
     # Initialisierung
