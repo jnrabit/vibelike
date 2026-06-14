@@ -1691,7 +1691,7 @@ async def main():
                     privacy_level = classifier.classify(query)
 
                     # P3 Model Selection: SharedAtom + Heuristics + Privacy
-                    candidate_models = ["qwen", "claude"]
+                    candidate_models = ["qwen", "claude", "mistral"]
                     selected_models = decide_p3_models(query, candidate_models, privacy_level.value)
 
                     router = ModelRouter()
@@ -1702,7 +1702,8 @@ async def main():
                     # Map to actual model names
                     model_mapping = {
                         "qwen": "qwen2.5-coder:1.5b",
-                        "claude": "claude-haiku-4-5-20251001"
+                        "claude": "claude-haiku-4-5-20251001",
+                        "mistral": "mistral-small-latest"
                     }
                     actual_models = [model_mapping.get(m, m) for m in allowed]
 
