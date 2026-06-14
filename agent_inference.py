@@ -145,10 +145,10 @@ class MistralCoder:
         if self.client is None:
             return ""
         try:
-            from mistralai.models.chat_message import ChatMessage
+            # Mistral SDK nutzt dict-basierte Messages, nicht ChatMessage Klasse
             message = self.client.chat.complete(
                 model=self.model,
-                messages=[ChatMessage(role="user", content=prompt)],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
