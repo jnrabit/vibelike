@@ -52,13 +52,13 @@ class P3ModelDecision:
 
             scores[model] = score
 
-        # Sortiere und nimm Top-2
+        # Sortiere und nimm alle verfügbaren Models (nicht nur Top-2!)
         ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        selected = [m for m, _ in ranked[:2]]
+        selected = [m for m, _ in ranked]  # Alle nehmen, nicht nur Top-2
 
-        print(f"  → P3 Selected: {selected} (scores: {[f'{s:.1f}' for _, s in ranked[:3]]})")
+        print(f"  → P3 Selected: {selected} (scores: {[f'{s:.1f}' for _, s in ranked]})")
 
-        return selected if selected else self.available_models[:2]
+        return selected if selected else self.available_models
 
     def _query_type_heuristic(self, query: str, model: str) -> float:
         """
