@@ -66,6 +66,7 @@ class P3ModelDecision:
 
         z.B.: Python-Code-Fragen bevorzugen qwen
               Reasoning-Fragen bevorzugen claude
+              Diverse Queries bevorzugen mistral
         """
         q = query.lower()
         score = 0.0
@@ -81,6 +82,10 @@ class P3ModelDecision:
             score += 5.0
         if model == "claude" and any(kw in q for kw in ["philosophy", "ethics", "analyze", "compare"]):
             score += 3.0
+
+        # mistral ist gut für diverse/balanced Fragen
+        if model == "mistral" and any(kw in q for kw in ["was", "wie", "wer", "wo", "wann"]):
+            score += 2.0
 
         return score
 

@@ -116,6 +116,48 @@ class ClaudeCoder:
             return ""
 
 
+class MistralCoder:
+    """Wrapper um Mistral API."""
+
+    def __init__(self, model: str = "mistral-small-latest"):
+        self.model = model
+        self.client = None
+        self._init_mistral()
+
+    def _init_mistral(self):
+        """Initialisiere Mistral-Client."""
+        try:
+            from mistralai.client import MistralClient
+            import os
+            api_key = os.environ.get("MISTRAL_API_KEY", "").strip()
+            if api_key:
+                self.client = MistralClient(api_key=api_key)
+                print(f"[OK] MistralCoder: Mistral API verfügbar (model={self.model})")
+            else:
+                print(f"[WARN] MistralCoder: MISTRAL_API_KEY nicht gesetzt")
+                self.client = None
+        except Exception as e:
+            print(f"[WARN] MistralCoder: Initialisierung fehlgeschlagen: {e}")
+            self.client = None
+
+    def generate(self, prompt: str, temperature: float = 0.3, max_tokens: int = 600) -> str:
+        """Generiere Text via Mistral API."""
+        if self.client is None:
+            return ""
+        try:
+            from mistralai.models.chat_message import ChatMessage
+            message = self.client.chat(
+                model=self.model,
+                messages=[ChatMessage(role="user", content=prompt)],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return message.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"[WARN] MistralCoder.generate() fehlgeschlagen: {e}")
+            return ""
+
+
 class GeminiModelCoder:
     """Wrapper um Gemini API (cloud fallback)."""
 
@@ -167,6 +209,8 @@ class ModelCoderFactory:
             coder = ModelCoder(model=model_name)
         elif "claude" in model_name.lower() or "haiku" in model_name.lower():
             coder = ClaudeCoder(model=model_name)
+        elif "mistral" in model_name.lower():
+            coder = MistralCoder(model=model_name)
         elif "gemini" in model_name.lower():
             coder = GeminiModelCoder(model=model_name)
         else:

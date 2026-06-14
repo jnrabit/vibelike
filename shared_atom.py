@@ -40,6 +40,13 @@ STACK_CONFIGS: Dict[str, StackConfig] = {
         weight=1.0,
         reset_behavior="sticky"
     ),
+    "model:mistral:success": StackConfig(
+        name="model:mistral:success",
+        size=5.0,
+        decay_tau=1200,  # 20 Minuten
+        weight=0.9,
+        reset_behavior="sticky"
+    ),
 
     # Tool-Success-Stacks (HYBRID: fast decay 5-10min)
     "tool:search_vault:hits": StackConfig(

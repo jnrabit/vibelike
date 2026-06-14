@@ -219,6 +219,8 @@ class AgentLoop:
             return "qwen"
         elif "claude" in model_name.lower() or "haiku" in model_name.lower():
             return "claude"
+        elif "mistral" in model_name.lower():
+            return "mistral"
         elif "gemini" in model_name.lower():
             return "gemini"
         else:
