@@ -1,27 +1,23 @@
-from terminal import CodeRetriever, QwenCoder, MODEL
-
 def pre_load_all_models():
     """
-    Lädt alle schweren Modelle einmal beim Serverstart in den Speicher.
-    """
-    print("--- Starting unified pre-loading of all models ---")
-    
-    # 1. Lade Sentence-Transformer und Vaults
-    try:
-        print("[PRE-LOAD] Initializing CodeRetriever (Sentence Transformers)...")
-        CodeRetriever(remote_url=None)
-        print("[PRE-LOAD] CodeRetriever loaded successfully.")
-    except Exception as e:
-        print(f"[ERR] Failed to pre-load CodeRetriever: {e}")
+    Trigger schwere Model-Imports beim Serverstart (damit Ollama warm lädt).
 
-    # 2. Lade Qwen-Modell in Ollama
+    CodeRetriever wird NICHT hier instantiiert — das passiert später in terminal.py:1502
+    Dort wird die erste (und einzige) Instanz erstellt und über den Request-Cycle
+    wiederverwendet. Pre-Load nur die Ollama-Modelle.
+    """
+    print("--- Starting pre-loading of models ---")
+
+    # Ollama Qwen-Modell warmhalten (keep_alive=-1s = unbegrenzt)
     try:
-        print(f"[PRE-LOAD] Pre-loading Ollama model: {MODEL}...")
-        qwen_coder = QwenCoder(model=MODEL)
-        # Sende eine leere Anfrage mit langer Keep-Alive-Zeit (-1s für unbegrenzt)
-        qwen_coder.generate(prompt="", keep_alive="-1s")
-        print(f"[PRE-LOAD] Ollama model {MODEL} loaded.")
+        from terminal import QwenCoder, MODEL
+        print(f"[PRE-LOAD] Warming up Ollama model: {MODEL}...")
+        qwen = QwenCoder(model=MODEL)
+        # Dummy-Call um das Modell zu laden
+        qwen.generate(prompt="warmup", keep_alive="-1s")
+        del qwen  # Explizit freigeben (aber Ollama hält es warm)
+        print(f"[PRE-LOAD] Ollama {MODEL} warmed up.")
     except Exception as e:
-        print(f"[ERR] Failed to pre-load Qwen model: {e}")
-    
-    print("--- Unified pre-loading complete ---")
+        print(f"[WARN] Failed to warm up Qwen: {e}")
+
+    print("--- Pre-loading complete ---")
