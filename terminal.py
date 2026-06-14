@@ -1744,7 +1744,20 @@ async def main():
 
                     print("\n" + "-" * 60)
                     print(f"[KONSENS] {result.winner.upper()} ({result.winner_score:.0%})")
-                    print(response or "[kein Output]")
+
+                    # Alle Model-Outputs anzeigen (nicht nur Winner)
+                    for model_name, agent_result in response_dict.items():
+                        score = result.scores.get(model_name, 0.0)
+                        status = "⭐ WINNER" if model_name == result.winner else f"  {score:.0%}"
+                        print(f"\n[{model_name}] {status}")
+                        if agent_result.error:
+                            print(f"  ❌ Error: {agent_result.error}")
+                        else:
+                            print(f"  {agent_result.answer[:200]}..." if len(agent_result.answer) > 200 else f"  {agent_result.answer}")
+
+                    # Winner-Answer für History
+                    response = result.winner_answer
+
                     if result.gaps_filled:
                         print(f"\n[✓ Lücken auto-ergänzt: {result.gaps_filled}]")
                     print("-" * 60)
