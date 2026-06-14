@@ -1,126 +1,123 @@
-"""Tests for RequestQueue."""
-
-# import pytest
-import sqlite3
+import pytest
 from pathlib import Path
-from datetime import datetime
-
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from reqqueue.manager import RequestQueue, QueueStatus
+from reqqueue.manager import RequestQueue
 from models.request import Request
 
 
-# fixture
-def test_db(tmp_path):
-    """Provide a temporary database for testing."""
-    db_path = tmp_path / "test_queue.db"
-    return str(db_path)
+def test_queue_fixture(queue: RequestQueue):
+    """Fixture loads correctly."""
+    assert queue is not None
+    assert isinstance(queue, RequestQueue)
 
 
-# fixture
-def queue(test_db):
-    """Create a test queue."""
-    return RequestQueue(db_path=test_db)
+def test_enqueue_and_dequeue(queue: RequestQueue):
+    """Test basic enqueue/dequeue workflow."""
+    # Enqueue
+    req = Request(command="echo hello")
+    req_id = queue.enqueue(req)
+    assert req_id is not None
 
-
-def test_queue_initialization(queue):
-    """Test queue initializes properly."""
-    assert queue.db_path.exists()
-
-
-def test_enqueue_dequeue(queue):
-    """Test enqueue and dequeue operations."""
-    request = Request(
-        req_id="test-1",
-        tool_name="echo-tool",
-        args=["hello"],
-        priority=1
-    )
-
-    enqueued_id = queue.enqueue(request)
-    assert enqueued_id == "test-1"
-
-    # Check status
-    status = queue.get_status()
-    assert status.pending >= 1
+    # Status should be pending
+    retrieved = queue.get_request(req_id)
+    assert retrieved is not None
+    assert retrieved.status == "pending"
 
     # Dequeue
     dequeued = queue.dequeue()
     assert dequeued is not None
-    assert dequeued.req_id == "test-1"
-    assert dequeued.tool_name == "echo-tool"
+    assert dequeued.req_id == req_id
+    assert dequeued.status == "running"
 
 
-def test_queue_priority(queue):
-    """Test that higher priority requests are dequeued first."""
-    req_low = Request(req_id="low-priority", tool_name="tool", priority=10)
-    req_high = Request(req_id="high-priority", tool_name="tool", priority=1)
+def test_complete_request(queue: RequestQueue):
+    """Test marking request as complete."""
+    req = Request(command="test")
+    req_id = queue.enqueue(req)
+    queue.dequeue()  # Move to running
 
-    queue.enqueue(req_low)
-    queue.enqueue(req_high)
-
-    # High priority should be dequeued first
-    first = queue.dequeue()
-    assert first.req_id == "high-priority"
-
-
-def test_complete_request(queue):
-    """Test completing a request."""
-    request = Request(req_id="test-complete", tool_name="tool")
-    queue.enqueue(request)
-    dequeued = queue.dequeue()
-
-    queue.complete(dequeued.req_id, exit_code=0)
-
-    # Check status
-    status = queue.get_status()
-    assert status.completed >= 1
+    queue.complete(req_id, exit_code=0)
+    retrieved = queue.get_request(req_id)
+    assert retrieved.status == "done"
+    assert retrieved.exit_code == 0
 
 
-def test_fail_request(queue):
-    """Test failing a request."""
-    request = Request(req_id="test-fail", tool_name="tool")
-    queue.enqueue(request)
-    dequeued = queue.dequeue()
+def test_fail_request(queue: RequestQueue):
+    """Test marking request as failed."""
+    req = Request(command="test")
+    req_id = queue.enqueue(req)
+    queue.dequeue()  # Move to running
 
-    queue.fail(dequeued.req_id, error="Test error", retries=0)
-
-    status = queue.get_status()
-    assert status.failed >= 1
-
-
-def test_retry_logic(queue):
-    """Test retry logic for failed requests."""
-    request = Request(req_id="test-retry", tool_name="tool")
-    queue.enqueue(request)
-
-    dequeued = queue.dequeue()
-    queue.fail(dequeued.req_id, error="Error", retries=2)
-
-    # After delay, should be available again
-    requeued = queue.dequeue()
-    assert requeued is not None
-    assert requeued.req_id == "test-retry"
+    queue.fail(req_id, error_reason="Test error")
+    retrieved = queue.get_request(req_id)
+    assert retrieved.status == "failed"
 
 
-def test_queue_status(queue):
-    """Test queue status reporting."""
-    req1 = Request(req_id="req1", tool_name="tool", priority=1)
-    req2 = Request(req_id="req2", tool_name="tool", priority=2)
+def test_timeout_request(queue: RequestQueue):
+    """Test marking request as timeout."""
+    req = Request(command="test")
+    req_id = queue.enqueue(req)
+    queue.dequeue()  # Move to running
 
-    queue.enqueue(req1)
-    queue.enqueue(req2)
+    queue.timeout(req_id)
+    retrieved = queue.get_request(req_id)
+    assert retrieved.status == "timeout"
+
+
+def test_get_status(queue: RequestQueue):
+    """Test getting queue status."""
+    # Enqueue a few requests
+    for i in range(3):
+        req = Request(command=f"test{i}")
+        queue.enqueue(req)
 
     status = queue.get_status()
-    assert isinstance(status, QueueStatus)
-    assert status.pending >= 2
-    assert status.running == 1  # After first dequeue
-    assert status.completed == 0
+    assert status.pending >= 3
+    assert status.total >= 3
 
-    dequeued = queue.dequeue()
-    queue.complete(dequeued.req_id, exit_code=0)
 
-    status = queue.get_status()
-    assert status.completed >= 1
+def test_list_requests(queue: RequestQueue):
+    """Test listing requests with filters."""
+    # Add requests
+    req1 = Request(command="test1")
+    req2 = Request(command="test2")
+    id1 = queue.enqueue(req1)
+    id2 = queue.enqueue(req2)
+    queue.dequeue()  # Move id1 to running
+
+    # List pending
+    pending = queue.list_requests(status_filter="pending")
+    assert any(r.req_id == id2 for r in pending)
+
+    # List running
+    running = queue.list_requests(status_filter="running")
+    assert any(r.req_id == id1 for r in running)
+
+
+def test_requeue_failed(queue: RequestQueue):
+    """Test requeuing failed requests."""
+    req = Request(command="test")
+    req_id = queue.enqueue(req)
+    queue.dequeue()  # Move to running
+    queue.fail(req_id, error_reason="Retry test")
+
+    requeued_count = queue.requeue_failed()
+    assert requeued_count >= 1
+
+    retrieved = queue.get_request(req_id)
+    assert retrieved.status == "pending"
+
+
+def test_requeue_stale(queue: RequestQueue):
+    """Test requeuing stale requests."""
+    req = Request(command="test")
+    req_id = queue.enqueue(req)
+    queue.dequeue()  # Move to running
+
+    # With stale_after_minutes=0, should be marked as stale immediately
+    stale_count = queue.requeue_stale(stale_after_minutes=0)
+    assert stale_count >= 1
+
+    retrieved = queue.get_request(req_id)
+    assert retrieved.status == "pending"
