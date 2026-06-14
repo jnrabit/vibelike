@@ -25,6 +25,9 @@ from datetime import datetime
 # Import Step + AgentLog from shared_models (избегаем дублирования)
 from shared_models import Step, AgentLog
 
+# Import SharedAtom für Accumulator-Signale
+from shared_atom import get_shared_atom
+
 ROOT = Path(__file__).parent
 AGENT_LOG = ROOT / "data" / "agent_log.jsonl"
 
@@ -210,6 +213,17 @@ class AgentLoop:
         # Lazy-loaded bei erster Verwendung
         self._analyzer_coder = None
 
+    def _extract_model_base(self, model_name: str) -> str:
+        """Extrahiere generischen Model-Namen (z.B. 'qwen' aus 'qwen2.5-coder:1.5b')."""
+        if "qwen" in model_name.lower():
+            return "qwen"
+        elif "claude" in model_name.lower():
+            return "claude"
+        elif "gemini" in model_name.lower():
+            return "gemini"
+        else:
+            return model_name.split(":")[0].split("-")[0].lower()
+
     @property
     def analyzer_coder(self):
         """Lazy-loaded Analyzer-Coder (für TaskClassifier + Reasoning)."""
@@ -279,6 +293,16 @@ class AgentLoop:
 
             success = not result.startswith("[ERR]") and "[STUB]" not in result
             self.state.observe(result, success)
+
+            # SharedAtom: Treffer bei erfolgreichem Tool-Aufruf
+            if success:
+                atom = get_shared_atom()
+                # Model-Success pushen (generalisiert: qwen, claude, etc.)
+                model_base = self._extract_model_base(self.model_name)
+                atom.push(f"model:{model_base}:success")
+                # Tool-Spezifischer Hit
+                if action_name in ("search_vault", "query_ossifikat"):
+                    atom.push(f"tool:{action_name}:hits")
 
             if success:
                 tool_results.append(f"[{action_name}] {result[:300]}")

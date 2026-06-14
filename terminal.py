@@ -48,6 +48,7 @@ except ImportError:
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
+from task_classifier import TaskClassifier, confirm_classification
 from framework.quelibrium.core.protocol import Protocol
 from framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE
 from framework.quelibrium.intelligence.retrieval import ChaosRetrieval, RiemannianWarp, ThompsonSampler
@@ -106,7 +107,7 @@ DUAL_VAULT = os.environ.get("VIBELIKE_DUAL_VAULT", "1") != "0"
 QUERY_DECOMPOSE = os.environ.get("VIBELIKE_QUERY_DECOMPOSE", "1") != "0"
 # REPL-Antwortmodell für Q&A über die Vaults: GENERALIST (qwen3:8b), nicht der Coder —
 # sonst weist das Modell Nicht-Code-Fragen ab ("ich kann nur Code").
-KNOWLEDGE_ANSWER_MODEL = os.environ.get("VIBELIKE_KNOWLEDGE_ANSWER_MODEL", ANALYSIS_MODEL)
+KNOWLEDGE_ANSWER_MODEL = os.environ.get("VIBELIKE_KNOWLEDGE_ANSWER_MODEL", MODEL)
 # Kanonische ossifikat-DB — EINE Quelle (Dashboard/Web lesen dieselbe). Confirmte Fakten
 # von hier erden Antworten (Grounding-Schleife). =0/leer schaltet Fakten-Grounding aus.
 OSSIFIKAT_DB = os.environ.get("VIBELIKE_OSSIFIKAT_DB", os.path.join(ROOT, "data", "ossifikat.db"))
@@ -303,7 +304,7 @@ class CodeRetriever:
         except Exception:
             return False
     
-    def search(self, query: str, k: int = 10, source_boost: dict = None) -> tuple:
+    def search(self, query: str, k: int = 10, source_boost: dict = None, mode: str = "balanced") -> tuple:
         """Such im Code-Vault via ChaosRetrieval. Rückgabe: (Dokumente, State vor/nach).
 
         ChaosRetrieval ist der primäre und einzige semantisch korrekte Pfad.
@@ -317,11 +318,23 @@ class CodeRetriever:
         damit z.B. {"PROJEKT_SELFCODE": 0.6} eigenen Code vor generische
         Wiki-Artikel zieht. Default None = unverändertes Ranking.
 
+        mode: "balanced" (default) | "code_focused" | "conceptual". Steuert den
+        source_boost dynamisch, um die Suche für den jeweiligen Anwendungsfall
+        zu optimieren.
+
         Remote-Modus (self.remote_url gesetzt): delegiert die Suche an den warmen
         Retrieval-Daemon; lokal wird kein Vault/Encoder geladen.
         """
+        # Dynamische Anpassung des source_boost basierend auf dem Modus
+        if mode == "code_focused":
+            source_boost = {"PROJEKT_SELFCODE": 0.2}
+            print("[🔎 Retrieval-Modus: code_focused]")
+        elif mode == "conceptual":
+            source_boost = {"PROJEKT_SELFCODE": 1.5}
+            print("[🔎 Retrieval-Modus: conceptual]")
+
         if self.remote_url:
-            return self._remote_search(query, k, source_boost)
+            return self._remote_search(query, k, source_boost, mode)
         if not self.encoder:
             return [], None, None
 
@@ -381,14 +394,14 @@ class CodeRetriever:
 
         return docs, state_before, state_after
 
-    def _remote_search(self, query: str, k: int, source_boost: dict = None) -> tuple:
+    def _remote_search(self, query: str, k: int, source_boost: dict = None, mode: str = "balanced") -> tuple:
         """Suche über den warmen Retrieval-Daemon. hw_logger bleibt lokal (Code-Vault)
         für Telemetrie/Triplet-Log. Daemon nicht erreichbar ⇒ leeres Ergebnis (kein
         40s-Fallback-Load)."""
         state_before = self.hw_logger.log_state(query, "search_start")
         docs = []
         try:
-            payload = {"query": query, "k": k}
+            payload = {"query": query, "k": k, "mode": mode}
             if source_boost:
                 payload["source_boost"] = source_boost
             resp = requests.post(f"{self.remote_url}/search", json=payload, timeout=60)
@@ -1666,17 +1679,20 @@ async def main():
                     from agent_pool import AgentPool, AgentResult
                     from privacy_router import PrivacyClassifier, ModelRouter
                     from consensus import Consensus
+                    from p3_decision import decide_p3_models
 
-                    # P3: Multi-Agent-Pool with qwen + claude-haiko
+                    # P3: Multi-Agent-Pool with Smart Model Selection (Atom-based)
                     classifier = PrivacyClassifier()
                     privacy_level = classifier.classify(query)
 
-                    # Fixed 2 models for P3 MVP: qwen + haiko
-                    selected_models = ["qwen", "claude"]
+                    # P3 Model Selection: SharedAtom + Heuristics + Privacy
+                    candidate_models = ["qwen", "claude"]
+                    selected_models = decide_p3_models(query, candidate_models, privacy_level.value)
+
                     router = ModelRouter()
                     allowed = router.allowed_models(privacy_level, selected_models)
 
-                    print(f"[PRIVACY] {privacy_level.value} → Modelle: {allowed}")
+                    print(f"[PRIVACY] {privacy_level.value} → Modelle: {allowed} (via P3-Atom-Decision)")
 
                     # Map to actual model names
                     model_mapping = {
@@ -1714,6 +1730,12 @@ async def main():
                     consensus = Consensus()
                     result = await consensus.evaluate_and_fill(response_dict, query, pool)
                     response = result.winner_answer
+
+                    # SharedAtom: Strategy-Success bei erfolgreichem P3
+                    if response and not response.startswith("["):
+                        from shared_atom import get_shared_atom
+                        atom = get_shared_atom()
+                        atom.push("strategy:parallel:works")
 
                     print("\n" + "-" * 60)
                     print(f"[KONSENS] {result.winner.upper()} ({result.winner_score:.0%})")
