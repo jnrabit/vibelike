@@ -67,6 +67,7 @@ class Vault:
         if not os.path.exists(self.filepath):
             return []
         try:
+            # Versuche zuerst als encrypted monolith zu laden
             with open(self.filepath, "rb") as f:
                 raw = f.read()
             if not raw:
@@ -78,6 +79,14 @@ class Vault:
                                            filters=COMPRESSION_FILTER)
             return json.loads(decompressed.decode())
         except Exception as e:
+            # Fallback: Versuche als plain JSON zu laden
+            if self.filepath.endswith(".json"):
+                try:
+                    with open(self.filepath, "r", encoding="utf-8") as f:
+                        return json.load(f)
+                except Exception as json_error:
+                    print(f"❌ Vault load error ({self.filepath}): {json_error}")
+                    return []
             print(f"❌ Vault load error ({self.filepath}): {e}")
             return []
 
