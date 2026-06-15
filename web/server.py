@@ -19,6 +19,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parent.parent
 HERE = Path(__file__).resolve().parent
@@ -43,6 +44,10 @@ app.include_router(api_router)
 
 from auth import device_for_token, capabilities_for  # noqa: E402
 import ratification  # noqa: E402  (reversible park/archiv-Zustände überm Staging)
+
+
+class QueryRequest(BaseModel):
+    query: str
 
 
 def _require_ratify(authorization: str = Header(default=None)) -> str:
@@ -294,6 +299,125 @@ def ossifikat_reject(payload: dict, device: str = Depends(_require_ratify)) -> J
         s.close()
     ratification.clear_state(tid)
     return JSONResponse({"ok": True, "id": tid, "deleted": True})
+
+
+# ── Query API (Hybrid Vault-Mode) ────────────────────────────────────────────
+
+@app.post("/api/query")
+async def api_query(request: QueryRequest):
+    """
+    Hybrid-Mode Query:
+    - Claude macht Deep Analysis (20 Top + 10 Random docs)
+    - Alle 3 Models antworten mit Vault-Context
+    - Consensus wählt Winner
+    """
+    try:
+        import asyncio
+        query = request.query.strip()
+        if not query:
+            return JSONResponse({"error": "query erforderlich"}, status_code=400)
+
+        # Imports (lazy, damit server schnell startet)
+        sys.path.insert(0, str(ROOT))
+        from terminal import (
+            QwenCoder, ClaudeCoder, MistralCoder,
+            CodeRetriever, analyze_deep, COUNCIL_MODEL
+        )
+        from agent_pool import AgentResult
+        from consensus import Consensus
+
+        print(f"\n[API-QUERY] {query[:80]}")
+
+        # 1. Retrieve vault context
+        retriever = CodeRetriever()
+        search_result = retriever.search(query, k=30)
+        # search() gibt tuple zurück: (docs, state_before, state_after)
+        if isinstance(search_result, tuple):
+            context = search_result[0] if search_result else []
+        else:
+            context = search_result if search_result else []
+        print(f"[RETRIEVE] {len(context)} docs")
+
+        # 2. Deep Analysis (Claude)
+        analysis_summary = ""
+        try:
+            claude_analyzer = ClaudeCoder(model=COUNCIL_MODEL)
+            analysis_summary = analyze_deep(query, context, claude_analyzer)
+            if analysis_summary:
+                print(f"[ANALYSIS] {len(analysis_summary)} chars")
+        except Exception as e:
+            print(f"[WARN] Analysis failed: {e}")
+
+        # 3. System-Prompt mit Vault-Context
+        sys_full = f"""Du bist ein Experte für Wissensfragen. Nutze folgende Vault-Analyse und antworte präzise:
+
+{analysis_summary if analysis_summary else "Keine Vault-Analyse verfügbar"}
+
+Frage: {query}"""
+
+        # 4. Alle 3 Models parallel mit Vault-Context
+        models_to_query = [
+            ("qwen", QwenCoder(model="qwen2.5-coder:1.5b")),
+            ("claude", ClaudeCoder(model="claude-haiku-4-5-20251001")),
+            ("mistral", MistralCoder(model="mistral-small-latest"))
+        ]
+
+        async def query_model(name, model_coder):
+            try:
+                answer = model_coder.generate(query, system=sys_full, stream=False)
+                return (name, answer, None)
+            except Exception as e:
+                return (name, "", str(e))
+
+        # Parallel queries
+        tasks = [query_model(name, coder) for name, coder in models_to_query]
+        results = await asyncio.gather(*tasks)
+
+        # Convert zu response_dict
+        response_dict = {}
+        for model_name, answer, error in results:
+            if error:
+                response_dict[model_name] = AgentResult(
+                    model=model_name,
+                    answer="",
+                    error=error
+                )
+            else:
+                response_dict[model_name] = AgentResult(
+                    model=model_name,
+                    answer=answer,
+                    vault_hits=len(context) if context else 0
+                )
+
+        # 5. Consensus
+        consensus = Consensus()
+        result = await consensus.evaluate_and_fill(response_dict, query, None)
+
+        # Response
+        return JSONResponse({
+            "query": query,
+            "winner": result.winner,
+            "winner_score": result.winner_score,
+            "winner_answer": result.winner_answer,
+            "all_answers": {
+                name: {
+                    "answer": ar.answer,
+                    "error": ar.error,
+                    "score": result.scores.get(name, 0)
+                }
+                for name, ar in response_dict.items()
+            },
+            "vault_hits": len(context),
+            "analysis_length": len(analysis_summary)
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }, status_code=500)
 
 
 # ── Statische Seite ──────────────────────────────────────────────────────────
