@@ -62,7 +62,7 @@ from framework.quelibrium.intelligence.resonance import ResonanceField
 # Foreground = 7b coder (4.9 GB, 100% GPU), Validator = 1.5b coder (1.4 GB, 100% GPU).
 # Zusammen ~6.3 GB Modelle + Desktop = ~7.3 GB / 8.5 GB VRAM — passt parallel.
 # StaticValidator fängt die fachliche Schwäche des 1.5b-Critics deterministisch ab.
-MODEL = os.environ.get("VIBELIKE_QWEN_MODEL", "qwen2.5-coder:latest")
+MODEL = os.environ.get("VIBELIKE_QWEN_MODEL", "qwen2.5-coder:1.5b")
 VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", "qwen2.5-coder:1.5b")
 # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder für Analyse).
 # GPU-optimiert: qwen2.5-coder:1.5b (100% GPU fit auf 8GB VRAM, 0.3s warm)
@@ -97,7 +97,7 @@ MISTRAL_SYNTH_MODEL = os.environ.get("VIBELIKE_MISTRAL_SYNTH_MODEL", "mistral-la
 # abgefragt. Beide werden je Query durchsucht (ChaosRetrieval-Recall) und per Cosine
 # auf gemeinsamer Skala fair zusammengeführt. VIBELIKE_DUAL_VAULT=0 schaltet ihn aus.
 KNOWLEDGE_VAULT_FILE = os.environ.get(
-    "VIBELIKE_KNOWLEDGE_VAULT", "/home/jnrabit/collect/data/monolith_archive.monolith")
+    "VIBELIKE_KNOWLEDGE_VAULT", "/home/jnrabit/collect/data/monolith_archive_unified.json")
 KNOWLEDGE_CACHE_FILE = os.environ.get(
     "VIBELIKE_KNOWLEDGE_CACHE", "/home/jnrabit/collect/data/monolith_embedding_cache.pkl")
 DUAL_VAULT = os.environ.get("VIBELIKE_DUAL_VAULT", "1") != "0"
@@ -956,6 +956,106 @@ def assess_grounding(context: list) -> dict:
                           "souverän, sondern trenne klar Beleg von Vermutung.")}
 
 
+def analyze_deep(query: str, context: list, coder) -> str:
+    """DEEP ANALYSIS Phase: 30 Docs (20 Top + 10 Random) mit Widerspruch-Analyse.
+
+    Input: Top 30 Docs aus Vault-Suche
+    Output: Tiefe Analyse mit Widersprüchen + Synthesized Knowledge
+
+    Basiert auf BabelFeynman.analyze_spectral_field() aus AI neu/babel_deep.py
+    """
+    if not context or len(context) < 1:
+        return ""
+
+    # === 20 TOP + 10 RANDOM STRATEGIE ===
+    # Filter: nur echte Vault-Docs (nicht verbürgt)
+    vault_docs = [d for d in context if d.get("vault") != "verbürgt"]
+
+    if len(vault_docs) < 1:
+        return ""
+
+    # Top 20
+    top_20 = vault_docs[:20]
+
+    # Random 10 aus dem Rest (für Diversity + Hidden Patterns)
+    import random
+    remaining = vault_docs[20:]
+    random_10 = random.sample(remaining, min(10, len(remaining)))
+
+    used_docs = top_20 + random_10  # 20-30 Docs total
+
+    print(f"[ANALYZE-DEEP] 20 Top + {len(random_10)} Random = {len(used_docs)} Docs")
+
+    # === CONTEXT BLOCK FÜR LLM ===
+    context_parts = []
+    if used_docs:
+        context_parts.append("=== WISSENSBASIS ===\n")
+        for i, doc in enumerate(used_docs, 1):
+            title = doc.get('title', 'Unbekannt')
+            content = doc.get('content', '')[:600]  # Mehr Context
+            source = doc.get('source', '?')
+            dist = doc.get('distance', 0.99)
+
+            # Top 20 vs Random 10 Markierung
+            tag = "[TOP]" if i <= 20 else "[RANDOM]"
+            context_parts.append(f"QUELLE {i} {tag} (d={dist:.2f}, {source}): {title}")
+            context_parts.append(f"{content}\n")
+
+    full_context = "\n".join(context_parts)
+    if not full_context:
+        full_context = "KEINE DATEN."
+
+    # === DEEP ANALYSIS PROMPT (wie BabelFeynman) ===
+    analysis_prompt = f"""DU BIST: Ein wissenschaftlicher Analytiker der tief in spezifische Aspekte eintaucht.
+FRAGE: "{query}"
+
+DEINE QUELLEN ({len(used_docs)} Dokumente):
+{full_context}
+
+AUFGABE: Erstelle eine TIEFE, ASPEKT-FOKUSSIERTE Analyse mit Widerspruch-Erkennung.
+
+STRUKTUR:
+
+**1. KERNKONZEPT** (Präzise Definition)
+- Was ist das zentrale Konzept? Definiere mit Fachbegriffen.
+
+**2. WISSENSCHAFTLICHE PERSPEKTIVEN** (Hauptteil)
+Analysiere 3-4 spezifische Aspekte aus den Quellen:
+• **Kernaspekt**: Was sind die Basics? (Quellen X, Y...)
+• **Kontroversen/Widersprüche**: Wo widersprechen sich die Quellen?
+• **Neue Erkenntnisse**: Was zeigen die Random-Quellen? Überraschungen?
+• **Verbindungen**: Wie hängen die Aspekte zusammen?
+
+Gehe TIEF: Nenne spezifische Werte, Methoden, Ergebnisse aus den Quellen.
+
+**3. SYNTHESIS & TIEFE EINSICHT**
+- Verbinde die Aspekte zu einem Gesamtbild.
+- Nenne ein faszinierendes Detail (Deep Dive).
+- Ausblick: Wohin führt die Forschung?
+
+REGELN:
+- Antworte auf DEUTSCH.
+- Referenziere Quellen ("Laut Quelle 3...", "Studie X zeigt...").
+- Sei ausführlich (ca. 800-1200 Wörter).
+- Widersprüche sind NICHT schlecht — sie zeigen Forschungs-Edge!
+
+ANALYSE:"""
+
+    print(f"  🧠 Deep Analysis mit {len(used_docs)} Docs (Claude)...")
+
+    try:
+        analysis = coder.generate(
+            analysis_prompt,
+            system="Du bist ein präziser wissenschaftlicher Analytiker. Antworte auf Deutsch, tiefgründig und mit Quellenreferenzen.",
+            stream=False
+        )
+        print(f"  ✅ Analyse generiert ({len(analysis)} chars)")
+        return analysis.strip()
+    except Exception as e:
+        print(f"  [WARN] Deep Analysis fehlgeschlagen: {e}")
+        return ""
+
+
 def build_system_prompt(context: list) -> str:
     """Baue System-Prompt aus VERBÜRGTEN Fakten (ratifiziert) + Vault-Kontext.
     Bei schwacher Quellen-Deckung wird eine Ehrlichkeits-Direktive vorangestellt."""
@@ -1530,8 +1630,12 @@ async def main():
 
     while True:
         try:
-            query = input("\n> ").strip()
-            
+            try:
+                query = input("\n> ").strip()
+            except UnicodeDecodeError:
+                print("[ERR] Encoding-Fehler, bitte erneut eingeben")
+                continue
+
             if not query:
                 continue
             
@@ -1613,14 +1717,18 @@ async def main():
             # RÜCKGÄNGIG MACHEN: Ersetze die 4 council_*-Zeilen durch die alten 2 Zeilen (council_h, council_g) und lösche die Mistral-Referenzen.
 
             # Suche in beiden Vaults (Code + Wissen), fair gemerged
-            print("[SEARCH] Suche in den Vaults...")
-            context, _, _ = retriever.search(query, k=6)
+            # k=30 für 20 Top + 10 Random Strategie
+            print("[SEARCH] Suche in den Vaults (30 Docs für Deep Analysis)...")
+            context, _, _ = retriever.search(query, k=30)
 
             if context:
                 print(f"[OK] Gefunden: {len(context)} Dokumente")
                 for i, doc in enumerate(context):
-                    title = doc.get("title", "Unbekannt")[:40]
-                    print(f"  [{i+1}] {title}... (Dist: {doc['distance']:.1f})")
+                    title = doc.get("title", "Unbekannt")[:60]
+                    dist = doc['distance']
+                    # Farbcode für Treffer-Qualität
+                    quality = "✅" if dist < 0.3 else "⚠️" if dist < 0.4 else "❌"
+                    print(f"  [{i+1:2d}] {quality} {title}... (Dist: {dist:.2f})")
                 # (Kein opakes query/response-Hash-Staging mehr — war Lärm. Meaningful
                 #  Kandidaten kommen künftig über den QwenExtractor.)
             else:
@@ -1633,10 +1741,28 @@ async def main():
 
             # System-Prompt bauen (Schwäche-Direktive ist bei Bedarf vorangestellt)
             system_prompt = build_system_prompt(context)
-            
+
+            # ===== NEUE DEEP ANALYSIS PHASE (20 TOP + 10 RANDOM) =====
+            # Tiefe Analyse mit Widersprüch-Erkennung (wie BabelFeynman)
+            analysis_summary = ""
+            if context and len(context) > 0:
+                try:
+                    claude_analyzer = ClaudeCoder(model=COUNCIL_MODEL)  # Claude Haiku für Deep Analysis
+                    analysis_summary = analyze_deep(query, context, claude_analyzer)
+                    # Zeige die tiefe Analyse sichtbar!
+                    if analysis_summary:
+                        print(f"\n{'='*70}")
+                        print(f"[TIEFE VAULT-ANALYSE]:")
+                        print(f"{'='*70}\n{analysis_summary}\n")
+                except Exception as e:
+                    print(f"[WARN] Deep Analysis fehlgeschlagen: {e}")
+                    analysis_summary = ""
+
             # Gehaltener Gesprächskontext für Folgefragen — bewusst KURZ (letzte 2 Turns,
             # gekürzt): zu viel Historie erstickt das kleine Modell (Klein-Modell-Decke).
             sys_full = system_prompt
+            if analysis_summary:
+                sys_full += f"\n\n[VAULT-ANALYSE (aus Top 4 Quellen)]:\n{analysis_summary}"
             if history:
                 convo = "\n\n".join(
                     f"FRÜHER gefragt: {q}\nDeine Antwort (gekürzt): {a[:400]}"
@@ -1677,64 +1803,56 @@ async def main():
                     synth_coder = ClaudeCoder(model=SYNTH_MODEL)
                 response = run_council(query, sys_full, coder, council_coder, synth_coder)
             else:
-                # Agent-Mode: P3 Multi-Agent (qwen + haiko parallel)
+                # ===== HYBRID MODE: Vault-Context für alle 3 Models =====
+                # Claude macht Deep Analysis, dann alle 3 antworten mit Vault-Context
                 try:
-                    import asyncio
-                    from agent_loop import AgentLoop
-                    from agent_pool import AgentPool, AgentResult
-                    from privacy_router import PrivacyClassifier, ModelRouter
+                    from agent_pool import AgentResult
                     from consensus import Consensus
-                    from p3_decision import decide_p3_models
+                    import asyncio
 
-                    # P3: Multi-Agent-Pool with Smart Model Selection (Atom-based)
-                    classifier = PrivacyClassifier()
-                    privacy_level = classifier.classify(query)
+                    # System-Prompt JETZT mit Vault-Analyse
+                    vault_system = sys_full  # sys_full enthält bereits analysis_summary!
 
-                    # P3 Model Selection: SharedAtom + Heuristics + Privacy
-                    candidate_models = ["qwen", "claude", "mistral"]
-                    selected_models = decide_p3_models(query, candidate_models, privacy_level.value)
+                    print(f"[P3-HYBRID] Alle 3 Models antworten mit Vault-Context...")
 
-                    router = ModelRouter()
-                    allowed = router.allowed_models(privacy_level, selected_models)
+                    # Modelle vorbereiten
+                    models_to_query = [
+                        ("qwen", QwenCoder(model="qwen2.5-coder:1.5b")),
+                        ("claude", ClaudeCoder(model="claude-haiku-4-5-20251001")),
+                        ("mistral", MistralCoder(model="mistral-small-latest"))
+                    ]
 
-                    print(f"[PRIVACY] {privacy_level.value} → Modelle: {allowed} (via P3-Atom-Decision)")
+                    # Parallele Abfragen mit Vault-Context
+                    async def query_model(name, model_coder):
+                        try:
+                            answer = model_coder.generate(query, system=vault_system, stream=False)
+                            return (name, answer, None)
+                        except Exception as e:
+                            return (name, "", str(e))
 
-                    # Map to actual model names
-                    model_mapping = {
-                        "qwen": "qwen2.5-coder:1.5b",
-                        "claude": "claude-haiku-4-5-20251001",
-                        "mistral": "mistral-small-latest"
-                    }
-                    actual_models = [model_mapping.get(m, m) for m in allowed]
+                    # Alle 3 parallel mit Vault-Context abfragen
+                    tasks = [query_model(name, coder) for name, coder in models_to_query]
+                    results = await asyncio.gather(*tasks)
 
-                    # Parallele Ausführung
-                    pool = AgentPool(actual_models)
-                    responses = await asyncio.gather(
-                        *[pool.agents[m].step(query) for m in actual_models],
-                        return_exceptions=True
-                    )
-
-                    # Konvertiere zu AgentResult
+                    # Konvertiere zu response_dict für Consensus
                     response_dict = {}
-                    for i, model in enumerate(actual_models):
-                        resp = responses[i]
-                        if isinstance(resp, Exception):
-                            response_dict[model] = AgentResult(
-                                model=model,
+                    for model_name, answer, error in results:
+                        if error:
+                            response_dict[model_name] = AgentResult(
+                                model=model_name,
                                 answer="",
-                                error=str(resp)
+                                error=error
                             )
                         else:
-                            response_dict[model] = AgentResult(
-                                model=model,
-                                answer=resp,
-                                step_count=2,
-                                vault_hits=1
+                            response_dict[model_name] = AgentResult(
+                                model=model_name,
+                                answer=answer,
+                                vault_hits=len(context) if context else 0
                             )
 
                     # Consensus
                     consensus = Consensus()
-                    result = await consensus.evaluate_and_fill(response_dict, query, pool)
+                    result = await consensus.evaluate_and_fill(response_dict, query, None)
                     response = result.winner_answer
 
                     # SharedAtom: Strategy-Success bei erfolgreichem P3
