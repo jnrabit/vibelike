@@ -1,0 +1,855 @@
+# Code-Idiom-Embedding-Space für HOTR Phase Routing
+# Generated: 2026-06-21
+# Total Idioms: 36
+
+idioms:
+  # =========================================================================
+  # PHASE: BRIEFING (8 Idioms)
+  # =========================================================================
+
+  - id: "brief::analysis::two_part"
+    phase: "briefing"
+    task_type: "ANALYSIS"
+    description: "Detailanalyse mit 6 Sektionen + Synthese-Block (ERKENNTNISSE)"
+    tags: ["analysis", "synthesis", "structured", "thorough"]
+    complexity_hint: "High"
+    tradeoff: "Thoroughness vs Brevity — favors Thoroughness"
+    requires: ["analyzer_qwen"]
+    metadata:
+      cost_estimate: "high"
+      latency_estimate: "high"
+      approval_rate_target: 0.90
+    patterns:
+      system_prompt: |
+        Du bist ein Senior Code-Architekt mit 15 Jahren Erfahrung.
+        Analysiere diese Aufgabe gründlich und liefere strukturierte Erkenntnisse.
+
+        STRUKTUR (PFLICHT):
+        1. Aufgabenverstehen — Ist die Anfrage klar?
+        2. Codebase-Überblick — Was existiert schon?
+        3. Abhängigkeiten — Was hängt davon ab?
+        4. Risiken — Wo sind Fallstricke?
+        5. Annahmen — Was nimmst du an?
+        6. Synthese — Das Gesamtbild
+
+        ERKENNTNISSE (am Ende):
+        - Jeder Key Insight als Bulletpoint
+        - Keine Floskeln
+        - Actionable nur wenn klar
+      response_format: |
+        ## TEIL A — DETAILANALYSE
+        ### 1. Aufgabenverstehen
+        [deine analyse]
+
+        ### 2. Codebase-Überblick
+        [struktur, scale, tech-stack]
+
+        ### 3. Abhängigkeiten
+        [was hängt davon ab, impact radius]
+
+        ### 4. Risiken
+        [fallstricke, edge-cases, anti-patterns]
+
+        ### 5. Annahmen
+        [was du angenommen hast und warum]
+
+        ### 6. Synthese
+        [das gesamtbild, wie alles zusammenhängt]
+
+        ## TEIL B — ERKENNTNISSE
+        - Insight 1
+        - Insight 2
+        - Insight 3
+        ...
+
+  - id: "brief::analysis::quick"
+    phase: "briefing"
+    task_type: "ANALYSIS"
+    description: "Shallow scan — TL;DR + Top Risks (keine Details)"
+    tags: ["analysis", "quick", "risk-focused"]
+    complexity_hint: "Low"
+    tradeoff: "Speed vs Thoroughness — favors Speed"
+    requires: []
+    metadata:
+      cost_estimate: "low"
+      latency_estimate: "low"
+      approval_rate_target: 0.70
+    patterns:
+      system_prompt: "Du schaust schnell auf Code. TL;DR + Top-3 Risks. Kurz, knapp, keine Zeit verschwenden."
+      response_format: |
+        ## TL;DR
+        [1-2 Sätze was das ist]
+
+        ## TOP RISKS
+        1. [Risiko]
+        2. [Risiko]
+        3. [Risiko]
+
+  - id: "brief::impl::structured"
+    phase: "briefing"
+    task_type: "IMPLEMENTATION"
+    description: "Goal → Files → Embedding → Deps → Risks"
+    tags: ["implementation", "structured"]
+    complexity_hint: "Medium"
+    tradeoff: "Structure vs Flexibility — favors Structure"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.85
+    patterns:
+      system_prompt: "Analysiere die Feature-Anforderung strukturiert."
+      response_format: |
+        ## GOAL
+        [Feature-Ziel]
+
+        ## AFFECTED FILES
+        [Welche Dateien ändern sich]
+
+        ## EMBEDDING (Context für Code-Gen)
+        [Imports, Types, Key-Classes]
+
+        ## DEPENDENCIES
+        [Was muss zuerst gebaut werden]
+
+        ## RISKS
+        [Breaking Changes, Performance, etc]
+
+  - id: "brief::impl::minimal"
+    phase: "briefing"
+    task_type: "IMPLEMENTATION"
+    description: "Just essentials — goal + affected files"
+    tags: ["implementation", "minimal", "fast"]
+    complexity_hint: "Low"
+    tradeoff: "Speed vs Detail — favors Speed"
+    requires: []
+    metadata:
+      cost_estimate: "low"
+      latency_estimate: "low"
+      approval_rate_target: 0.75
+    patterns:
+      system_prompt: "Minimal briefing: Was und wo. Das wars."
+      response_format: |
+        ## GOAL
+        [1 Satz]
+
+        ## FILES
+        [1 Liste]
+
+  - id: "brief::bugfix::root_cause"
+    phase: "briefing"
+    task_type: "BUG_FIX"
+    description: "Symptom → Hypothesis → Minimal Fix → Regression Risks"
+    tags: ["bugfix", "root-cause", "minimal"]
+    complexity_hint: "Medium"
+    tradeoff: "Correctness vs Scope — favors Correctness"
+    requires: ["analyzer_qwen"]
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.88
+    patterns:
+      system_prompt: "Bug-Analyse: Finde ROOT CAUSE. Nicht Symptom-Fix."
+      response_format: |
+        ## SYMPTOM
+        [Was ist kaputt]
+
+        ## HYPOTHESIS
+        [Wo ist Bug vermutlich]
+
+        ## MINIMAL FIX
+        [Kleinste Änderung die fixt]
+
+        ## REGRESSION RISKS
+        [Was könnte break]
+
+  - id: "brief::refactor::scope"
+    phase: "briefing"
+    task_type: "REFACTOR"
+    description: "Old Structure → New Structure → Diff → Testing Plan"
+    tags: ["refactor", "structure", "planning"]
+    complexity_hint: "Medium"
+    tradeoff: "Safety vs Scope — favors Safety"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.82
+    patterns:
+      system_prompt: "Refactor-Briefing: Was ändert sich, und wie testest du es?"
+      response_format: |
+        ## OLD STRUCTURE
+        [Jetziger Zustand]
+
+        ## NEW STRUCTURE
+        [Zielzustand]
+
+        ## DIFF SUMMARY
+        [Was ändert sich]
+
+        ## TESTING PLAN
+        [Wie prüfst du dass es nicht break]
+
+  - id: "brief::explain::interactive"
+    phase: "briefing"
+    task_type: "EXPLAIN"
+    description: "Q→A format, encourage follow-up questions"
+    tags: ["explain", "interactive", "knowledge"]
+    complexity_hint: "Low"
+    tradeoff: "Accuracy vs Interactivity — favors Interactivity"
+    requires: []
+    metadata:
+      cost_estimate: "low"
+      latency_estimate: "low"
+      approval_rate_target: 0.80
+    patterns:
+      system_prompt: "Erkläre Code/Konzept. Ermuntere Follow-up Fragen."
+      response_format: |
+        ## ERKLÄRUNG
+        [Hauptpunkt]
+
+        ## FOLLOW-UP FRAGEN?
+        [3 Fragen die der User als nächstes stellen könnte]
+
+  - id: "brief::generic::skeleton"
+    phase: "briefing"
+    task_type: null
+    description: "Fallback: Minimal skeleton für Task-Type-Unknown"
+    tags: ["fallback", "generic"]
+    complexity_hint: "Low"
+    tradeoff: "Robustness vs Quality — favors Robustness"
+    requires: []
+    metadata:
+      cost_estimate: "low"
+      latency_estimate: "low"
+      approval_rate_target: 0.60
+      is_fallback: true
+    patterns:
+      system_prompt: "Gib mir einen Quick Überblick der Aufgabe."
+      response_format: |
+        ## ÜBERBLICK
+        [Kurze Zusammenfassung]
+
+  # =========================================================================
+  # PHASE: PLANNING_STRATEGIE (5 Idioms)
+  # =========================================================================
+
+  - id: "strat::analysis::hierarchical"
+    phase: "planning_strategie"
+    task_type: "ANALYSIS"
+    description: "Top-down: Arch → Module → Function → Details"
+    tags: ["analysis", "hierarchical", "topdown"]
+    complexity_hint: "High"
+    tradeoff: "Depth vs Breadth — favors Depth"
+    requires: []
+    metadata:
+      cost_estimate: "high"
+      latency_estimate: "high"
+      approval_rate_target: 0.85
+    patterns:
+      system_prompt: "Strategie: Top-down decomposition. Architecture → Module → Function."
+      response_format: |
+        ## LEVEL 1: ARCHITECTURE
+        [Wie hängt alles zusammen]
+
+        ## LEVEL 2: MODULES
+        [Welche Module/Komponenten]
+
+        ## LEVEL 3: FUNCTIONS
+        [Key-Functions pro Modul]
+
+        ## LEVEL 4: DETAILS
+        [Critical Paths, Edge Cases]
+
+  - id: "strat::analysis::risk_first"
+    phase: "planning_strategie"
+    task_type: "ANALYSIS"
+    description: "Start mit bekannten Risiken, dann explorieren"
+    tags: ["analysis", "risk-focused"]
+    complexity_hint: "Medium"
+    tradeoff: "Focus vs Completeness — favors Focus"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.80
+    patterns:
+      system_prompt: "Strategie: Risk-first. Was sind die Fallstricke? Danach erkunden."
+      response_format: |
+        ## KNOWN RISKS
+        [Was wissen wir schon ist kritisch]
+
+        ## EXPLORATION PLAN
+        [Wie bekämpfen wir diese Risiken]
+
+  - id: "strat::impl::dependency_first"
+    phase: "planning_strategie"
+    task_type: "IMPLEMENTATION"
+    description: "Topological sort: Was muss zuerst gebaut werden"
+    tags: ["implementation", "dependencies", "incremental"]
+    complexity_hint: "Medium"
+    tradeoff: "Correctness vs Flexibility — favors Correctness"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.87
+    patterns:
+      system_prompt: "Build-Strategie: Topological order. Was zuerst?"
+      response_format: |
+        ## DEPENDENCY GRAPH
+        [Feature A → Feature B → Feature C]
+
+        ## BUILD ORDER
+        1. [Zuerst]
+        2. [Dann]
+        3. [Am Ende]
+
+  - id: "strat::impl::incremental"
+    phase: "planning_strategie"
+    task_type: "IMPLEMENTATION"
+    description: "Micro-commits: 1 Feature ≤ 1 kleine Datei"
+    tags: ["implementation", "incremental", "commits"]
+    complexity_hint: "Low"
+    tradeoff: "Granularity vs Simplicity — favors Granularity"
+    requires: []
+    metadata:
+      cost_estimate: "low"
+      latency_estimate: "low"
+      approval_rate_target: 0.82
+    patterns:
+      system_prompt: "Strategie: Tiny, atomic commits. Reviewable in 5min."
+      response_format: |
+        ## COMMIT PLAN
+        1. Add type definitions
+        2. Add helper functions
+        3. Add main logic
+        4. Add tests
+
+  - id: "strat::generic::hybrid_search"
+    phase: "planning_strategie"
+    task_type: null
+    description: "When unclear: combine 2-3 strategies"
+    tags: ["fallback", "hybrid", "adaptive"]
+    complexity_hint: "Medium"
+    tradeoff: "Robustness vs Simplicity — favors Robustness"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.75
+      is_fallback: false
+    patterns:
+      system_prompt: "Hybrid-Strategie: Mix 2-3 approaches. Was passt?"
+      response_format: |
+        ## APPROACH 1
+        [First idea]
+
+        ## APPROACH 2
+        [Second idea]
+
+        ## HYBRID
+        [Best of both]
+
+  # =========================================================================
+  # PHASE: PLANNING_DETAILPLAN (8 Idioms)
+  # =========================================================================
+
+  - id: "plan::retrieve::bm25_only"
+    phase: "planning_detailplan"
+    task_type: null
+    description: "Keyword-based retrieval, O(1) latency, large corpus OK"
+    tags: ["retrieval", "bm25", "fast", "budget-low"]
+    complexity_hint: "Very Low"
+    tradeoff: "Latency vs Recall — favors Latency"
+    requires: []
+    metadata:
+      cost_estimate: "low"
+      latency_estimate: "low"
+      approval_rate_target: 0.70
+    patterns:
+      system_prompt: "Retrieval: BM25-only. TF-IDF keyword matching."
+      response_format: |
+        ## STRATEGY
+        Use BM25 indexing. Fast, sparse, recall-ok.
+
+        ## IMPLEMENTATION
+        [Code snippet for BM25 retrieval]
+
+  - id: "plan::retrieve::dense_only"
+    phase: "planning_detailplan"
+    task_type: null
+    description: "Semantic embeddings, recall-focused, GPU needed"
+    tags: ["retrieval", "dense", "semantic", "gpu"]
+    complexity_hint: "High"
+    tradeoff: "Recall vs Latency — favors Recall"
+    requires: ["gpu_available"]
+    metadata:
+      cost_estimate: "high"
+      latency_estimate: "high"
+      approval_rate_target: 0.80
+    patterns:
+      system_prompt: "Retrieval: Dense embeddings. Semantic similarity."
+      response_format: |
+        ## STRATEGY
+        SentenceTransformer embeddings + cosine similarity.
+
+        ## IMPLEMENTATION
+        [Code snippet for dense retrieval]
+
+  - id: "plan::retrieve::hybrid_rerank"
+    phase: "planning_detailplan"
+    task_type: null
+    description: "BM25 + dense + cross-encoder reranker (best quality)"
+    tags: ["retrieval", "hybrid", "rerank", "expensive"]
+    complexity_hint: "Very High"
+    tradeoff: "Quality vs Cost — favors Quality"
+    requires: ["gpu_available", "cross_encoder_model"]
+    metadata:
+      cost_estimate: "very_high"
+      latency_estimate: "high"
+      approval_rate_target: 0.90
+    patterns:
+      system_prompt: "Retrieval: Hybrid (BM25 + Dense + Reranker). Best quality."
+      response_format: |
+        ## STRATEGY
+        1. BM25: fast candidate generation
+        2. Dense: semantic filtering
+        3. Cross-encoder: final ranking
+
+        ## IMPLEMENTATION
+        [Multi-stage retrieval pipeline]
+
+  - id: "plan::classify::pattern_match"
+    phase: "planning_detailplan"
+    task_type: null
+    description: "Few known categories — if/elif/else chain"
+    tags: ["classification", "pattern-match", "simple"]
+    complexity_hint: "Very Low"
+    tradeoff: "Simplicity vs Generalization — favors Simplicity"
+    requires: []
+    metadata:
+      cost_estimate: "very_low"
+      latency_estimate: "very_low"
+      approval_rate_target: 0.95
+    patterns:
+      system_prompt: "Classification: Pattern matching. Hardcoded rules."
+      response_format: |
+        ## RULES
+        if query.startswith("SELECT"): SQL
+        elif query.startswith("def "): Python
+        else: Unknown
+
+  - id: "plan::classify::predicate_voting"
+    phase: "planning_detailplan"
+    task_type: null
+    description: "Many overlapping categories — multiple predicates vote"
+    tags: ["classification", "voting", "flexible"]
+    complexity_hint: "High"
+    tradeoff: "Flexibility vs Explainability — favors Flexibility"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.85
+    patterns:
+      system_prompt: "Classification: Predicate voting ensemble."
+      response_format: |
+        ## PREDICATES
+        - has_sql_keywords
+        - has_python_syntax
+        - has_go_imports
+
+        ## VOTING
+        Winner = max(votes)
+
+  - id: "plan::classify::ensemble"
+    phase: "planning_detailplan"
+    task_type: null
+    description: "Mission-critical accuracy — voting + fallback + human-in-loop"
+    tags: ["classification", "ensemble", "critical"]
+    complexity_hint: "Very High"
+    tradeoff: "Accuracy vs Latency — favors Accuracy"
+    requires: ["human_reviewer"]
+    metadata:
+      cost_estimate: "very_high"
+      latency_estimate: "very_high"
+      approval_rate_target: 0.98
+    patterns:
+      system_prompt: "Classification: Ensemble. Confidence threshold. Escalate if uncertain."
+      response_format: |
+        ## ENSEMBLE
+        Voting + fallback + human-in-loop
+
+        ## ESCALATION
+        If confidence < 0.8: ask human
+
+  - id: "plan::execute::dry_run_diff"
+    phase: "planning_detailplan"
+    task_type: null
+    description: "Safety-critical: Generate → Format → Diff → Approval"
+    tags: ["execution", "safety", "approval"]
+    complexity_hint: "High"
+    tradeoff: "Safety vs Speed — favors Safety"
+    requires: []
+    metadata:
+      cost_estimate: "high"
+      latency_estimate: "high"
+      approval_rate_target: 0.92
+    patterns:
+      system_prompt: "Execution: Always show diff before applying."
+      response_format: |
+        ## GENERATED CODE
+        [code]
+
+        ## DIFF
+        [unified diff]
+
+        ## APPLY?
+        [Approve or reject]
+
+  - id: "plan::execute::auto_apply"
+    phase: "planning_detailplan"
+    task_type: null
+    description: "Low-risk refactoring — Generate → Apply directly"
+    tags: ["execution", "auto", "refactor"]
+    complexity_hint: "Very Low"
+    tradeoff: "Speed vs Safety — favors Speed"
+    requires: []
+    metadata:
+      cost_estimate: "low"
+      latency_estimate: "low"
+      approval_rate_target: 0.85
+    patterns:
+      system_prompt: "Execution: Auto-apply for low-risk changes."
+      response_format: |
+        ## AUTO-APPLIED
+        Changed [N] files
+
+  # =========================================================================
+  # PHASE: EXECUTION (5 Idioms)
+  # =========================================================================
+
+  - id: "exec::analysis::report_gen"
+    phase: "execution"
+    task_type: "ANALYSIS"
+    description: "Markdown report with tables/code-blocks/diagrams"
+    tags: ["analysis", "report", "markdown"]
+    complexity_hint: "Medium"
+    tradeoff: "Presentation vs Brevity — favors Presentation"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.85
+    patterns:
+      system_prompt: "Generate Markdown report: professional, well-formatted."
+      response_format: |
+        # Title
+
+        ## Section 1
+        [content]
+
+        | Col1 | Col2 |
+        |------|------|
+        | val1 | val2 |
+
+        ```python
+        code here
+        ```
+
+  - id: "exec::impl::code_gen"
+    phase: "execution"
+    task_type: "IMPLEMENTATION"
+    description: "Python/Go/Rust code + docstrings + type hints"
+    tags: ["implementation", "code-gen", "typed"]
+    complexity_hint: "High"
+    tradeoff: "Quality vs Speed — favors Quality"
+    requires: []
+    metadata:
+      cost_estimate: "high"
+      latency_estimate: "high"
+      approval_rate_target: 0.88
+    patterns:
+      system_prompt: "Generate clean, typed, documented code. PEP8/Go conventions."
+      response_format: |
+        ```python
+        def my_function(arg1: str, arg2: int) -> bool:
+            \"\"\"Docstring.\"\"\"
+            pass
+        ```
+
+  - id: "exec::impl::git_workflow"
+    phase: "execution"
+    task_type: "IMPLEMENTATION"
+    description: "Per-step atomic commits with clear messages"
+    tags: ["implementation", "git", "commits"]
+    complexity_hint: "Medium"
+    tradeoff: "Atomicity vs Simplicity — favors Atomicity"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.90
+    patterns:
+      system_prompt: "Commit every logical step. Message format: type: brief description"
+      response_format: |
+        Commit 1: feat: add types and interfaces
+        Commit 2: feat: implement core logic
+        Commit 3: test: add unit tests
+
+  - id: "exec::test_gen::pytest"
+    phase: "execution"
+    task_type: "IMPLEMENTATION"
+    description: "Pytest fixtures + assertions, covers happy path + edge cases"
+    tags: ["test", "pytest", "unit"]
+    complexity_hint: "Medium"
+    tradeoff: "Coverage vs Simplicity — favors Coverage"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.85
+    patterns:
+      system_prompt: "Write pytest tests. Fixtures, parametrize, edge cases."
+      response_format: |
+        ```python
+        @pytest.fixture
+        def setup():
+            return ...
+
+        def test_happy_path(setup):
+            assert ...
+
+        def test_edge_case():
+            assert ...
+        ```
+
+  - id: "exec::generic::block_select"
+    phase: "execution"
+    task_type: null
+    description: "Fallback: Execute with minimal scope (single block/function)"
+    tags: ["fallback", "minimal", "safe"]
+    complexity_hint: "Low"
+    tradeoff: "Robustness vs Completeness — favors Robustness"
+    requires: []
+    metadata:
+      cost_estimate: "low"
+      latency_estimate: "low"
+      approval_rate_target: 0.75
+      is_fallback: true
+    patterns:
+      system_prompt: "Minimal execution: just 1 function/block. Safe."
+      response_format: |
+        [Single function/block only]
+
+  # =========================================================================
+  # PHASE: VERIFY (3 Idioms)
+  # =========================================================================
+
+  - id: "verify::test_and_measure"
+    phase: "verify"
+    task_type: null
+    description: "Run tests + measure coverage + performance"
+    tags: ["verify", "test", "measure"]
+    complexity_hint: "High"
+    tradeoff: "Thoroughness vs Time — favors Thoroughness"
+    requires: []
+    metadata:
+      cost_estimate: "high"
+      latency_estimate: "high"
+      approval_rate_target: 0.90
+    patterns:
+      system_prompt: "Run all tests. Report: pass/fail, coverage %, latency (ms)."
+      response_format: |
+        ## TESTS
+        [N passed, N failed]
+
+        ## COVERAGE
+        Lines: 92%
+
+        ## PERF
+        Latency: 123ms
+
+  - id: "verify::lint_only"
+    phase: "verify"
+    task_type: null
+    description: "Type-check + linter (no test execution)"
+    tags: ["verify", "lint", "fast"]
+    complexity_hint: "Low"
+    tradeoff: "Speed vs Coverage — favors Speed"
+    requires: []
+    metadata:
+      cost_estimate: "low"
+      latency_estimate: "low"
+      approval_rate_target: 0.75
+    patterns:
+      system_prompt: "Quick checks: type errors, lint violations."
+      response_format: |
+        ## LINT
+        [mypy, flake8 output]
+
+  - id: "verify::fuzzing"
+    phase: "verify"
+    task_type: null
+    description: "Property-based testing + long-running fuzzing"
+    tags: ["verify", "fuzzing", "thorough"]
+    complexity_hint: "Very High"
+    tradeoff: "Confidence vs Time — favors Confidence"
+    requires: []
+    metadata:
+      cost_estimate: "very_high"
+      latency_estimate: "very_high"
+      approval_rate_target: 0.95
+    patterns:
+      system_prompt: "Hypothesis property-based test. Find edge cases."
+      response_format: |
+        @given(st.lists(st.integers()))
+        def test_property(data):
+            assert property_holds(data)
+
+  # =========================================================================
+  # PHASE: COMMIT (3 Idioms)
+  # =========================================================================
+
+  - id: "commit::per_step"
+    phase: "commit"
+    task_type: null
+    description: "Per-step commits — one atomic change per commit"
+    tags: ["commit", "atomic", "clean"]
+    complexity_hint: "Medium"
+    tradeoff: "Clarity vs Simplicity — favors Clarity"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.90
+    patterns:
+      system_prompt: "Commit message format: <type>: <description>"
+      response_format: |
+        commit 1: feat: add data model
+        commit 2: feat: implement business logic
+        commit 3: test: add tests
+
+  - id: "commit::squash_logically"
+    phase: "commit"
+    task_type: null
+    description: "Group related commits into logical units"
+    tags: ["commit", "logical", "grouped"]
+    complexity_hint: "Medium"
+    tradeoff: "Grouping vs Granularity — favors Grouping"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.85
+    patterns:
+      system_prompt: "Squash into logical units (not single commit, not 50 commits)."
+      response_format: |
+        commit 1 (implementation): data model + logic
+        commit 2 (test): all tests
+
+  - id: "commit::minimal"
+    phase: "commit"
+    task_type: null
+    description: "Single commit — merge all changes into one"
+    tags: ["commit", "minimal", "simple"]
+    complexity_hint: "Very Low"
+    tradeoff: "Simplicity vs History — favors Simplicity"
+    requires: []
+    metadata:
+      cost_estimate: "very_low"
+      latency_estimate: "very_low"
+      approval_rate_target: 0.80
+    patterns:
+      system_prompt: "Single commit for entire task."
+      response_format: |
+        commit: <type>: <full description>
+
+  # =========================================================================
+  # PHASE: ANALYSIS_REPORT (4 Idioms)
+  # =========================================================================
+
+  - id: "report::markdown_report"
+    phase: "analysis_report"
+    task_type: "ANALYSIS"
+    description: "Markdown document with headers, tables, code blocks"
+    tags: ["report", "markdown", "formatted"]
+    complexity_hint: "Medium"
+    tradeoff: "Presentation vs Brevity — favors Presentation"
+    requires: []
+    metadata:
+      cost_estimate: "medium"
+      latency_estimate: "medium"
+      approval_rate_target: 0.85
+    patterns:
+      system_prompt: "Generate professional Markdown report."
+      response_format: |
+        # Analysis Report
+
+        ## Key Findings
+        - Finding 1
+        - Finding 2
+
+        ## Recommendations
+        [detailed recommendations]
+
+  - id: "report::jupyter_notebook"
+    phase: "analysis_report"
+    task_type: "ANALYSIS"
+    description: "Jupyter notebook with code + visualization + narrative"
+    tags: ["report", "jupyter", "interactive"]
+    complexity_hint: "High"
+    tradeoff: "Interactivity vs Complexity — favors Interactivity"
+    requires: ["jupyter"]
+    metadata:
+      cost_estimate: "high"
+      latency_estimate: "high"
+      approval_rate_target: 0.88
+    patterns:
+      system_prompt: "Generate runnable Jupyter notebook with narration."
+      response_format: |
+        # Markdown cell
+        # Code cell (with output)
+        # Markdown cell
+        # ...
+
+  - id: "report::interactive_html"
+    phase: "analysis_report"
+    task_type: "ANALYSIS"
+    description: "Interactive HTML with charts, filters, drill-down"
+    tags: ["report", "html", "interactive"]
+    complexity_hint: "Very High"
+    tradeoff: "Interactivity vs Development — favors Interactivity"
+    requires: ["plotly", "web_framework"]
+    metadata:
+      cost_estimate: "very_high"
+      latency_estimate: "high"
+      approval_rate_target: 0.90
+    patterns:
+      system_prompt: "Generate interactive HTML dashboard with Plotly."
+      response_format: |
+        <!DOCTYPE html>
+        <script src="plotly.js"></script>
+        [interactive charts and filters]
+
+  - id: "report::structured_json"
+    phase: "analysis_report"
+    task_type: "ANALYSIS"
+    description: "Structured JSON with metadata + findings + recommendations"
+    tags: ["report", "json", "data"]
+    complexity_hint: "Low"
+    tradeoff: "Parsability vs Readability — favors Parsability"
+    requires: []
+    metadata:
+      cost_estimate: "low"
+      latency_estimate: "low"
+      approval_rate_target: 0.85
+    patterns:
+      system_prompt: "Output as structured JSON."
+      response_format: |
+        {
+          "metadata": { ... },
+          "findings": [ ... ],
+          "recommendations": [ ... ]
+        }
