@@ -46,13 +46,22 @@ except ImportError:
     WORKFLOW_AVAILABLE = False
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, ROOT)
 
-from task_classifier import TaskClassifier, confirm_classification
-from framework.quelibrium.core.protocol import Protocol
-from framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE
-from framework.quelibrium.intelligence.retrieval import ChaosRetrieval, RiemannianWarp, ThompsonSampler
-from framework.quelibrium.intelligence.resonance import ResonanceField
+# Import fallback: Try package-based imports (if installed), fall back to sys.path for script execution
+try:
+    from vibelike.task_classifier import TaskClassifier, confirm_classification
+    from vibelike.framework.quelibrium.core.protocol import Protocol
+    from vibelike.framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE
+    from vibelike.framework.quelibrium.intelligence.retrieval import ChaosRetrieval, RiemannianWarp, ThompsonSampler
+    from vibelike.framework.quelibrium.intelligence.resonance import ResonanceField
+except ImportError:
+    # Fallback: Add ROOT to path for script execution
+    sys.path.insert(0, ROOT)
+    from task_classifier import TaskClassifier, confirm_classification
+    from framework.quelibrium.core.protocol import Protocol
+    from framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE
+    from framework.quelibrium.intelligence.retrieval import ChaosRetrieval, RiemannianWarp, ThompsonSampler
+    from framework.quelibrium.intelligence.resonance import ResonanceField
 
 
 # =============================================================================
@@ -162,12 +171,15 @@ class HardwareLogger:
     
     def log_triplet(self, query: str, context: list, response: str) -> dict:
         """Loggt ein Triplet (Query, Context, Response)."""
-        # Kontext als binärnahe Repräsentation
+        from vibelike.crypto import stable_hash_sha256, stable_hash_int
+        
+        # Kontext als binärnahe Repräsentation (mit stabilen Hashes)
         context_bin = [{
             "id": c.get("id"),
             "distance": c.get("distance", 0),
             "source": c.get("source", ""),
-            "content_hash": hash(str(c.get("content", "") or "")) % 2**32,
+            "content_hash": stable_hash_int(str(c.get("content", "") or ""), modulo=2**32),  # NEW: stable
+            "content_hash_sha256": stable_hash_sha256(str(c.get("content", "") or ""), hex_length=16),
             "content_len": len(str(c.get("content", "") or ""))
         } for c in context]
         
@@ -175,12 +187,14 @@ class HardwareLogger:
             "timestamp": time.time(),
             "type": "triplet",
             "query": query,
-            "query_hash": hash(query) % 2**32,
+            "query_hash": stable_hash_int(query, modulo=2**32),  # NEW: stable instead of hash()
+            "query_hash_sha256": stable_hash_sha256(query, hex_length=16),
             "context": context_bin,
             "context_count": len(context),
             "response": response,
             "response_len": len(response),
-            "response_hash": hash(response) % 2**32,
+            "response_hash": stable_hash_int(response, modulo=2**32),  # NEW: stable
+            "response_hash_sha256": stable_hash_sha256(response, hex_length=16),
         }
         self.logs.append(entry)
         
@@ -1385,8 +1399,9 @@ def print_header():
     print("=" * 60)
     print("CODE-VAULT TERMINAL")
     print("=" * 60)
-    print("[q] beenden | [l] logs | [s] state | [r] review | [c] clear | [w] workflow")
+    print("[q] beenden | [l] logs | [s] state | [r] review | [c] clear | [w] dispatch (hybrid)")
     print("[Agent-Modus] search_vault · read_file · query_ossifikat · verify · done")
+    print("[Hybrid: Wissensfragen → AgentLoop | Code-Aufgaben → 6-Phasen]")
     # ==== GEMINI-FLASH + MISTRAL INTEGRATION - BEGIN ====
     print("[??h] Rat: lokal + Haiku + Sonnet | [??g] Rat: lokal + Gemini-Flash + Pro")
     print("[??m] Rat: lokal + Mistral | [??a] Rat: ALLE 4 (lokal + Haiku + Gemini + Mistral)")
@@ -1538,13 +1553,14 @@ def research_mode(retriever):
 
 
 def start_workflow():
-    """Start the 5-phase development workflow."""
+    """Start the Hybrid Workflow Agent (Auto-Klassifikation: Wissen vs. Coding)."""
     if not WORKFLOW_AVAILABLE:
         print("[WARN] Workflow Agent nicht verfügbar. Installiere workflow_agent.py")
         return
 
     print("\n" + "=" * 60)
-    print("VIBELIKE WORKFLOW AGENT - 5-Phasen Development")
+    print("VIBELIKE HYBRID AGENT - Auto-Klassifikation")
+    print("(EXPLAIN → Schlank | IMPL/BUG_FIX/REFACTOR → 6-Phasen)")
     print("=" * 60)
 
     task = input("\n📝 Aufgabe eingeben: ").strip()
@@ -1555,7 +1571,7 @@ def start_workflow():
 
     try:
         agent = WorkflowAgent()
-        workflow = agent.run_workflow(task)
+        workflow = agent.dispatch(task)
 
         # Show workflow summary
         print("\n" + "=" * 60)
@@ -1669,13 +1685,13 @@ async def main():
                 research_mode(retriever)
                 continue
 
-            # Workflow via "briefing:" prefix
+            # Workflow via "briefing:" prefix (Hybrid: Auto-klassifiziert)
             if query.startswith("briefing:"):
                 task = query[9:].strip()
                 if task:
                     try:
                         agent = WorkflowAgent()
-                        workflow = agent.run_workflow(task)
+                        workflow = agent.dispatch(task)  # ← Hybrid: Auto-Klassifikation
                     except Exception as e:
                         print(f"\n[ERR] Workflow fehlgeschlagen: {e}")
                 else:
