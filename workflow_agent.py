@@ -32,20 +32,25 @@ from pathlib import Path
 from datetime import datetime
 
 # Imports
-from agent_loop import AgentLoop
-sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parent / "ossifikat"))
-
-
-from task_classifier import TaskClassifier
-from agent_loop import AgentLoop
+from vibelike.agent_loop import AgentLoop
+from vibelike.task_classifier import TaskClassifier
 
 
 class WorkflowAgent:
-    """Orchestriert einen 6-Phasen-Workflow über den primitiven AgentLoop."""
+    """Hybrid-Orchestrator mit zwei Pfaden:
+
+    - Wissens-Pfad (answer_knowledge): schlanker AgentLoop für reine
+      Wissensfragen (EXPLAIN) — lädt KEINE schweren Coding-Modelle.
+    - Coding-Pfad (run_workflow): monolithischer 6-Phasen-Workflow
+      (Briefing→Strategie→Plan→Execution→Verify→Commit) mit Codegen-Backend,
+      Reasoning-/Critic-Modellen, Retriever und Static-Validator. Diese
+      Komponenten werden lazy via _ensure_coding() verdrahtet.
+
+    dispatch() klassifiziert die Aufgabe und wählt den passenden Pfad.
+    """
 
     def __init__(self):
-        # Der WorkflowAgent nutzt den AgentLoop für alle Aktionen.
+        # ── Wissens-Welt (schlank): AgentLoop für EXPLAIN/Knowledge-Querys ──
         self.loop = AgentLoop()
 
         # TaskClassifier nutzt den Analyzer-Coder vom AgentLoop (Lazy-loaded bei Bedarf)
@@ -56,11 +61,141 @@ class WorkflowAgent:
         self.workflow_log = self.root / "logs" / "workflows.jsonl"
         self.workflow_log.parent.mkdir(parents=True, exist_ok=True)
 
+        # ── Coding-Welt (monolithisch): wird LAZY verdrahtet (_ensure_coding) ──
+        # Schwere Coder (Codegen/Reasoning/Critic) + Retriever + Static-Validator
+        # erst beim ersten Coding-Workflow laden, nicht für reine Wissensfragen.
+        self._coding_initialized = False
+        self.current_workflow = None
+        self._monolith_cache = None
+        self.healthpoint = None
+        self.healthpoint_enabled = True
+        
+        # ── Lazy-Init Platzhalter (werden in _ensure_coding() gesetzt) ──
+        self.qwen = None
+        self.analyzer_qwen = None
+        self.validator_qwen = None
+        self.reviewer = None
+        self.retriever = None
+        self.static_validator = None
+        self._executor = None
+        self.arch = None
+        self.code_review_enabled = False
+        self.block_select_enabled = False
 
-    async def run_workflow(self, task: str, search_mode: str = "balanced"):
+    def _ensure_coding(self) -> None:
+        """Lazy-Init der schweren Coding-Komponenten (vormals in __init__).
+
+        Verdrahtet Codegen-Backend (Claude/qwen), Reasoning- + Critic-Modelle,
+        Retriever, Static-Validator und den Thread-Pool für parallele Validatoren.
+        Idempotent — mehrfacher Aufruf ist ein No-Op.
         """
-        Führt den gesamten 6-Phasen-Workflow als eine Sequenz von primitiven
-        Schritten über den AgentLoop aus.
+        if self._coding_initialized:
+            return
+
+        # Lokale Imports (circular-import-Schutz, identisch zur alten __init__)
+        from vibelike.terminal import (QwenCoder, ClaudeCoder, CODEGEN_BACKEND, VIBELIKE_ARCH,
+                                       MODEL, VALIDATOR_MODEL, ANALYSIS_MODEL, CodeRetriever)
+        from vibelike.validator2 import StaticValidatorV2
+
+        # Retriever für Code-Vault-Integration in Planning/Block-Selektor
+        try:
+            self.retriever = CodeRetriever()
+        except Exception:
+            self.retriever = None
+
+        # "Ehrliche Mitte" (VIBELIKE_ARCH=mitte): Claude plant + reviewt,
+        # qwen-coder codet als Worker. Sonst: Default (Claude codet direkt).
+        self.reviewer = None
+        self.arch = VIBELIKE_ARCH
+        mitte = False
+        if VIBELIKE_ARCH == "mitte":
+            reviewer = ClaudeCoder(num_predict=8192)
+            if reviewer.usable:
+                mitte = True
+            else:
+                print("[WARN] Mitte-Modus braucht Claude → nicht usable, Fallback auf default")
+                self.arch = "default"
+
+        # Foreground: Code-Gen. Default Claude-API (semantische Instruktionstreue,
+        # die ~7b lokal nicht liefert); Fallback auf lokales qwen wenn Key/Paket fehlt.
+        # Mit Frontier-Backend wird der 1.5b-Code-Review zu Rauschen → deaktiviert.
+        self.code_review_enabled = True
+        if mitte:
+            self.qwen = QwenCoder(model=MODEL, num_predict=8192, keep_alive="30m")
+            self.reviewer = reviewer
+            self.code_review_enabled = False  # 1.5b reviewt Claude-Plan = Noise
+            print("[🧪 ARCH=mitte: Claude plant+reviewt, qwen-coder codet]")
+        elif CODEGEN_BACKEND == "claude":
+            claude = ClaudeCoder()
+            if claude.usable:
+                self.qwen = claude
+                self.code_review_enabled = False  # weak-reviewt-strong = Noise
+            else:
+                print("[WARN] Claude-Backend nicht verfügbar → Fallback auf lokales qwen2.5-coder")
+                self.qwen = QwenCoder()
+        else:
+            self.qwen = QwenCoder()
+
+        # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder).
+        # Mitte: Claude (Frontier > 8b, verhindert Drift an der Wurzel).
+        if mitte:
+            self.analyzer_qwen = ClaudeCoder(num_predict=4096)
+        else:
+            self.analyzer_qwen = QwenCoder(
+                model=ANALYSIS_MODEL, num_predict=2048, keep_alive="30m",
+            )
+
+        # Background: kleines Modell für parallelen LLM-Critic.
+        self.validator_qwen = QwenCoder(
+            model=VALIDATOR_MODEL, num_predict=350, keep_alive="60m",
+        )
+
+        # Deterministischer Static-Validator (kein LLM, keine Halluzination).
+        self.static_validator = StaticValidatorV2()
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self.block_select_enabled = True  # MSA-Glied 1: semantischer Block-Selektor
+
+        # Phase-Idiom Router: semantic routing für workflows
+        try:
+            from phase_idiom_router import PhaseIdiomRouter
+            self.idiom_router = PhaseIdiomRouter(
+                idiom_space_path="code_idioms.json",
+                confidence_threshold=0.5
+            )
+            print("[🎯 Phase-Idiom Router initialized (36 idioms)]")
+        except Exception as e:
+            print(f"[WARN] Phase-Idiom Router initialization failed: {e}")
+            self.idiom_router = None
+
+        self._coding_initialized = True
+
+    def dispatch(self, task: str):
+        """Hybrid-Einstieg: klassifiziert die Aufgabe und routet sie.
+
+        - EXPLAIN  → answer_knowledge() (schlanker AgentLoop, reine Wissensfrage)
+        - sonst    → run_workflow()     (monolithischer Coding-/Analyse-Workflow)
+
+        Reine Wissensfragen laufen so OHNE die schweren Coding-Modelle zu laden;
+        alle code-/analyse-erzeugenden Typen gehen in den vollen Phasen-Workflow.
+        """
+        try:
+            project_files = [p.name for p in sorted(self.root.glob("*.py"))[:15]]
+            classification = self.classifier.classify(task, project_files)
+            task_type = classification.get("type", "IMPLEMENTATION")
+        except Exception as e:
+            print(f"[WARN] dispatch-Klassifikation fehlgeschlagen: {e} → Coding-Workflow")
+            task_type = "IMPLEMENTATION"
+
+        if task_type == "EXPLAIN":
+            import asyncio
+            return asyncio.run(self.answer_knowledge(task))
+        return self.run_workflow(task)
+
+    async def answer_knowledge(self, task: str, search_mode: str = "balanced"):
+        """
+        Wissens-Pfad (schlank): beantwortet eine reine Wissensfrage über den
+        primitiven AgentLoop (search_vault → synthesize), OHNE die schweren
+        Coding-Modelle zu laden. Vormals 'run_workflow' (Version A).
         """
         print("\n" + "="*70)
         print(f"🚀 Starte Workflow für: {task}")
@@ -297,7 +432,7 @@ SCHLECHTE Kritikpunkte (nicht so):
 
     def _classify_validator_first_line(self, line: str) -> str:
         """Klassifiziert via choose-Atom. Return: predicate-name oder 'unknown'."""
-        from choose import choose, Predicate, PredicateBundle, Verdict, Decided
+        from vibelike.choose import choose, Predicate, PredicateBundle, Verdict, Decided
 
         def _accepts(prefixes):
             return lambda candidate: (
@@ -328,7 +463,7 @@ SCHLECHTE Kritikpunkte (nicht so):
 
         Returns: '🟢' | '🟡' | '🔴'
         """
-        from choose import choose, Predicate, PredicateBundle, Verdict, Decided
+        from vibelike.choose import choose, Predicate, PredicateBundle, Verdict, Decided
 
         lines = [l.strip() for l in text.splitlines() if l.strip()]
         if not lines:
@@ -429,7 +564,7 @@ SCHLECHTE Kritikpunkte (nicht so):
 
         Returns: 'approve' | 'reject' | 'change' | 'unknown'
         """
-        from choose import choose, Predicate, PredicateBundle, Verdict, Decided
+        from vibelike.choose import choose, Predicate, PredicateBundle, Verdict, Decided
 
         low = raw.lower().strip()
 
@@ -641,6 +776,35 @@ Schließe mit:
         },
     }
 
+    def _select_idiom(self, phase: str, task_type: str, requirement: str = "") -> tuple | None:
+        """
+        Select idiom for phase via semantic routing (if router available).
+        Falls back to hardcoded framing if router unavailable.
+
+        Args:
+            phase: "briefing", "planning_strategie", "execution", etc.
+            task_type: "ANALYSIS", "IMPLEMENTATION", "BUG_FIX", "REFACTOR", "EXPLAIN"
+            requirement: Natural language requirement for semantic matching
+
+        Returns:
+            (idiom, score) tuple or None if router unavailable
+        """
+        if not self.idiom_router:
+            return None
+
+        try:
+            idiom, score = self.idiom_router.route(
+                phase=phase,
+                task_type=task_type,
+                requirement=requirement or f"{phase} for {task_type}",
+                context={}
+            )
+            print(f"[🎯 IDIOM] {phase}/{task_type} → {idiom.id} (score={score:.2f})")
+            return (idiom, score)
+        except Exception as e:
+            print(f"[WARN] Idiom routing failed: {e} → using hardcoded framing")
+            return None
+
     def _briefing_framing(self, task_type: str) -> dict[str, str]:
         """Wählt Rolle + Sektionsstruktur für den Briefing-Prompt.
 
@@ -668,7 +832,13 @@ Schließe mit:
         project_info = self._gather_project_info()
         print("[📂 Lese Projektcode...]")
         code_overview = self._extract_code_overview()
-        focused_files = self._read_focused_files(task)
+        
+        # Budget für File-Reading: ANALYSIS braucht mehr Code (für Vollanalyse)
+        if task_type == "ANALYSIS":
+            focused_files = self._read_focused_files(task, star_budget=50000, skeleton_budget=8000)
+        else:
+            focused_files = self._read_focused_files(task)
+        
         authoritative = self._authoritative_file_list()
         print(f"   Übersicht: {code_overview.count('📄')} Dateien strukturiert")
         print(f"   Volle Inhalte: {focused_files.count('═══')//2} Dateien gelesen\n")
@@ -696,8 +866,19 @@ Schließe mit:
         selfcode_block = (f"\nSEMANTISCH RELEVANTER PROJEKTCODE (Vektor-Retrieval):\n"
                           f"{selfcode_ctx}\n") if selfcode_ctx else ""
 
-        # Typ-spezifisches Framing (Rolle + Sektionen + Abschluss)
-        framing = self._briefing_framing(task_type)
+        # Typ-spezifisches Framing via Idiom Router (or fallback to hardcoded)
+        self._ensure_coding()
+        idiom_result = self._select_idiom("briefing", task_type, task)
+        if idiom_result:
+            idiom, score = idiom_result
+            # Map idiom patterns to framing dict (system_prompt → role, response_format → body)
+            framing = {
+                "role": idiom.patterns.get("system_prompt", ""),
+                "body": idiom.patterns.get("response_format", ""),
+            }
+        else:
+            # Fallback to hardcoded framing
+            framing = self._briefing_framing(task_type)
 
         # Qwen analysiert — Authoritative File List ZUERST + ZULETZT (Sandwich)
         analysis_prompt = f"""{framing['role']}
@@ -1757,7 +1938,7 @@ Regeln:
 
         Returns: 'in_root' | 'in_tree' | 'declared_new' | 'hallucinated'
         """
-        from choose import choose, Predicate, PredicateBundle, Verdict, Decided
+        from vibelike.choose import choose, Predicate, PredicateBundle, Verdict, Decided
 
         def _accepts_in(values):
             return lambda candidate: (
@@ -2170,7 +2351,7 @@ ANWEISUNG:
 
         Returns: einer der attempts-Dicts (immer ein gültiger).
         """
-        from choose import choose, Predicate, PredicateBundle, Verdict, Decided, Undecidable
+        from vibelike.choose import choose, Predicate, PredicateBundle, Verdict, Decided, Undecidable
 
         # Newest-first: bei gleichem Verdict gewinnt der neuere Versuch
         candidates = list(reversed(attempts))
@@ -2859,6 +3040,10 @@ Diese Hinweise sollten kritisch überprüft werden.
           - BUG_FIX:        wie IMPLEMENTATION, aber OHNE Strategie-Gate (direkt Fix-Plan)
           - REFACTOR:       wie IMPLEMENTATION, Verify prüft Verhaltens-Invarianz
         """
+        # Coding-Komponenten lazy verdrahten (Codegen/Reasoning/Critic/Retriever/
+        # Static-Validator/Executor). No-Op bei Retry-Iterationen.
+        self._ensure_coding()
+
         # PHASE 0: Task-Klassifikation
         classification = None
         if iteration == 0:  # nur beim ersten Lauf klassifizieren, nicht bei Retries
@@ -2869,7 +3054,7 @@ Diese Hinweise sollten kritisch überprüft werden.
             try:
                 project_files = [p.name for p in sorted(self.root.glob("*.py"))[:15]]
                 classification = self.classifier.classify(task, project_files)
-                from task_classifier import confirm_classification
+                from vibelike.task_classifier import confirm_classification
                 task_type = confirm_classification(classification)
             except Exception as e:
                 print(f"[WARN] Klassifikation fehlgeschlagen: {e} → fallback IMPLEMENTATION")
@@ -2946,7 +3131,7 @@ Diese Hinweise sollten kritisch überprüft werden.
         if not self.healthpoint_enabled or self.healthpoint is None:
             return
         try:
-            from healthpoint import check_drift
+            from vibelike.healthpoint import check_drift
             verdict = check_drift(self.healthpoint, phase_name, output or "", self.analyzer_qwen)
         except Exception as e:
             print(f"   [Healthpoint-Check übersprungen: {e}]")
@@ -3103,7 +3288,7 @@ Diese Hinweise sollten kritisch überprüft werden.
         # User-Aufgabe selbst — nicht die spaetere Briefing-Reformulierung. Sonst
         # kann das Briefing bereits driften, ohne dass wir es bemerken.
         if self.healthpoint_enabled and iteration == 0:
-            from healthpoint import Healthpoint
+            from vibelike.healthpoint import Healthpoint
             self.healthpoint = Healthpoint(goal=task)
             print(f"\n   🎯 Healthpoint versiegelt: {task[:80]}")
 
