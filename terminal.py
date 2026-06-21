@@ -68,13 +68,14 @@ except ImportError:
 # Konfiguration
 # =============================================================================
 
-# Foreground = 7b coder (4.9 GB, 100% GPU), Validator = 1.5b coder (1.4 GB, 100% GPU).
-# Zusammen ~6.3 GB Modelle + Desktop = ~7.3 GB / 8.5 GB VRAM — passt parallel.
-# StaticValidator fängt die fachliche Schwäche des 1.5b-Critics deterministisch ab.
-MODEL = os.environ.get("VIBELIKE_QWEN_MODEL", "qwen2.5-coder:1.5b")
-VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", "qwen2.5-coder:1.5b")
+# Foreground = 6.7b code model (better code quality than 1.5b), local via Ollama.
+# deepseek-coder:6.7b: Superior code understanding + generation (vs qwen1.5b).
+# GPU-optimiert: deepseek-coder:6.7b (fits 8GB VRAM, ~0.5s warm, better quality).
+# Langfristiges Ziel: Weg von API wenn lokale Modelle gut genug werden.
+MODEL = os.environ.get("VIBELIKE_CODER_MODEL", "deepseek-coder:6.7b")
+VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", "deepseek-coder:6.7b")
 # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder für Analyse).
-# GPU-optimiert: qwen2.5-coder:1.5b (100% GPU fit auf 8GB VRAM, 0.3s warm)
+# GPU-optimiert: deepseek-coder:6.7b (better than 1.5b, still fits 8GB VRAM)
 # Für Q&A: Claude Haiku (schnell, genug Qualität für Knowledge-Fragen)
 ANALYSIS_MODEL = os.environ.get("VIBELIKE_ANALYSIS_MODEL", "claude-haiku-4-5-20251001")
 # Code-Gen-Backend: "claude" (Frontier-API), "gemini" (Gemini-API),
