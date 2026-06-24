@@ -1,26 +1,19 @@
 """Adapter to store harvested documents as ossifikat triples."""
 
-import sys
-from pathlib import Path
+import warnings
 from typing import Optional
-
-# Add ossifikat to path for local development
-_root = Path(__file__).parent.parent
-if str(_root / "ossifikat") not in sys.path:
-    sys.path.insert(0, str(_root / "ossifikat"))
 
 try:
     from ossifikat.store import OssifikatStore
 except ImportError:
+    warnings.warn("ossifikat not available; HarvestAdapter will not persist triples", ImportWarning)
     OssifikatStore = None
 
 try:
-    from logdb.db import LogDB
+    from vibelike.logdb.db import LogDB
 except ImportError:
-    try:
-        from vibelike.logdb.db import LogDB
-    except ImportError:
-        LogDB = None
+    warnings.warn("LogDB not available; HarvestAdapter will not log events", ImportWarning)
+    LogDB = None
 
 
 class HarvestAdapter:

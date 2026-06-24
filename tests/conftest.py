@@ -9,7 +9,6 @@ import os
 # Add project root to sys.path to allow imports from the project
 # This is crucial for the test environment
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 
 @pytest.fixture(scope="session")
@@ -27,7 +26,7 @@ def temp_db_path(tmp_path: Path) -> str:
 @pytest.fixture
 def queue(temp_db_path: str):
     """Fixture for the RequestQueue."""
-    from reqqueue.manager import RequestQueue
+    from vibelike.reqqueue.manager import RequestQueue
     # Use a temporary database for isolation
     return RequestQueue(db_path=temp_db_path)
 
@@ -35,7 +34,7 @@ def queue(temp_db_path: str):
 @pytest.fixture
 def sandbox_manager(tmp_path: Path):
     """Fixture for the SandboxManager."""
-    from sandbox.manager import SandboxManager
+    from vibelike.sandbox.manager import SandboxManager
     # Use a temporary directory for sandboxes
     return SandboxManager(sandbox_base=tmp_path)
 
@@ -43,8 +42,8 @@ def sandbox_manager(tmp_path: Path):
 @pytest.fixture
 def tool_registry(tmp_path: Path):
     """Fixture for the ToolRegistry."""
-    from tools.registry import ToolRegistry
-    from tools.cache import ToolCache
+    from vibelike.tools.registry import ToolRegistry
+    from vibelike.tools.cache import ToolCache
     # Use a temporary directory for the cache
     cache = ToolCache(cache_dir=str(tmp_path))
     return ToolRegistry(tools_dir=str(tmp_path), cache=cache)
@@ -53,27 +52,27 @@ def tool_registry(tmp_path: Path):
 @pytest.fixture
 def harvest_adapter(temp_db_path: str):
     """Fixture for the HarvestAdapter."""
-    from adapters.harvest_adapter import HarvestAdapter
+    from vibelike.adapters.harvest_adapter import HarvestAdapter
     return HarvestAdapter(ossifikat_db_path=temp_db_path)
 
 
 @pytest.fixture
 def tools_adapter(temp_db_path: str):
     """Fixture for the ToolsAdapter."""
-    from adapters.tools_adapter import ToolsAdapter
+    from vibelike.adapters.tools_adapter import ToolsAdapter
     return ToolsAdapter(ossifikat_db_path=temp_db_path)
 
 
 @pytest.fixture
 def terminal_adapter(temp_db_path: str):
     """Fixture for the TerminalAdapter."""
-    from adapters.terminal_adapter import TerminalAdapter
+    from vibelike.adapters.terminal_adapter import TerminalAdapter
     return TerminalAdapter(ossifikat_db_path=temp_db_path)
 
 @pytest.fixture
 def echo_tool(tool_registry: "ToolRegistry"):
     """A simple 'echo' tool for testing, which is manually registered."""
-    from tools.models import Tool
+    from vibelike.tools.models import Tool
     
     echo_tool_def = {
         "name": "echo",

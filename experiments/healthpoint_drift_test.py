@@ -15,9 +15,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
 
-from healthpoint import Healthpoint, check_drift
+from vibelike.healthpoint import Healthpoint, check_drift
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 JUDGE_MODEL = "qwen3:8b"

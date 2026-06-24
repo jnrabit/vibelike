@@ -4,11 +4,10 @@
 from pathlib import Path
 
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.request import Request
-from tools.registry import ToolRegistry
-from tools.models import Tool, TripleTemplate
+from vibelike.models.request import Request
+from vibelike.tools.registry import ToolRegistry
+from vibelike.tools.models import Tool, TripleTemplate
 
 
 # fixture

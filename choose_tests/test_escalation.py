@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from choose import Decided, Predicate, PredicateBundle, Verdict, choose
+from vibelike.choose import Decided, Predicate, PredicateBundle, Verdict, choose
 
 
 @dataclass

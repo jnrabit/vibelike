@@ -63,73 +63,64 @@ except ImportError:
     from framework.quelibrium.intelligence.retrieval import ChaosRetrieval, RiemannianWarp, ThompsonSampler
     from framework.quelibrium.intelligence.resonance import ResonanceField
 
+# Import UI helpers (extracted to separate module)
+try:
+    from terminal_ui import clear_screen, print_header, print_state, print_logs, review_triples, research_mode
+except ImportError:
+    # Fallback: Define minimal stubs if terminal_ui not available
+    def clear_screen(): os.system("cls" if os.name == "nt" else "clear")
+    def print_header(): print("CODE-VAULT TERMINAL")
+    def print_state(r): print("State info not available")
+    def print_logs(): print("Logs not available")
+    def review_triples(r): print("Review not available")
+    def research_mode(r): print("Research mode not available")
+
 
 # =============================================================================
-# Konfiguration
+# Konfiguration (all settings now centralized in config.py via Pydantic)
 # =============================================================================
 
-# Foreground = 6.7b code model (better code quality than 1.5b), local via Ollama.
-# deepseek-coder:6.7b: Superior code understanding + generation (vs qwen1.5b).
-# GPU-optimiert: deepseek-coder:6.7b (fits 8GB VRAM, ~0.5s warm, better quality).
-# Langfristiges Ziel: Weg von API wenn lokale Modelle gut genug werden.
-MODEL = os.environ.get("VIBELIKE_CODER_MODEL", "deepseek-coder:6.7b")
-VALIDATOR_MODEL = os.environ.get("VIBELIKE_VALIDATOR_MODEL", "deepseek-coder:6.7b")
-# Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder für Analyse).
-# GPU-optimiert: deepseek-coder:6.7b (better than 1.5b, still fits 8GB VRAM)
-# Für Q&A: Claude Haiku (schnell, genug Qualität für Knowledge-Fragen)
-ANALYSIS_MODEL = os.environ.get("VIBELIKE_ANALYSIS_MODEL", "claude-haiku-4-5-20251001")
-# Code-Gen-Backend: "claude" (Frontier-API), "gemini" (Gemini-API),
-# "council" (Lokal + Claude + Gemini parallel → Sonnet-Synthese), oder "ollama" (lokal).
-# Default claude — fällt auf lokal zurück wenn Key/Paket fehlt.
-CODEGEN_BACKEND = os.environ.get("VIBELIKE_CODEGEN_BACKEND", "claude").lower()
-CODEGEN_MODEL = os.environ.get("VIBELIKE_CODEGEN_MODEL", "claude-sonnet-4-6")
-# Rat-Modus (Council, via '??'-Präfix): A=lokal (KNOWLEDGE_ANSWER_MODEL/qwen3),
-# B=zugeschaltetes Frontier (Haiku), Synthese=stärkeres Modell (Sonnet) → Konsens+Unterschiede.
-COUNCIL_MODEL = os.environ.get("VIBELIKE_COUNCIL_MODEL", "claude-haiku-4-5-20251001")
-SYNTH_MODEL = os.environ.get("VIBELIKE_SYNTH_MODEL", "claude-sonnet-4-6")
+from config import settings
 
-# ==== GEMINI-FLASH INTEGRATION - BEGIN ====
-# Gemini-Rat-Modi: ??g = lokal + gemini-2.5-flash, ??a = lokal + Haiku + gemini-2.5-flash
-GEMINI_COUNCIL_MODEL = os.environ.get("VIBELIKE_GEMINI_COUNCIL_MODEL", "gemini-2.5-flash")
-# HINWEIS: Die Gemini API hat Quote-Limits. Bei hohen max_output_tokens kommt 503-Fehler.
-# Mit max_output_tokens <= 256 funktioniert es, aber Antworten sind kurz.
-GEMINI_SYNTH_MODEL = os.environ.get("VIBELIKE_GEMINI_SYNTH_MODEL", "gemini-2.5-pro")
-# ==== GEMINI-FLASH INTEGRATION - END ====
+# Model configuration (from config.py)
+MODEL = settings.coder_model  # "deepseek-coder:6.7b-instruct"
+VALIDATOR_MODEL = settings.validator_model
+ANALYSIS_MODEL = settings.analysis_model  # "claude-haiku-4-5-20251001"
+CODEGEN_BACKEND = settings.codegen_backend
+CODEGEN_MODEL = settings.codegen_model
+COUNCIL_MODEL = settings.council_model
+SYNTH_MODEL = settings.synth_model
+GEMINI_COUNCIL_MODEL = settings.gemini_council_model
+GEMINI_SYNTH_MODEL = settings.gemini_synth_model
+MISTRAL_COUNCIL_MODEL = settings.mistral_council_model
+MISTRAL_SYNTH_MODEL = settings.mistral_synth_model
 
-# ==== MISTRAL INTEGRATION - BEGIN ====
-# Mistral-Rat-Modi: ??m = lokal + mistral-large, ??a erweitert um Mistral
-MISTRAL_COUNCIL_MODEL = os.environ.get("VIBELIKE_MISTRAL_COUNCIL_MODEL", "mistral-large-latest")
-MISTRAL_SYNTH_MODEL = os.environ.get("VIBELIKE_MISTRAL_SYNTH_MODEL", "mistral-large-latest")
-# RÜCKGÄNGIG MACHEN: Lösche diese beiden Zeilen.
-# ==== MISTRAL INTEGRATION - END ====
+# Vault configuration
+KNOWLEDGE_VAULT_FILE = settings.knowledge_vault_file
+KNOWLEDGE_CACHE_FILE = settings.knowledge_cache_file
+DUAL_VAULT = settings.dual_vault
+QUERY_DECOMPOSE = settings.query_decompose
+KNOWLEDGE_ANSWER_MODEL = settings.knowledge_answer_model
 
-# Großer Wissens-Vault: general-knowledge Korpus (188k Docs), PARALLEL zum Code-Vault
-# abgefragt. Beide werden je Query durchsucht (ChaosRetrieval-Recall) und per Cosine
-# auf gemeinsamer Skala fair zusammengeführt. VIBELIKE_DUAL_VAULT=0 schaltet ihn aus.
-KNOWLEDGE_VAULT_FILE = os.environ.get(
-    "VIBELIKE_KNOWLEDGE_VAULT", "/home/jnrabit/collect/data/monolith_archive_unified.json")
-KNOWLEDGE_CACHE_FILE = os.environ.get(
-    "VIBELIKE_KNOWLEDGE_CACHE", "/home/jnrabit/collect/data/monolith_embedding_cache.pkl")
-DUAL_VAULT = os.environ.get("VIBELIKE_DUAL_VAULT", "1") != "0"
-# Query-Decomposition: mehr-aspektige Fragen in Teilfragen zerlegen + per RRF fusionieren,
-# damit crossdomäne Anker alle getroffen werden (nicht nur der dominante). Nur bei
-# Mehr-Aspekt-Heuristik aktiv, einfache Queries bleiben schnell. =0 schaltet aus.
-QUERY_DECOMPOSE = os.environ.get("VIBELIKE_QUERY_DECOMPOSE", "1") != "0"
-# REPL-Antwortmodell für Q&A über die Vaults: GENERALIST (qwen3:8b), nicht der Coder —
-# sonst weist das Modell Nicht-Code-Fragen ab ("ich kann nur Code").
-KNOWLEDGE_ANSWER_MODEL = os.environ.get("VIBELIKE_KNOWLEDGE_ANSWER_MODEL", MODEL)
-# Kanonische ossifikat-DB — EINE Quelle (Dashboard/Web lesen dieselbe). Confirmte Fakten
-# von hier erden Antworten (Grounding-Schleife). =0/leer schaltet Fakten-Grounding aus.
-OSSIFIKAT_DB = os.environ.get("VIBELIKE_OSSIFIKAT_DB", os.path.join(ROOT, "data", "ossifikat.db"))
-GROUND_ON_FACTS = os.environ.get("VIBELIKE_GROUND_ON_FACTS", "1") != "0"
-# Architektur-Modus: "default" (Claude codet) oder "mitte" (Claude plant/reviewt,
-# qwen-coder codet als Worker). Experiment "ehrliche Mitte".
-VIBELIKE_ARCH = os.environ.get("VIBELIKE_ARCH", "default").lower()
-OLLAMA_URL = "http://localhost:11434/api/generate"
-LOG_FILE = os.path.join(ROOT, "logs", "triplets.jsonl")
+# Ossifikat & facts
+OSSIFIKAT_DB = settings.ossifikat_db
+GROUND_ON_FACTS = settings.ground_on_facts
 
-# Erstelle Log-Verzeichnis
-os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+# Architecture
+VIBELIKE_ARCH = settings.arch
+POWER_USER = settings.power_user
+
+# API endpoints
+OLLAMA_URL = settings.ollama_url
+LOG_FILE = settings.log_file
+
+# Note: Log directories are now created by config.py in model_post_init()
+
+# Initialize terminal_ui with runtime config
+import terminal_ui
+terminal_ui.POWER_USER = POWER_USER
+terminal_ui.LOG_FILE = LOG_FILE
+terminal_ui.ADAPTERS_AVAILABLE = ADAPTERS_AVAILABLE
 
 
 # =============================================================================
@@ -409,6 +400,161 @@ class CodeRetriever:
 
         return docs, state_before, state_after
 
+    def intensive_search(self, query: str, vault_type: str = "hybrid", k: int = 10,
+                        max_hops: int = 1, max_docs: int = 30, rerank: bool = True,
+                        qwen_coder=None) -> tuple:
+        """
+        Intensive Retrieval: Over-fetch → Rerank → Optional Multi-Hop → Full Files.
+        
+        Args:
+            query: Suchquery
+            vault_type: "code" | "knowledge" | "hybrid" | "none" (aus vault_router)
+            k: Finale Anzahl Docs (wird zu Top-k nach Reranking)
+            max_hops: 1=Single Query (default), 2-3=Multi-Hop Follow-up Queries
+            max_docs: Maximum Over-fetch (default 30, dann rerankt zu k)
+            rerank: deepseek-Reranking via qwen_coder (optional, braucht qwen_coder)
+            qwen_coder: QwenCoder instance für Reranking (optional)
+        
+        Returns:
+            (docs, state_before, state_after) wie .search()
+        """
+        if vault_type == "none":
+            print("[⚠️  intensive_search] vault_type=none → keine Retrieval")
+            return [], None, None
+        
+        state_before = self.hw_logger.log_state(query, "intensive_search_start")
+        fetch_n = max_docs if max_docs > k else k * 3
+        
+        print(f"[🔍 intensive_search] query='{query[:50]}...' vault={vault_type} "
+              f"fetch_n={fetch_n} hops={max_hops}")
+        
+        try:
+            # STEP 1: Over-fetch initial results
+            query_vec = self._embed(query)
+            initial_docs = self._multi_search(query_vec, fetch_n)
+            
+            if not initial_docs:
+                print(f"[⚠️  intensive_search] Keine Docs gefunden für Query")
+                state_after = self.hw_logger.log_state(query, "intensive_search_end")
+                return [], state_before, state_after
+            
+            print(f"  → Schritt 1: Over-fetch {len(initial_docs)} Docs")
+            
+            # STEP 2: Rerank via deepseek (optional)
+            if rerank and qwen_coder and len(initial_docs) > k:
+                initial_docs = self._rerank_with_deepseek(query, initial_docs, k, qwen_coder)
+                print(f"  → Schritt 2: Reranked zu Top {k}")
+            else:
+                initial_docs = initial_docs[:k]
+            
+            # STEP 3: Multi-Hop (optional)
+            all_docs = dict({(d.get("id"), d.get("vault")): d for d in initial_docs})
+            if max_hops > 1 and qwen_coder:
+                for hop in range(2, max_hops + 1):
+                    followup_queries = self._extract_followup_queries(initial_docs[:3], query)
+                    if not followup_queries:
+                        break
+                    print(f"  → Schritt {hop+1}: Follow-up Queries: {followup_queries[:2]}")
+                    
+                    for fq in followup_queries[:2]:  # Max 2 Follow-ups pro Hop
+                        fq_vec = self._embed(fq)
+                        hop_docs = self._multi_search(fq_vec, fetch_n // 2)
+                        for doc in hop_docs:
+                            key = (doc.get("id"), doc.get("vault"))
+                            if key not in all_docs:
+                                all_docs[key] = doc
+                    
+                    initial_docs = list(all_docs.values())[:k]
+            
+            # STEP 4: Full Files für Top-3, Skeletons für Rest
+            result_docs = self._enrich_with_full_content(initial_docs[:k])
+            
+            state_after = self.hw_logger.log_state(query, "intensive_search_end")
+            return result_docs, state_before, state_after
+            
+        except Exception as e:
+            print(f"[ERR] intensive_search fehlgeschlagen: {e}")
+            state_after = self.hw_logger.log_state(query, "intensive_search_error")
+            return [], state_before, state_after
+
+    def _rerank_with_deepseek(self, query: str, docs: list, k: int, qwen_coder) -> list:
+        """
+        Reranke Top-Docs via deepseek (Grammar-Constrained).
+        Gibt Top-k Docs in neuer Reihenfolge zurück.
+        """
+        if not docs or not qwen_coder:
+            return docs[:k]
+        
+        # Baue Doc-Listing
+        doc_list = "\n".join(
+            f"{i+1}. [{d.get('source', '?')}] {d.get('title', 'untitled')[:60]}"
+            for i, d in enumerate(docs[:15])
+        )
+        
+        prompt = f"""Aufgabe: {query}
+
+Verfügbare Dokumentationen (nach initialer Suche):
+{doc_list}
+
+Welche {min(k, len(docs))} Docs sind für diese Aufgabe AM relevantesten?
+Antworte als JSON: {{"ranked_indices": [0, 2, 1, ...]}} (in Reihenfolge der Relevanz, 0-basiert)"""
+        
+        try:
+            raw = qwen_coder.generate(prompt, temperature=0.0, stream=False)
+            m = re.search(r'\[.*?\]', raw)
+            if m:
+                indices = json.loads(m.group(0))
+                ranked = [docs[i] for i in indices if i < len(docs)]
+                if ranked:
+                    print(f"    ✓ Reranked via deepseek ({len(ranked)} selected)")
+                    return ranked
+        except Exception as e:
+            print(f"    ⚠️  Rerank fehlgeschlagen: {e}")
+        
+        return docs[:k]
+
+    def _extract_followup_queries(self, top_docs: list, original_query: str, max_queries: int = 2) -> list:
+        """
+        Extrahiere Folge-Fragen aus Top-Docs (Imports, Funktionsaufrufe, Typen, etc.).
+        Einfache Heuristik: Scan nach import/from, call patterns, type hints.
+        """
+        followups = []
+        for doc in top_docs[:3]:
+            content = doc.get("content", "")
+            # Heuristic: Imports extrahieren
+            imports = re.findall(r'from ([\w.]+) import|import ([\w.]+)', content)
+            for imp in imports[:1]:
+                mod = imp[0] or imp[1]
+                if mod and len(mod) > 2:
+                    followups.append(f"How does {mod} module work?")
+            
+            # Funktionsaufrufe
+            calls = re.findall(r'\b([a-z_]\w+)\s*\(', content)
+            if calls:
+                followups.append(f"What does {calls[0]}() function do?")
+        
+        return followups[:max_queries]
+
+    def _enrich_with_full_content(self, docs: list, full_for_top: int = 3) -> list:
+        """
+        Enriche Docs mit vollem Inhalt (Top-3) oder Skeleton (Rest).
+        """
+        result = []
+        for i, doc in enumerate(docs):
+            if i < full_for_top:
+                # Full content (schon vorhanden)
+                result.append(doc)
+            else:
+                # Skeleton: nur titel + first 500 chars
+                doc_copy = dict(doc)
+                content = doc.get("content", "")
+                if len(content) > 500:
+                    doc_copy["content"] = content[:500] + "\n... [gekürzt]"
+                doc_copy["is_skeleton"] = True
+                result.append(doc_copy)
+        
+        return result
+
     def _remote_search(self, query: str, k: int, source_boost: dict = None, mode: str = "balanced") -> tuple:
         """Suche über den warmen Retrieval-Daemon. hw_logger bleibt lokal (Code-Vault)
         für Telemetrie/Triplet-Log. Daemon nicht erreichbar ⇒ leeres Ergebnis (kein
@@ -678,14 +824,14 @@ class QwenCoder:
 
         try:
             if not stream:
-                response = self.session.post(OLLAMA_URL, json=payload, timeout=600)
+                response = self.session.post(OLLAMA_URL, json=payload, timeout=60)
                 if response.status_code == 200:
                     return response.json().get("response", "")
                 return f"[ERR] HTTP {response.status_code}"
 
             # Streaming: zeilenweise JSON-Chunks parsen, jedes "response"-Feld printen
             chunks = []
-            with self.session.post(OLLAMA_URL, json=payload, stream=True, timeout=600) as resp:
+            with self.session.post(OLLAMA_URL, json=payload, stream=True, timeout=60) as resp:
                 if resp.status_code != 200:
                     return f"[ERR] HTTP {resp.status_code}"
                 for raw in resp.iter_lines(decode_unicode=True):
@@ -1088,9 +1234,8 @@ def build_system_prompt(context: list) -> str:
                       "Widerspruch haben sie Vorrang vor den QUELLEN):\n" + fl + "\n\n")
 
     if not sources:
-        body = ("Du bist ein präziser, sachkundiger Assistent. Antworte auf Deutsch. "
-                "Bei Code: Markdown-Codeblöcke mit Sprachen-Tag. Wenn du etwas nicht "
-                "sicher weißt, sage es explizit.")
+        body = ("Du bist ein sachkundiger Assistent. Antworte auf Deutsch, knapp und präzise. "
+                "Code in Markdown-Blöcken. Wenn unsicher: sag es explizit.")
         return head + fact_block + body
 
     src = []
@@ -1103,12 +1248,11 @@ def build_system_prompt(context: list) -> str:
         content = str(raw)[:450] if not isinstance(raw, str) else raw[:450]
         src.append(f"QUELLE {i+1} (d={dist:.2f}, {tag}):\n{content}")
 
-    rules = ("Du bist ein präziser Recherche- und Fachassistent.\n\n"
-             "REGELN:\n"
-             "1. Antworte primär anhand der VERBÜRGTEN FAKTEN und QUELLEN — Fakten haben Vorrang.\n"
-             "2. Code immer in Markdown-Codeblöcken mit Sprachen-Tag.\n"
-             "3. Reichen sie nicht, sag das explizit und ergänze vorsichtig aus eigenem Wissen.\n"
-             "4. Präzise, auf Deutsch.\n\n"
+    rules = ("Du bist ein präziser Recherche- und Fachassistent. Antworte auf Deutsch.\n"
+             "1. Nutze die VERBÜRGTEN FAKTEN und QUELLEN unten.\n"
+             "2. Code in Markdown mit Sprachen-Tag.\n"
+             "3. Falls nicht ausreichend: sag das und ergänze vorsichtig.\n"
+             "4. Sei knapp und präzise.\n\n"
              "QUELLEN:\n\n")
     return head + fact_block + rules + "\n\n".join(src)
 
@@ -1390,167 +1534,9 @@ def run_council_all(query: str, system_prompt: str, local_coder, council_coder, 
 # =============================================================================
 # CLI Interface
 # =============================================================================
-
-def clear_screen():
-    os.system("cls" if os.name == "nt" else "clear")
-
-
-def print_header():
-    clear_screen()
-    print("=" * 60)
-    print("CODE-VAULT TERMINAL")
-    print("=" * 60)
-    print("[q] beenden | [l] logs | [s] state | [r] review | [c] clear | [w] dispatch (hybrid)")
-    print("[Agent-Modus] search_vault · read_file · query_ossifikat · verify · done")
-    print("[Hybrid: Wissensfragen → AgentLoop | Code-Aufgaben → 6-Phasen]")
-    # ==== GEMINI-FLASH + MISTRAL INTEGRATION - BEGIN ====
-    print("[??h] Rat: lokal + Haiku + Sonnet | [??g] Rat: lokal + Gemini-Flash + Pro")
-    print("[??m] Rat: lokal + Mistral | [??a] Rat: ALLE 4 (lokal + Haiku + Gemini + Mistral)")
-    # RÜCKGÄNGIG MACHEN: Ersetze durch die alte Version ohne Mistral.
-    # ==== GEMINI-FLASH + MISTRAL INTEGRATION - END ====
-    print("-" * 60)
-
-
-def print_state(retriever):
-    """Zeige aktuellen Hardware-State."""
-    state = retriever.protocol.get_hardware_state()
-    lorenz = retriever.protocol.get_lorenz_params()
-    
-    print("\n" + "=" * 40)
-    print("HARDWARE STATE")
-    print("=" * 40)
-    print(f"Lorenz: x1={state['x1']:.2f} y1={state['y1']:.2f} z1={state['z1']:.2f} w1={state['w1']:.2f}")
-    print(f"        x2={state['x2']:.2f} y2={state['y2']:.2f}")
-    print(f"Thermo: entropy={state['entropy']:.2f} temp={state['temperature']:.2f} cortex={state['cortex_bias']:.2f}")
-    print(f"Params: rho={lorenz['rho']:.2f} sigma={lorenz['sigma']:.2f} beta={lorenz['beta']:.2f}")
-    print(f"        reason={lorenz['reason']:.2f} cycle={lorenz['cycle']}")
-    print("=" * 40 + "\n")
-
-
-def print_logs():
-    """Zeige letzte Log-Einträge."""
-    if not os.path.exists(LOG_FILE):
-        print("\n[INFO] Keine Logs vorhanden")
-        return
-    
-    print("\n" + "=" * 40)
-    print("LOGS (letzte 10)")
-    print("=" * 40)
-    
-    with open(LOG_FILE, "r") as f:
-        lines = f.readlines()
-    
-    for line in lines[-10:]:
-        entry = json.loads(line)
-        if entry["type"] == "triplet":
-            print(f"[{time.strftime('%H:%M:%S', time.localtime(entry['timestamp']))}] QUERY: {entry['query'][:50]}...")
-            print(f"  -> Context: {entry['context_count']} docs, Response: {entry['response_len']} chars")
-        elif entry["type"] == "hardware_state":
-            print(f"[{time.strftime('%H:%M:%S', time.localtime(entry['timestamp']))}] HARDWARE: entropy={entry['thermodynamics']['entropy']:.2f} temp={entry['thermodynamics']['temperature']:.2f}")
-    
-    print("=" * 40 + "\n")
-
-
-def review_triples(retriever):
-    """Review ossifikat staging with TerminalAdapter."""
-    if not ADAPTERS_AVAILABLE or not retriever.terminal_adapter:
-        print("[WARN] Ossifikat TerminalAdapter nicht verfügbar")
-        return
-
-    try:
-        from ossifikat.cli import review_staging
-        print("[REVIEW] Öffne ossifikat Staging-Review...")
-        review_staging()
-    except ImportError:
-        print("[WARN] ossifikat nicht installiert: pip install ossifikat")
-    except Exception as e:
-        print(f"[ERR] Review fehlgeschlagen: {e}")
-
-
-def research_mode(retriever):
-    """Deep multi-retrieval mode for exploration without workflow start."""
-    print("\n" + "=" * 60)
-    print("RESEARCH MODE - Tiefe Vault-Exploration")
-    print("=" * 60)
-
-    query = input("\n🔍 Research-Query eingeben: ").strip()
-    if not query:
-        print("❌ Keine Query eingegeben.")
-        return
-
-    # DE->EN Pre-Retrieval Hook (deutsche Queries -> englische Suche)
-    search_query = query
-    try:
-        from query_translator import QueryTranslator
-        translator = QueryTranslator()
-        tx = translator.translate(query)
-        if not tx["skipped"] and tx["translated"] != tx["original"]:
-            search_query = tx["translated"]
-            cache_marker = "📦" if tx["cache_hit"] else "🌐"
-            print(f"  {cache_marker} Translated: \"{search_query}\"  ({tx['duration_ms']:.0f}ms)")
-    except Exception as e:
-        print(f"[WARN] Translation skipped: {e}")
-
-    # Multi-retrieval: Haupt-Query + Varianten (auf der englischen Fassung)
-    queries = [
-        search_query,
-        f"how {search_query}",
-        f"implementation {search_query}",
-    ]
-
-    all_docs = []
-    for q in queries:
-        try:
-            docs, _, _ = retriever.search(q, k=10)
-            all_docs.extend(docs)
-        except Exception as e:
-            print(f"[WARN] Retrieval für '{q}' fehlgeschlagen: {e}")
-
-    # Deduplicate und sortieren nach distance
-    seen_ids = set()
-    unique_docs = []
-    for doc in sorted(all_docs, key=lambda d: d.get("distance", 999)):
-        doc_id = doc.get("id")
-        if doc_id not in seen_ids:
-            seen_ids.add(doc_id)
-            unique_docs.append(doc)
-
-    if not unique_docs:
-        print("[NO HITS] Keine Dokumente gefunden")
-        return
-
-    print(f"\n[OK] Gefunden: {len(unique_docs)} einzigartige Dokumente\n")
-
-    for i, doc in enumerate(unique_docs[:15], 1):
-        title = doc.get("title", "unknown")
-        distance = doc.get("distance", 0)
-        content = doc.get("content", "")[:800]
-
-        print(f"[{i}] {title}")
-        print(f"    Distance: {distance:.2f}")
-        print(f"    Content: {content}")
-        print("    " + "-" * 56)
-
-    # Optionale Babel-Synthese (Feynman/Science) ueber die Top-Docs
-    print()
-    synth_choice = input("📚 Synthese-Modus? [f]eynman / [s]cience / [Enter]=keine: ").strip().lower()
-    if synth_choice in ("f", "feynman", "s", "science"):
-        mode = "feynman" if synth_choice.startswith("f") else "science"
-        try:
-            from babel_synthesizer import BabelSynthesizer
-            synth = BabelSynthesizer(default_mode=mode)
-            print(f"\n[BABEL] Synthese laeuft (mode={mode}, model={synth.qwen.model})...")
-            result = synth.synthesize(query, unique_docs)
-            print("\n" + "=" * 60)
-            print(f"BABEL-SYNTHESE ({result['mode'].upper()})")
-            print("=" * 60)
-            print(result["analysis"])
-            print()
-            print(f"[Quellen: {result['source_stats']} | {result['duration_s']}s]")
-        except ImportError as e:
-            print(f"[WARN] babel_synthesizer nicht ladbar: {e}")
-        except Exception as e:
-            print(f"[ERR] Babel-Synthese fehlgeschlagen: {e}")
+# NOTE: UI helper functions (clear_screen, print_header, print_state, 
+#       print_logs, review_triples, research_mode) are now imported from terminal_ui.py
+# See: terminal_ui.py for these implementations
 
 
 def start_workflow():
@@ -1610,6 +1596,8 @@ def start_workflow():
         import traceback
         traceback.print_exc()
 
+
+# TODO: FileTool-Integration für Query-Mode (später: agentic_query() mit Tool-Support)
 
 async def main():
     # UTF-8 Encoding-Fix für Terminal-Input (verhindert UnicodeDecodeError)
@@ -1678,60 +1666,93 @@ async def main():
                 review_triples(retriever)
                 continue
 
-            if query.lower() == "w":
-                start_workflow()
-                continue
-
             if query.upper() == "R":
                 research_mode(retriever)
                 continue
 
-            # Workflow via "briefing:" prefix (Hybrid: Auto-klassifiziert)
-            if query.startswith("briefing:"):
-                task = query[9:].strip()
-                if task:
-                    try:
-                        agent = WorkflowAgent()
-                        workflow = agent.dispatch(task)  # ← Hybrid: Auto-Klassifikation
-                    except Exception as e:
-                        print(f"\n[ERR] Workflow fehlgeschlagen: {e}")
-                else:
-                    print("[ERR] Keine Aufgabe nach 'briefing:' eingegeben")
-                continue
-
-            # ==== GEMINI-FLASH + MISTRAL INTEGRATION - BEGIN ====
-            # Rat-Modus: Präfixe für verschiedene Modi
-            # ??h = lokal + Haiku (Claude) + Sonnet-Synthese
-            # ??g = lokal + gemini-2.5-flash + gemini-2.5-pro-Synthese
-            # ??m = lokal + mistral-large + mistral-large-Synthese
-            # ??a = ALL-IN: lokal + Haiku + gemini-2.5-flash + mistral-large + Synthese
-            # ?? = Backward-Kompat: wie ??h (lokal + Haiku)
-            council_h = query.startswith("??h")
-            council_g = query.startswith("??g")
-            council_m = False  # Mistral deaktiviert (Abo gekündigt)
-            council_a = query.startswith("??a")
-            council = query.startswith("??")
+            # ──── AUTOMATISCHE KLASSIFIKATION + ORCHESTRIERUNG ────
+            # Jeder Input wird klassifiziert → Workflow oder Query
             
-            # Bestimme den Modus und bereinige Query
+            # Power-User Präfixe (nur wenn POWER_USER=1)
+            explicit_workflow = False
+            council = False
             mode = None
-            if council_a:
-                mode = "all"
-                query = query[3:].strip()
-            elif council_g:
-                mode = "gemini"
-                query = query[3:].strip()
-            elif council_h:
-                mode = "haiku"
-                query = query[3:].strip()
-            elif council:
-                mode = "haiku"  # Backward-Kompat: ?? = ??h
-                query = query[2:].strip()
             
-            if council and not query:
-                print("[ERR] Keine Frage nach dem Rat-Präfix")
-                continue
-            # ==== GEMINI-FLASH + MISTRAL INTEGRATION - END ====
-            # RÜCKGÄNGIG MACHEN: Ersetze die 4 council_*-Zeilen durch die alten 2 Zeilen (council_h, council_g) und lösche die Mistral-Referenzen.
+            if POWER_USER:
+                # Workflow via "briefing:" prefix (Power-User nur)
+                if query.startswith("briefing:"):
+                    explicit_workflow = True
+                    query = query[9:].strip()
+                    if not query:
+                        print("[ERR] Keine Aufgabe nach 'briefing:' eingegeben")
+                        continue
+                
+                # Council/Rat-Modus Präfixe (Power-User nur)
+                council_h = query.startswith("??h")
+                council_g = query.startswith("??g")
+                council_a = query.startswith("??a")
+                council = query.startswith("??")
+                
+                if council_a:
+                    mode = "all"
+                    query = query[3:].strip()
+                elif council_g:
+                    mode = "gemini"
+                    query = query[3:].strip()
+                elif council_h:
+                    mode = "haiku"
+                    query = query[3:].strip()
+                elif council:
+                    mode = "haiku"
+                    query = query[2:].strip()
+                
+                if council and not query:
+                    print("[ERR] Keine Frage nach dem Rat-Präfix")
+                    continue
+            
+            # ─── AUTO-KLASSIFIKATION (wenn nicht explicitly_workflow oder council-mode) ───
+            if not explicit_workflow and not council:
+                print(f"[CLASSIFY] Analysiere Anfrage...")
+                try:
+                    if _agent_loop[0] is None:
+                        _agent_loop[0] = WorkflowAgent()
+                    agent = _agent_loop[0]
+                    
+                    # Klassifizierung durchführen
+                    classification = agent.classifier.classify(query)
+                    task_type = classification.get("type", "IMPLEMENTATION")
+                    confidence = classification.get("confidence", 0.5)
+                    vault_type = classification.get("vault_type", "hybrid")
+                    
+                    print(f"[CLASSIFY] Typ: {task_type} (Conf: {confidence:.0%}) | Vault: {vault_type}")
+                    
+                    # Entscheidung: Workflow oder Query?
+                    # WORKFLOW: IMPLEMENTATION, BUG_FIX, REFACTOR
+                    # QUERY: EXPLAIN, ANALYSIS
+                    is_workflow = task_type in ["IMPLEMENTATION", "BUG_FIX", "REFACTOR"]
+                    
+                    if is_workflow:
+                        # ╔═══════════════════════════════════════════════╗
+                        # ║         WORKFLOW MODE (6 Phasen)              ║
+                        # ╚═══════════════════════════════════════════════╝
+                        print(f"\n[WORKFLOW] Starte 6-Phasen-Orchestrierung...\n")
+                        try:
+                            workflow = agent.dispatch(query)
+                        except Exception as e:
+                            print(f"\n[ERR] Workflow fehlgeschlagen: {e}")
+                            import traceback
+                            traceback.print_exc()
+                        continue
+                    else:
+                        # ╔═══════════════════════════════════════════════╗
+                        # ║         QUERY MODE (schnelle Antwort)         ║
+                        # ╚═══════════════════════════════════════════════╝
+                        print(f"[QUERY] Schnelle Abfrage mit Vault-Context...\n")
+                        # Fallen durch zur normalen Query-Verarbeitung unten
+                
+                except Exception as e:
+                    print(f"[WARN] Klassifikation fehlgeschlagen ({e}) → Query-Mode")
+                    # Fallback: Query-Mode
 
             # Suche in beiden Vaults (Code + Wissen), fair gemerged
             # k=30 für 20 Top + 10 Random Strategie
@@ -1759,21 +1780,10 @@ async def main():
             # System-Prompt bauen (Schwäche-Direktive ist bei Bedarf vorangestellt)
             system_prompt = build_system_prompt(context)
 
-            # ===== NEUE DEEP ANALYSIS PHASE (20 TOP + 10 RANDOM) =====
-            # Tiefe Analyse mit Widersprüch-Erkennung (wie BabelFeynman)
+            # ===== DEEP ANALYSIS (optional - für jetzt deaktiviert) =====
+            # Zu komplex für diese Phase - wird später mit Tool-Support implementiert
             analysis_summary = ""
-            if context and len(context) > 0:
-                try:
-                    claude_analyzer = ClaudeCoder(model=COUNCIL_MODEL)  # Claude Haiku für Deep Analysis
-                    analysis_summary = analyze_deep(query, context, claude_analyzer)
-                    # Zeige die tiefe Analyse sichtbar!
-                    if analysis_summary:
-                        print(f"\n{'='*70}")
-                        print(f"[TIEFE VAULT-ANALYSE]:")
-                        print(f"{'='*70}\n{analysis_summary}\n")
-                except Exception as e:
-                    print(f"[WARN] Deep Analysis fehlgeschlagen: {e}")
-                    analysis_summary = ""
+            # TODO: Deep Analysis mit Deepseek + streaming neu implementieren
 
             # Gehaltener Gesprächskontext für Folgefragen — bewusst KURZ (letzte 2 Turns,
             # gekürzt): zu viel Historie erstickt das kleine Modell (Klein-Modell-Decke).
@@ -1820,91 +1830,16 @@ async def main():
                     synth_coder = ClaudeCoder(model=SYNTH_MODEL)
                 response = run_council(query, sys_full, coder, council_coder, synth_coder)
             else:
-                # ===== HYBRID MODE: Vault-Context für alle 3 Models =====
-                # Claude macht Deep Analysis, dann alle 3 antworten mit Vault-Context
+                # ===== STANDARD MODE: Deepseek mit Vault-Context =====
+                # Schnelle Query mit Deepseek + Vault-Kontext (60s Timeout)
+                print(f"[GEN] Deepseek mit Vault-Context (60s Timeout)...\n" + "-" * 60)
                 try:
-                    from agent_pool import AgentResult
-                    from consensus import Consensus
-                    import asyncio
-
-                    # System-Prompt JETZT mit Vault-Analyse
-                    vault_system = sys_full  # sys_full enthält bereits analysis_summary!
-
-                    print(f"[P3-HYBRID] Alle 3 Models antworten mit Vault-Context...")
-
-                    # Modelle vorbereiten
-                    models_to_query = [
-                        ("qwen", QwenCoder(model="qwen2.5-coder:1.5b")),
-                        ("claude", ClaudeCoder(model="claude-haiku-4-5-20251001")),
-                        ("mistral", MistralCoder(model="mistral-small-latest"))
-                    ]
-
-                    # Parallele Abfragen mit Vault-Context
-                    async def query_model(name, model_coder):
-                        try:
-                            answer = model_coder.generate(query, system=vault_system, stream=False)
-                            return (name, answer, None)
-                        except Exception as e:
-                            return (name, "", str(e))
-
-                    # Alle 3 parallel mit Vault-Context abfragen
-                    tasks = [query_model(name, coder) for name, coder in models_to_query]
-                    results = await asyncio.gather(*tasks)
-
-                    # Konvertiere zu response_dict für Consensus
-                    response_dict = {}
-                    for model_name, answer, error in results:
-                        if error:
-                            response_dict[model_name] = AgentResult(
-                                model=model_name,
-                                answer="",
-                                error=error
-                            )
-                        else:
-                            response_dict[model_name] = AgentResult(
-                                model=model_name,
-                                answer=answer,
-                                vault_hits=len(context) if context else 0
-                            )
-
-                    # Consensus
-                    consensus = Consensus()
-                    result = await consensus.evaluate_and_fill(response_dict, query, None)
-                    response = result.winner_answer
-
-                    # SharedAtom: Strategy-Success bei erfolgreichem P3
-                    if response and not response.startswith("["):
-                        from shared_atom import get_shared_atom
-                        atom = get_shared_atom()
-                        atom.push("strategy:parallel:works")
-
-                    print("\n" + "-" * 60)
-                    print(f"[KONSENS] {result.winner.upper()} ({result.winner_score:.0%})")
-
-                    # Alle Model-Outputs anzeigen (nicht nur Winner)
-                    for model_name, agent_result in response_dict.items():
-                        score = result.scores.get(model_name, 0.0)
-                        status = "⭐ WINNER" if model_name == result.winner else f"  {score:.0%}"
-                        print(f"\n[{model_name}] {status}")
-                        if agent_result.error:
-                            print(f"  ❌ Error: {agent_result.error}")
-                        else:
-                            # Vollständiger Output (nicht gekürzt)
-                            print(f"  {agent_result.answer}")
-
-                    # Winner-Answer für History
-                    response = result.winner_answer
-
-                    if result.gaps_filled:
-                        print(f"\n[✓ Lücken auto-ergänzt: {result.gaps_filled}]")
-                    print("-" * 60)
-
-                except Exception as e:
-                    # Fallback: direkter Flow
-                    print(f"[WARN] P3 Multi-Agent Fehler ({e}) → direkter Flow")
-                    print(f"[GEN] {KNOWLEDGE_ANSWER_MODEL}...\n" + "-" * 60)
                     response = coder.generate(query, system=sys_full, stream=True)
-                    print("-" * 60)
+                except requests.exceptions.Timeout:
+                    response = "\n[TIMEOUT] Ollama antwortet zu langsam (>60s). Versuche später erneut."
+                except Exception as e:
+                    response = f"\n[ERR] Generation fehlgeschlagen: {e}"
+                print("-" * 60)
 
             # Historie pflegen (<think> raus, gekappt) + Triplet loggen
             clean = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()

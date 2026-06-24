@@ -1,9 +1,8 @@
 import pytest
 from pathlib import Path
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from reqqueue.manager import RequestQueue
-from models.request import Request
+from vibelike.reqqueue.manager import RequestQueue
+from vibelike.models.request import Request
 
 
 def test_queue_fixture(queue: RequestQueue):

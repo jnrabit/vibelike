@@ -9,10 +9,9 @@ import asyncio
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
 
-from agent_pool import AgentPool
-from agent_loop import ToolRegistry
+from vibelike.agent_pool import AgentPool
+from vibelike.agent_loop import ToolRegistry
 
 
 async def test_p3_basic():

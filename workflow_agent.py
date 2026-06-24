@@ -53,13 +53,21 @@ class WorkflowAgent:
         # ── Wissens-Welt (schlank): AgentLoop für EXPLAIN/Knowledge-Querys ──
         self.loop = AgentLoop()
 
+        # ── Vault-Router: Entscheidet Code vs Knowledge Vault ──
+        from vibelike.vault_router import VaultRouter
+        self.vault_router = VaultRouter(qwen_coder=self.loop.analyzer_coder)
+
         # TaskClassifier nutzt den Analyzer-Coder vom AgentLoop (Lazy-loaded bei Bedarf)
         # Verhindert doppelte Model-Initialisierungen
-        self.classifier = TaskClassifier(self.loop.analyzer_coder)
+        # ERWEITERT: auch vault_router übergeben
+        self.classifier = TaskClassifier(self.loop.analyzer_coder, vault_router=self.vault_router)
 
         self.root = Path(__file__).parent
         self.workflow_log = self.root / "logs" / "workflows.jsonl"
         self.workflow_log.parent.mkdir(parents=True, exist_ok=True)
+        
+        # ── Vault-Kontext (wird in dispatch() gesetzt) ──
+        self.current_vault_decision = None
 
         # ── Coding-Welt (monolithisch): wird LAZY verdrahtet (_ensure_coding) ──
         # Schwere Coder (Codegen/Reasoning/Critic) + Retriever + Static-Validator
@@ -93,9 +101,9 @@ class WorkflowAgent:
             return
 
         # Lokale Imports (circular-import-Schutz, identisch zur alten __init__)
-        from vibelike.terminal import (QwenCoder, ClaudeCoder, CODEGEN_BACKEND, VIBELIKE_ARCH,
-                                       MODEL, VALIDATOR_MODEL, ANALYSIS_MODEL, CodeRetriever)
+        from vibelike.terminal import QwenCoder, ClaudeCoder, CodeRetriever
         from vibelike.validator2 import StaticValidatorV2
+        from config import settings  # Use centralized config
 
         # Retriever für Code-Vault-Integration in Planning/Block-Selektor
         try:
@@ -103,12 +111,28 @@ class WorkflowAgent:
         except Exception:
             self.retriever = None
 
-        # "Ehrliche Mitte" (VIBELIKE_ARCH=mitte): Claude plant + reviewt,
-        # qwen-coder codet als Worker. Sonst: Default (Claude codet direkt).
+        # ── DEEPSEEK-MAX MODUS (NEU) ──
+        # Env: VIBELIKE_DEEPSEEK_MAX=1 → alle Phasen lokal (deepseek:6.7b)
+        # Default: VIBELIKE_DEEPSEEK_MAX=0 → altes Verhalten (Claude für Planning/Review)
+        deepseek_max = settings.deepseek_max
+        
         self.reviewer = None
-        self.arch = VIBELIKE_ARCH
+        self.arch = settings.arch
         mitte = False
-        if VIBELIKE_ARCH == "mitte":
+        
+        if deepseek_max:
+            # ═══ DEEPSEEK-MAX: Alle Phasen lokal ═══
+            print("[⚡ DEEPSEEK-MAX MODE] Alle Phasen nutzen deepseek:6.7b lokal")
+            
+            # Alle Modelle = deepseek (shared instance für Memory-Effizienz)
+            self.qwen = QwenCoder(model=settings.coder_model, num_predict=8192, keep_alive="30m")
+            self.analyzer_qwen = self.qwen  # Alias: Briefing + Planning nutzen gleiche Instanz
+            self.validator_qwen = self.qwen  # Alias: Validator nutzt gleiche Instanz
+            self.reviewer = None  # Kein separater Reviewer (Self-Review via deepseek)
+            self.code_review_enabled = True  # deepseek macht Self-Review
+            
+        elif self.arch == "mitte":
+            # ═══ MITTE-MODUS: Claude plant/reviewt, deepseek codet ═══
             reviewer = ClaudeCoder(num_predict=8192)
             if reviewer.usable:
                 mitte = True
@@ -116,39 +140,41 @@ class WorkflowAgent:
                 print("[WARN] Mitte-Modus braucht Claude → nicht usable, Fallback auf default")
                 self.arch = "default"
 
-        # Foreground: Code-Gen. Default Claude-API (semantische Instruktionstreue,
-        # die ~7b lokal nicht liefert); Fallback auf lokales qwen wenn Key/Paket fehlt.
-        # Mit Frontier-Backend wird der 1.5b-Code-Review zu Rauschen → deaktiviert.
-        self.code_review_enabled = True
-        if mitte:
-            self.qwen = QwenCoder(model=MODEL, num_predict=8192, keep_alive="30m")
-            self.reviewer = reviewer
-            self.code_review_enabled = False  # 1.5b reviewt Claude-Plan = Noise
-            print("[🧪 ARCH=mitte: Claude plant+reviewt, qwen-coder codet]")
-        elif CODEGEN_BACKEND == "claude":
-            claude = ClaudeCoder()
-            if claude.usable:
-                self.qwen = claude
-                self.code_review_enabled = False  # weak-reviewt-strong = Noise
+            if mitte:
+                self.qwen = QwenCoder(model=settings.coder_model, num_predict=8192, keep_alive="30m")
+                self.reviewer = reviewer
+                self.code_review_enabled = False  # deepseek reviewt Claude-Plan = skipped
+                print("[🧪 ARCH=mitte: Claude plant+reviewt, deepseek codet]")
+                self.analyzer_qwen = reviewer  # Planning nutzt Claude
+                self.validator_qwen = QwenCoder(model=settings.validator_model, num_predict=350, keep_alive="60m")
+        
+        if not deepseek_max and not mitte:
+            # ═══ DEFAULT-MODUS: Claude codet ═══
+            # Foreground: Code-Gen. Default Claude-API (semantische Instruktionstreue,
+            # die ~7b lokal nicht liefert); Fallback auf lokales deepseek wenn Key/Paket fehlt.
+            self.code_review_enabled = True
+            if settings.codegen_backend == "claude":
+                claude = ClaudeCoder()
+                if claude.usable:
+                    self.qwen = claude
+                    self.code_review_enabled = False  # weak-reviewt-strong = Noise
+                    print("[🚀 DEFAULT MODE: Claude codet direkt]")
+                else:
+                    print("[WARN] Claude-Backend nicht verfügbar → Fallback auf deepseek")
+                    self.qwen = QwenCoder()
+                    self.code_review_enabled = True
             else:
-                print("[WARN] Claude-Backend nicht verfügbar → Fallback auf lokales qwen2.5-coder")
                 self.qwen = QwenCoder()
-        else:
-            self.qwen = QwenCoder()
 
-        # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder).
-        # Mitte: Claude (Frontier > 8b, verhindert Drift an der Wurzel).
-        if mitte:
-            self.analyzer_qwen = ClaudeCoder(num_predict=4096)
-        else:
+            # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder).
             self.analyzer_qwen = QwenCoder(
-                model=ANALYSIS_MODEL, num_predict=2048, keep_alive="30m",
+                model=settings.analysis_model, num_predict=2048, keep_alive="30m",
             )
 
-        # Background: kleines Modell für parallelen LLM-Critic.
-        self.validator_qwen = QwenCoder(
-            model=VALIDATOR_MODEL, num_predict=350, keep_alive="60m",
-        )
+            # Background: kleines Modell für parallelen LLM-Critic.
+            self.validator_qwen = QwenCoder(
+                model=settings.validator_model, num_predict=350, keep_alive="60m",
+            )
 
         # Deterministischer Static-Validator (kein LLM, keine Halluzination).
         self.static_validator = StaticValidatorV2()
@@ -177,14 +203,36 @@ class WorkflowAgent:
 
         Reine Wissensfragen laufen so OHNE die schweren Coding-Modelle zu laden;
         alle code-/analyse-erzeugenden Typen gehen in den vollen Phasen-Workflow.
+        
+        NEU: Vault-Routing (Code vs Knowledge) wird hier entschieden und in
+        self.current_vault_decision gespeichert für use in run_workflow.
         """
         try:
             project_files = [p.name for p in sorted(self.root.glob("*.py"))[:15]]
             classification = self.classifier.classify(task, project_files)
             task_type = classification.get("type", "IMPLEMENTATION")
+            
+            # Vault-Entscheidung speichern
+            self.current_vault_decision = {
+                "vault_type": classification.get("vault_type", "hybrid"),
+                "vault_confidence": classification.get("vault_confidence", 0.5),
+                "vault_reasoning": classification.get("vault_reasoning", ""),
+                "vault_mode": classification.get("vault_mode", "balanced"),
+            }
         except Exception as e:
             print(f"[WARN] dispatch-Klassifikation fehlgeschlagen: {e} → Coding-Workflow")
             task_type = "IMPLEMENTATION"
+            self.current_vault_decision = {
+                "vault_type": "hybrid",
+                "vault_confidence": 0.5,
+                "vault_reasoning": "Fallback nach Fehler",
+                "vault_mode": "balanced",
+            }
+
+        # Zeige Vault-Entscheidung
+        print(f"\n[🗂️  Vault-Router] {self.current_vault_decision['vault_type'].upper()} "
+              f"({self.current_vault_decision['vault_confidence']:.0%}) - "
+              f"{self.current_vault_decision['vault_reasoning']}")
 
         if task_type == "EXPLAIN":
             import asyncio
@@ -800,7 +848,7 @@ Schließe mit:
                 context={}
             )
             print(f"[🎯 IDIOM] {phase}/{task_type} → {idiom.id} (score={score:.2f})")
-            # Wahl protokollieren (für Idiom↔Ossifikat-Feedback-Schleife) — passiert
+            # Wahl protokollieren (für ③ Idiom↔Ossifikat-Feedback-Schleife) — passiert
             # IMMER, auch in format-locked Phasen die keinen Steering-Block injizieren.
             if self.current_workflow is not None:
                 self.current_workflow.setdefault("idioms", {})[phase] = {

@@ -26,7 +26,6 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, ROOT)
 
 HOST = os.environ.get("VIBELIKE_RETRIEVAL_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VIBELIKE_RETRIEVAL_PORT", "8810"))
@@ -56,7 +55,7 @@ def _sd_notify(state: str) -> None:
 
 def _load():
     global _retriever
-    from terminal import CodeRetriever
+    from vibelike.terminal import CodeRetriever
     print("[daemon] Lade Vaults (einmalig, ~40s)…", flush=True)
     # remote_url=None erzwingt LOKALES Laden — sonst würde der Daemon sich selbst proxien.
     _retriever = CodeRetriever(remote_url=None)

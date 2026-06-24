@@ -17,7 +17,7 @@ Design (analog query_translator.py):
 - Graceful: LLM weg/kaputt -> [original].
 
 Nutzung:
-    from query_decomposer import QueryDecomposer
+    from vibelike.query_decomposer import QueryDecomposer
     d = QueryDecomposer()
     d.decompose("relationship between biochemistry and IT")["subqueries"]
 """

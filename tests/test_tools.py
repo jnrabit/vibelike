@@ -1,9 +1,8 @@
 import pytest
 from pathlib import Path
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from tools.registry import ToolRegistry
-from tools.models import Tool
+from vibelike.tools.registry import ToolRegistry
+from vibelike.tools.models import Tool
 
 
 def test_tool_registry_fixture(tool_registry: ToolRegistry):

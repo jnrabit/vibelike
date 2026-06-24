@@ -1,51 +1,30 @@
 """Request-Worker für die sequentielle Abarbeitung von Requests."""
 
 import signal
-import sys
 import time
+import warnings
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
-# Add ossifikat to path for local development
-_root = Path(__file__).parent.parent
-if str(_root / "ossifikat") not in sys.path:
-    sys.path.insert(0, str(_root / "ossifikat"))
-
-try:
-    from models.request import Request
-    from sandbox.manager import SandboxManager
-    from sandbox.models import Sandbox
-    from tools.registry import ToolRegistry
-    from tools.cache import ToolCache
-    from tools.models import Tool
-    from reqqueue.manager import RequestQueue
-    from reqqueue.reminders import ReminderManager
-    from reqqueue.health import HealthCheck
-    from logdb.db import LogDB
-    from config import (
-        QUEUE_DB, LOG_DB, OSSIFIKAT_DB, SANDBOX_BASE, TOOLS_DIR, RESULTS_DIR,
-        HEALTH_CHECK_FILE, HEALTH_CHECK_MAX_AGE
-    )
-except ImportError:
-    from vibelike.models.request import Request
-    from vibelike.sandbox.manager import SandboxManager
-    from vibelike.sandbox.models import Sandbox
-    from vibelike.tools.registry import ToolRegistry
-    from vibelike.tools.cache import ToolCache
-    from vibelike.tools.models import Tool
-    from vibelike.reqqueue.manager import RequestQueue
-    from vibelike.reqqueue.reminders import ReminderManager
-    from vibelike.reqqueue.health import HealthCheck
-    from vibelike.logdb.db import LogDB
-    from vibelike.config import (
-        QUEUE_DB, LOG_DB, OSSIFIKAT_DB, SANDBOX_BASE, TOOLS_DIR, RESULTS_DIR,
-        HEALTH_CHECK_FILE, HEALTH_CHECK_MAX_AGE
-    )
+from vibelike.models.request import Request
+from vibelike.sandbox.manager import SandboxManager
+from vibelike.sandbox.models import Sandbox
+from vibelike.tools.registry import ToolRegistry
+from vibelike.tools.cache import ToolCache
+from vibelike.tools.models import Tool
+from vibelike.reqqueue.manager import RequestQueue
+from vibelike.reqqueue.reminders import ReminderManager
+from vibelike.reqqueue.health import HealthCheck
+from vibelike.logdb.db import LogDB
+from vibelike.config import (
+    QUEUE_DB, LOG_DB, OSSIFIKAT_DB, SANDBOX_BASE, TOOLS_DIR, RESULTS_DIR,
+    HEALTH_CHECK_FILE, HEALTH_CHECK_MAX_AGE
+)
 
 try:
     from ossifikat.store import OssifikatStore
 except ImportError:
+    warnings.warn("ossifikat not available; OssifikatStore will not be used", ImportWarning)
     OssifikatStore = None
 
 try:

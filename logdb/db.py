@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import warnings
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,7 +11,8 @@ from typing import Optional, Any
 try:
     from vibelike.models.request import Request
 except ImportError:
-    Request = None  # Allow import without vibelike installed
+    warnings.warn("Request model not available", ImportWarning)
+    Request = None
 
 
 class LogDB:

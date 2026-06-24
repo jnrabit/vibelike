@@ -33,7 +33,6 @@ class VaultTool:
         if self.retriever is not None:
             return
         try:
-            sys.path.insert(0, str(ROOT))
             from terminal import CodeRetriever
             self.retriever = CodeRetriever(remote_url=None)
             print("[OK] VaultTool: CodeRetriever (eigen) initialisiert")
@@ -79,7 +78,6 @@ class OssifikatTool:
             return
         try:
             ossifikat_db = ROOT / "data" / "ossifikat.db"
-            sys.path.insert(0, str(ROOT / "ossifikat"))
             from ossifikat.store import OssifikatStore
             self.store = OssifikatStore(str(ossifikat_db))
             print("[OK] OssifikatTool: Store initialisiert")

@@ -1,4 +1,4 @@
-from choose import (
+from vibelike.choose import (
     Predicate,
     PredicateBundle,
     Undecidable,

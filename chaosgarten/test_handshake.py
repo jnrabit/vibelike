@@ -1,6 +1,6 @@
 import pytest
 
-from chaosgarten.handshake import Handshake, HandshakeState
+from vibelike.chaosgarten.handshake import Handshake, HandshakeState
 
 
 # ---------------------------------------------------------------------------

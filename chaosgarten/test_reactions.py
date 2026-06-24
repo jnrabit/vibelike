@@ -1,7 +1,7 @@
 """Pytest-Tests für chaosgarten.reactions — MessageThread und Message."""
 
 import pytest
-from chaosgarten.reactions import Message, MessageThread
+from vibelike.chaosgarten.reactions import Message, MessageThread
 
 
 # ---------------------------------------------------------------------------

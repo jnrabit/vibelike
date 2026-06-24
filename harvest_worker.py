@@ -11,37 +11,16 @@ import logging
 from typing import Optional
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, ROOT)
 
-try:
-    from reqqueue.manager import RequestQueue
-except ImportError:
-    from vibelike.reqqueue.manager import RequestQueue
-
-try:
-    from adapters import HarvestAdapter
-except ImportError:
-    from vibelike.adapters import HarvestAdapter
-
-try:
-    from models import Request
-except ImportError:
-    from vibelike.models import Request
-
-try:
-    from harvest import (
-        harvest_wikipedia_worker,
-        harvest_rfcs_worker,
-        harvest_peps_worker,
-        harvest_tools_worker
-    )
-except ImportError:
-    from vibelike.harvest import (
-        harvest_wikipedia_worker,
-        harvest_rfcs_worker,
-        harvest_peps_worker,
-        harvest_tools_worker
-    )
+from vibelike.reqqueue.manager import RequestQueue
+from vibelike.adapters import HarvestAdapter
+from vibelike.models import Request
+from vibelike.harvest import (
+    harvest_wikipedia_worker,
+    harvest_rfcs_worker,
+    harvest_peps_worker,
+    harvest_tools_worker
+)
 
 # Configure logging with more detailed output
 logging.basicConfig(
@@ -285,8 +264,8 @@ def main():
 
     # Status mode: show queue and vault status, then exit
     if args.status:
-        from harvest_scheduler import HarvestScheduler
-        from harvest import CodeVaultWriter
+        from vibelike.harvest_scheduler import HarvestScheduler
+        from vibelike.harvest import CodeVaultWriter
 
         scheduler = HarvestScheduler(queue_db=args.queue_db)
         status = scheduler.get_status()
@@ -330,7 +309,7 @@ def main():
         print("\n" + "=" * 60)
         print("FULL MODE: Auto-scheduling all harvest operations")
         print("=" * 60)
-        from harvest_scheduler import HarvestScheduler
+        from vibelike.harvest_scheduler import HarvestScheduler
         scheduler = HarvestScheduler(queue_db=args.queue_db)
 
         ops = [

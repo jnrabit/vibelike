@@ -83,8 +83,8 @@ def test_workflow_phases():
     """Simulate full workflow phases without user interaction."""
     print_section("PART 2: WORKFLOW PHASE SIMULATION")
 
-    from workflow_agent import WorkflowAgent
-    from validator2 import StaticValidatorV2
+    from vibelike.workflow_agent import WorkflowAgent
+    from vibelike.validator2 import StaticValidatorV2
 
     agent = WorkflowAgent()
     validator = StaticValidatorV2()
@@ -377,7 +377,7 @@ def test_findings_aggregation():
     """Test that findings from all 3 layers are properly aggregated."""
     print_section("PART 4: FINDINGS AGGREGATION")
 
-    from validator2 import StaticValidatorV2
+    from vibelike.validator2 import StaticValidatorV2
 
     # Create test code with multiple issues
     changes = [

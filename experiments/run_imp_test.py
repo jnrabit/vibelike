@@ -13,13 +13,12 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Alle Workflow-Gates auto-bestaetigen
 _real_input = builtins.input
 builtins.input = lambda *a, **k: "ja"
 
-from workflow_agent import WorkflowAgent
+from vibelike.workflow_agent import WorkflowAgent
 
 TASK = ("Füge zu validator2 einen Check hinzu, der Vergleiche mit == None oder "
         "!= None flaggt — sollte is None / is not None sein.")

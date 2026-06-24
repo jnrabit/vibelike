@@ -11,10 +11,9 @@ import sys
 import os
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from terminal import CodeRetriever
-from query_translator import QueryTranslator
+from vibelike.terminal import CodeRetriever
+from vibelike.query_translator import QueryTranslator
 import numpy as np
 
 

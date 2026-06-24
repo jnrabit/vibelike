@@ -127,10 +127,7 @@ class Mount:
             log_dir.mkdir(parents=True, exist_ok=True)
         except (PermissionError, OSError):
             # Fallback für lokale Entwicklung
-            try:
-                from config import ROOT_DIR
-            except ImportError:
-                from vibelike.config import ROOT_DIR
+            from vibelike.config import ROOT_DIR
             log_dir = ROOT_DIR / "logs" / "bugreports"
             log_dir.mkdir(parents=True, exist_ok=True)
 

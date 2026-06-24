@@ -20,10 +20,8 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ossifikat"))
 
-from experiments.bridge_finder import find_bridges
+from vibelike.experiments.bridge_finder import find_bridges
 from ossifikat.store import OssifikatStore
 
 DB_PATH = "data/ossifikat.db"          # == CLI-Default, damit `ossifikat review` greift

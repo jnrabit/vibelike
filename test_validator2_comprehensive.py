@@ -6,7 +6,7 @@ Demonstrates validator2's capabilities by validating intentional code anti-patte
 across all check categories. Each test case includes problematic code and expected findings.
 """
 
-from validator2 import StaticValidatorV2
+from vibelike.validator2 import StaticValidatorV2
 from pathlib import Path
 import json
 

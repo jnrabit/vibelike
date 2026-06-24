@@ -5,6 +5,22 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&
 
 let state = { view: 'workflows', detailId: null, ratifyView: 'queue' };
 
+function showToast(msg) {
+  const toast = document.createElement('div');
+  toast.style.cssText = 'position:fixed;bottom:1rem;right:1rem;background:var(--tm-accent);color:#fff;padding:0.75rem 1rem;border-radius:4px;z-index:9999;font-size:0.875rem;box-shadow:0 4px 12px rgba(0,0,0,0.3);animation:slideIn 0.3s ease';
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3000);
+}
+
+// Add animation keyframes if not exists
+if (!document.getElementById('toast-styles')) {
+  const style = document.createElement('style');
+  style.id = 'toast-styles';
+  style.textContent = '@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }';
+  document.head.appendChild(style);
+}
+
 async function getJSON(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`${r.status} ${url}`);
@@ -375,7 +391,10 @@ function startModelStatusUpdates() {
 function getToken() {
   const el = document.getElementById('tm-token');
   if (!el) return null;
-  return (el.value || '').trim();
+  const token = (el.value || '').trim();
+  if (token) return token;
+  // Fallback: localStorage (falls Terminal noch nicht verbunden)
+  return (localStorage.getItem('vibelike_token') || '').trim();
 }
 
 async function loadBackends() {
@@ -421,107 +440,179 @@ async function setPrivacyLevel(level) {
   return r.json();
 }
 
-async function viewModels() {
-  $('#view-title').textContent = '⚙ Modelle';
-  $('#view-sub').textContent = 'Backend-Verwaltung · API-Keys · Privacy-Level';
-  $('#stats').innerHTML = '';
-  const c = $('#content'); c.innerHTML = '';
-
+async function updateLLMMode(mode) {
+  // Setzt die Environment-Variable VIBELIKE_DEEPSEEK_MAX oder VIBELIKE_ARCH
+  // via /api/config endpoint (wird in server.py implementiert)
+  const envVars = {};
+  
+  switch(mode) {
+    case 'deepseek-max':
+      envVars['VIBELIKE_DEEPSEEK_MAX'] = '1';
+      envVars['VIBELIKE_ARCH'] = 'default';
+      break;
+    case 'mitte':
+      envVars['VIBELIKE_DEEPSEEK_MAX'] = '0';
+      envVars['VIBELIKE_ARCH'] = 'mitte';
+      break;
+    case 'default':
+      envVars['VIBELIKE_DEEPSEEK_MAX'] = '0';
+      envVars['VIBELIKE_ARCH'] = 'default';
+      break;
+  }
+  
   try {
-    // Prüfe ob Terminal-Tab sichtbar ist (und damit Token vorhanden sein könnte)
     const token = getToken();
     if (!token) {
-      c.innerHTML = `<div class="empty">
-        <strong>⚠️ Erst im Terminal connecten</strong><br><br>
-        Gehe zum Terminal-Tab und verbinde dich mit einem Bearer-Token.
-        Danach können Sie hier API-Keys verwalten.
-      </div>`;
+      console.warn('Token fehlt für Mode-Update');
       return;
     }
+    
+    const r = await fetch('/api/config/llm-mode', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ mode, env_vars: envVars })
+    });
+    
+    if (!r.ok) {
+      console.warn(`LLM Mode update: ${r.status}`);
+      return;
+    }
+    
+    const data = await r.json();
+    console.log(`✓ LLM Mode geändert: ${mode}`);
+    
+    // Show toast: terminal restart needed
+    showToast(`✓ ${mode} aktiv. Terminal neustarten (Ctrl+D → Neu), damit es greift.`);
+  } catch (e) {
+    console.warn('LLM Mode update fehlgeschlagen:', e);
+  }
+}
 
-    const backends = await loadBackends();
+async function viewModels() {
+  try {
+    $('#view-title').textContent = '⚙ Ausführungs-Modi';
+    $('#view-sub').textContent = 'Wähle die Orchestrierungs-Strategie für Workflows';
+    $('#stats').innerHTML = '';
+    const c = $('#content'); c.innerHTML = '';
+
     const pane = el(`<div class="models-panel">`);
 
-    // Backends mit Checkbox + Key-Input
-    for (const b of backends) {
-      const statusIcon = b.status === '✓' ? '✓ ' : '✗ ';
-      const card = el(`<div class="backend-card">
-        <div class="backend-header">
-          <input type="checkbox" class="model-select" data-backend="${esc(b.name)}" ${b.available ? 'checked' : ''}>
-          <span class="status">${statusIcon}</span>
-          <span class="name">${esc(b.name)}</span>
-          <span class="tier">${esc(b.tier)}</span>
+  // ═════════════════════════════════════════════════════════════════════
+  // MODE SELECTION: 3 Modes für LLM-Orchestrierung
+  // ═════════════════════════════════════════════════════════════════════
+  const modesDiv = el(`<div class="modes-panel" style="background: var(--tm-bg); border-radius: 8px; padding: 2rem; margin-bottom: 2rem;">
+    <h2 style="margin-top: 0; color: var(--tm-text);">Ausführungs-Modi</h2>
+    <p style="color: var(--tm-faint); margin: 0 0 1.5rem 0;">
+      Wie sollen Briefs, Pläne und Code-Reviews orchestriert werden?
+    </p>
+    
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
+      
+      <!-- MODE 1: DEEPSEEK-MAX -->
+      <label class="mode-card" style="cursor: pointer; border: 2px solid var(--tm-dim); border-radius: 6px; padding: 1rem; transition: all 0.2s;">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+          <input type="radio" name="llm-mode" value="deepseek-max" style="width: 20px; height: 20px; cursor: pointer;">
+          <span style="font-weight: bold; color: var(--tm-text); font-size: 16px;">⚡ DEEPSEEK-MAX</span>
         </div>
-        <div class="backend-control">
-          <input type="password" class="api-key" placeholder="API Key" data-backend="${esc(b.name)}">
-          <button class="btn-save" data-backend="${esc(b.name)}">Speichern</button>
+        <div style="margin-left: 32px; font-size: 14px; color: var(--tm-faint);">
+          <div style="margin-bottom: 6px;"><strong>Alles lokal, 1 Modell</strong></div>
+          <div>• Briefing: deepseek:6.7b</div>
+          <div>• Planning: deepseek:6.7b</div>
+          <div>• Execution: deepseek:6.7b</div>
+          <div>• Code-Review: deepseek (Self-Review)</div>
+          <div style="margin-top: 8px; color: var(--tm-accent);">✓ Schnell · Lokal · Memory-effizient</div>
         </div>
-        <div class="backend-status">${esc(b.reason)}</div>
-      </div>`);
-      pane.appendChild(card);
-
-      // Checkbox-Handler: speichere Modell-Auswahl
-      const checkbox = card.querySelector('.model-select');
-      checkbox.addEventListener('change', async () => {
-        const selected = Array.from(pane.querySelectorAll('.model-select:checked'))
-          .map(cb => cb.dataset.backend);
-        try {
-          await fetch('/api/models/selected', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${getToken()}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ models: selected })
-          });
-        } catch (e) {
-          alert('Modell-Auswahl speichern fehlgeschlagen: ' + e.message);
+      </label>
+      
+      <!-- MODE 2: MITTE -->
+      <label class="mode-card" style="cursor: pointer; border: 2px solid var(--tm-dim); border-radius: 6px; padding: 1rem; transition: all 0.2s;">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+          <input type="radio" name="llm-mode" value="mitte" style="width: 20px; height: 20px; cursor: pointer;">
+          <span style="font-weight: bold; color: var(--tm-text); font-size: 16px;">🎯 MITTE</span>
+        </div>
+        <div style="margin-left: 32px; font-size: 14px; color: var(--tm-faint);">
+          <div style="margin-bottom: 6px;"><strong>Claude plant/reviewt, deepseek codet</strong></div>
+          <div>• Briefing: Claude (API)</div>
+          <div>• Planning: Claude (API)</div>
+          <div>• Execution: deepseek:6.7b</div>
+          <div>• Code-Review: Claude (API)</div>
+          <div style="margin-top: 8px; color: var(--tm-accent);">✓ Hybrid · Qualität/Geschwindigkeit-Balance</div>
+        </div>
+      </label>
+      
+      <!-- MODE 3: DEFAULT -->
+      <label class="mode-card" style="cursor: pointer; border: 2px solid var(--tm-dim); border-radius: 6px; padding: 1rem; transition: all 0.2s;">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+          <input type="radio" name="llm-mode" value="default" checked style="width: 20px; height: 20px; cursor: pointer;">
+          <span style="font-weight: bold; color: var(--tm-text); font-size: 16px;">🚀 DEFAULT</span>
+        </div>
+        <div style="margin-left: 32px; font-size: 14px; color: var(--tm-faint);">
+          <div style="margin-bottom: 6px;"><strong>Claude codet, deepseek validator</strong></div>
+          <div>• Briefing: Claude (API)</div>
+          <div>• Planning: Claude (API)</div>
+          <div>• Execution: Claude (API)</div>
+          <div>• Code-Review: deepseek (lokal)</div>
+          <div style="margin-top: 8px; color: var(--tm-accent);">✓ Frontier-Qualität · API-abhängig</div>
+        </div>
+      </label>
+      
+    </div>
+  </div>`);
+  
+  pane.appendChild(modesDiv);
+  
+  // Mode-Selection Handler
+  modesDiv.querySelectorAll('input[name="llm-mode"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      const selectedMode = e.target.value;
+      // Update ENV via /api/config endpoint (falls verfügbar)
+      updateLLMMode(selectedMode).catch(err => {
+        console.warn('LLM Mode update fehlgeschlagen:', err);
+        // Optional: Toast-Nachricht?
+      });
+      
+      // Visuelle Rückmeldung: Hervorheben der ausgewählten Card
+      modesDiv.querySelectorAll('.mode-card').forEach(card => {
+        const radio = card.querySelector('input[name="llm-mode"]');
+        if (radio.checked) {
+          card.style.borderColor = 'var(--tm-accent)';
+          card.style.backgroundColor = 'rgba(95, 137, 167, 0.05)';
+        } else {
+          card.style.borderColor = 'var(--tm-dim)';
+          card.style.backgroundColor = 'transparent';
         }
       });
+    });
+  });
 
-      const btn = card.querySelector('.btn-save');
-      btn.addEventListener('click', async (e) => {
-        e.target.disabled = true;
-        const inp = card.querySelector('.api-key');
-        try {
-          await setBackendKey(b.name, inp.value);
-          const status = card.querySelector('.backend-status');
-          status.textContent = '✓ Gespeichert';
-          inp.value = '';
-        } catch (err) {
-          const status = card.querySelector('.backend-status');
-          status.textContent = `✗ ${err.message}`;
-        } finally {
-          e.target.disabled = false;
-        }
-      });
-    }
+  // Privacy-Level Radio-Buttons (behalten)
+  const privacyDiv = el(`<div class="privacy-panel">
+    <h3>Privacy-Level</h3>
+    <label><input type="radio" name="privacy" value="auto" checked> Auto</label>
+    <label><input type="radio" name="privacy" value="public"> Public</label>
+    <label><input type="radio" name="privacy" value="internal"> Internal</label>
+    <label><input type="radio" name="privacy" value="secret"> Secret</label>
+    <label><input type="radio" name="privacy" value="substrat"> Substrat-Pass</label>
+  </div>`);
+  pane.appendChild(privacyDiv);
 
-    // Privacy-Level Radio-Buttons
-    const privacyDiv = el(`<div class="privacy-panel">
-      <h3>Privacy-Level</h3>
-      <label><input type="radio" name="privacy" value="auto" checked> Auto</label>
-      <label><input type="radio" name="privacy" value="public"> Public</label>
-      <label><input type="radio" name="privacy" value="internal"> Internal</label>
-      <label><input type="radio" name="privacy" value="secret"> Secret</label>
-      <label><input type="radio" name="privacy" value="substrat"> Substrat-Pass</label>
-    </div>`);
-    pane.appendChild(privacyDiv);
-
-    // Radio-Handler
-    privacyDiv.querySelectorAll('input[name="privacy"]').forEach(r =>
-      r.addEventListener('change', async () => {
-        try {
-          await setPrivacyLevel(r.value);
-        } catch (e) {
-          alert('Fehler: ' + e.message);
-        }
-      })
-    );
+  // Radio-Handler für Privacy
+  privacyDiv.querySelectorAll('input[name="privacy"]').forEach(r =>
+    r.addEventListener('change', async () => {
+      try {
+        await setPrivacyLevel(r.value);
+      } catch (e) {
+        alert('Fehler: ' + e.message);
+      }
+    })
+  );
 
     c.appendChild(pane);
   } catch (e) {
-    c.innerHTML = `<div class="empty">Fehler: ${esc(e.message)}</div>`;
+    $('#content').innerHTML = `<div class="empty">Fehler: ${esc(e.message)}</div>`;
   }
 }
 

@@ -1,26 +1,19 @@
 """Adapter to store terminal interactions as ossifikat triples."""
 
-import sys
-from pathlib import Path
+import warnings
 from typing import Optional
-
-# Add ossifikat to path for local development
-_root = Path(__file__).parent.parent
-if str(_root / "ossifikat") not in sys.path:
-    sys.path.insert(0, str(_root / "ossifikat"))
 
 try:
     from ossifikat.store import OssifikatStore
 except ImportError:
+    warnings.warn("ossifikat not available; TerminalAdapter will not persist triples", ImportWarning)
     OssifikatStore = None
 
 try:
-    from logdb.db import LogDB
+    from vibelike.logdb.db import LogDB
 except ImportError:
-    try:
-        from vibelike.logdb.db import LogDB
-    except ImportError:
-        LogDB = None
+    warnings.warn("LogDB not available; TerminalAdapter will not log events", ImportWarning)
+    LogDB = None
 
 
 class TerminalAdapter:
@@ -49,9 +42,11 @@ class TerminalAdapter:
         Returns:
             Triple ID if stored successfully
         """
-        # Create triple: query_hash retrieved_answer response_hash
-        subject = f"query_{hash(query) % 10000}"
-        object_val = f"response_{hash(response) % 10000}"
+        from vibelike.crypto import stable_hash_sha256
+        
+        # Create triple: query_hash retrieved_answer response_hash (using stable SHA256)
+        subject = f"query_{stable_hash_sha256(query, hex_length=8)}"
+        object_val = f"response_{stable_hash_sha256(response, hex_length=8)}"
 
         triple_id = self.store.add_staging(
             subject=subject,

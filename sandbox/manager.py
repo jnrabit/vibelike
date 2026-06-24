@@ -6,18 +6,11 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-try:
-    from sandbox.models import Sandbox
-    from tools.registry import ToolRegistry
-    from tools.cache import ToolCache
-    from tools.models import Tool
-    from config import SANDBOX_BASE, TOOLS_DIR, SANDBOX_USER_UID, SANDBOX_USER_GID
-except ImportError:
-    from vibelike.sandbox.models import Sandbox
-    from vibelike.tools.registry import ToolRegistry
-    from vibelike.tools.cache import ToolCache
-    from vibelike.tools.models import Tool
-    from vibelike.config import SANDBOX_BASE, TOOLS_DIR, SANDBOX_USER_UID, SANDBOX_USER_GID
+from vibelike.sandbox.models import Sandbox
+from vibelike.tools.registry import ToolRegistry
+from vibelike.tools.cache import ToolCache
+from vibelike.tools.models import Tool
+from vibelike.config import SANDBOX_BASE, TOOLS_DIR, SANDBOX_USER_UID, SANDBOX_USER_GID
 
 
 class SandboxManager:

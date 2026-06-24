@@ -1,17 +1,19 @@
-# Vibelike Kommandozentrale (Tier 1 — read-only)
+# Vibelike Kommandozentrale (Tier 1)
 
 Visualisiert den Live-Zustand: Workflow-Läufe, ossifikat-Staging (inkl. Brücken), Health.
-**Read-only** — keine Steuerung. Der Workflow ist `input()`-gebunden; Steuerung (Gates
-genehmigen, Workflows starten) wäre Tier 2 (Kontrollfluss-Inversion hinter einem
-`Approver`-Interface). Bewusst ohne React/Build-Kette: FastAPI + selbsttragende
+
+**Hybrid-API**: Primär read-only für das Dashboard, aber mit Token-Auth geschützte
+Admin-Endpunkte für Wissensgraph-Verwaltung (confirm/park/archive/restore/reject).
+Der Workflow ist `input()`-gebunden; Workflow-Start bleibt Tier 2 (Kontrollfluss-Inversion
+hinter `Approver`-Interface). Bewusst ohne React/Build-Kette: FastAPI + selbsttragende
 HTML-Seite, gestylt mit den `terminal.css`-Design-Tokens ("Editorial Dark").
 
 ## Start
 
 ```bash
-cd /home/jnrabit/vibelike
-uvicorn web.server:app --host 127.0.0.1 --port 8800
-# oder:  python3 web/server.py   (Port 8000)
+cd /home/jnrabit/opencode/vibelike
+uvicorn vibelike.web.server:app --host 127.0.0.1 --port 8800
+# oder:  python3 -m vibelike.web.server   (Port 8000)
 ```
 
 Dann im Browser: <http://127.0.0.1:8800>
@@ -29,14 +31,27 @@ Dann im Browser: <http://127.0.0.1:8800>
 
 ## API
 
+### Public Endpoints (read-only)
+
 - `GET /api/health` — Counts
 - `GET /api/workflows` — Liste (neueste zuerst)
 - `GET /api/workflows/{id}` — Detail (Phasen, Healthpoint, Verification-Output)
 - `GET /api/ossifikat/staging` — Staging-Tripel + Rationale
 
+### Admin Endpoints (Token-Auth, Wissensgraph-Verwaltung)
+
+- `POST /api/ossifikat/confirm/{triple_id}` — Tripel ratifizieren
+- `POST /api/ossifikat/park/{triple_id}` — Tripel parken (reversible Hold)
+- `POST /api/ossifikat/archive/{triple_id}` — Tripel archivieren
+- `POST /api/ossifikat/restore/{triple_id}` — Archiviertes Tripel wiederherstellen
+- `POST /api/ossifikat/reject/{triple_id}` — Tripel ablehnen
+
+**Authentifizierung:** Bearer Token über `Authorization: Bearer <token>` Header.
+
 ## Nicht enthalten (bewusst)
 
-Steuerung, Workflow-Start, ossifikat-confirm aus dem Browser. Siehe Tier-2-Notiz oben.
+Workflow-Start, LLM-Query aus dem Browser. Diese sind über `terminal.py` (CLI) oder direkt
+`/api/query` (POST) verfügbar. Siehe Tier-2-Notiz oben.
 
 ---
 

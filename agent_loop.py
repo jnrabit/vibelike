@@ -23,10 +23,10 @@ from pathlib import Path
 from datetime import datetime
 
 # Import Step + AgentLog from shared_models (избегаем дублирования)
-from shared_models import Step, AgentLog
+from vibelike.shared_models import Step, AgentLog
 
 # Import SharedAtom für Accumulator-Signale
-from shared_atom import get_shared_atom
+from vibelike.shared_atom import get_shared_atom
 
 ROOT = Path(__file__).parent
 AGENT_LOG = ROOT / "data" / "agent_log.jsonl"

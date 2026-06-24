@@ -17,7 +17,7 @@ import time
 import shutil
 from collections import defaultdict
 
-from framework.quelibrium.core.paths import CODE_FIELD_FILE as FIELD_FILE
+from vibelike.framework.quelibrium.core.paths import CODE_FIELD_FILE as FIELD_FILE
 
 
 class ResonanceField:

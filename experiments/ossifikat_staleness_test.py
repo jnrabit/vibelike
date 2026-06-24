@@ -26,7 +26,6 @@ from pathlib import Path
 
 # ossifikat-Paket importierbar machen (liegt unter <root>/ossifikat/ossifikat)
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "ossifikat"))
 
 from ossifikat.store import OssifikatStore
 from ossifikat.audit import AuditView, find_functional_predicate_conflicts

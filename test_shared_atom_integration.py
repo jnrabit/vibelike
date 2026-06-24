@@ -8,11 +8,10 @@ import asyncio
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
 
-from shared_atom import reset_shared_atom, get_shared_atom
-from agent_loop import AgentLoop, ToolRegistry
-from p3_decision import decide_p3_models
+from vibelike.shared_atom import reset_shared_atom, get_shared_atom
+from vibelike.agent_loop import AgentLoop, ToolRegistry
+from vibelike.p3_decision import decide_p3_models
 
 
 async def test_atom_integration():

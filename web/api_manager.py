@@ -16,6 +16,7 @@ Sicherheit: Bearer Token Auth (via @require_backend_mgmt)
 
 import os
 import json
+import warnings
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -24,9 +25,10 @@ from pydantic import BaseModel
 
 # Import tier map from privacy_router
 try:
-    from privacy_router import TIER_MAP
+    from vibelike.web.privacy_router import TIER_MAP
 except ImportError:
-    TIER_MAP = {}  # Fallback if privacy_router not available
+    warnings.warn("privacy_router not available", ImportWarning)
+    TIER_MAP = {}
 
 
 # Request models
@@ -111,40 +113,54 @@ async def set_backend_key(
     request: KeyRequest,
     device: str = Depends(_require_backend_mgmt)
 ):
-    """Speichere API-Key für Backend in ~/.vibeweb.env"""
+    """Speichere API-Key für Backend in ~/.vibeweb.env (XOR-verschlüsselt)"""
     try:
+        from vibelike.crypto import xor_encrypt
+        
         key = request.key.strip()
         if not key:
             raise ValueError("Key darf nicht leer sein")
 
-        # Schreibe in ~/.vibeweb.env (append oder replace)
+        # Schreibe in ~/.vibeweb.env als JSON mit verschlüsselten Keys
         env_file = Path.home() / ".vibeweb.env"
         env_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # Lese bestehende Zeilen
+        # Lese bestehende JSON oder Fallback zu altem Format
         existing = {}
         if env_file.exists():
-            for line in env_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    k, v = line.split("=", 1)
-                    existing[k.strip()] = v.strip()
+            try:
+                content = env_file.read_text(encoding="utf-8").strip()
+                if content.startswith("{"):
+                    existing = json.loads(content)
+                else:
+                    # Altes Format (KEY=value)
+                    for line in content.splitlines():
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            existing[k.strip()] = v.strip()
+            except Exception:
+                pass
 
-        # Update Key
+        # Verschlüssle und speichere Key
         key_var = f"{name.upper()}_API_KEY"
-        existing[key_var] = key
+        encrypted_key = xor_encrypt(key)
+        existing[key_var] = encrypted_key
 
-        # Schreibe zurück
-        lines = [f"{k}={v}" for k, v in existing.items()]
-        env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        # Schreibe als JSON zurück
+        env_file.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+        
+        # Erzwinge chmod 600 (read/write für Owner nur)
+        os.chmod(env_file, 0o600)
 
         return {
             "status": "ok",
             "key_var": key_var,
             "saved": True,
-            "message": f"Key für {name} gespeichert in {env_file}"
+            "encrypted": True,
+            "message": f"Key für {name} verschlüsselt gespeichert in {env_file} (chmod 600)"
         }
     except Exception as e:
         raise HTTPException(400, f"Fehler beim Speichern des Keys: {e}")

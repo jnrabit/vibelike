@@ -42,11 +42,10 @@ import warnings
 import numpy as np
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, ROOT)
 warnings.filterwarnings("ignore")
 
-from framework.quelibrium.core.vault import Vault
-from framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE
+from vibelike.framework.quelibrium.core.vault import Vault
+from vibelike.framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE
 
 # General Knowledge Vault (für Allgemeinwissen)
 GENERAL_KNOWLEDGE_VAULT = os.path.abspath(os.path.join(os.path.dirname(CODE_VAULT_FILE), "..", "..", "collect", "data", "monolith_archive.monolith"))

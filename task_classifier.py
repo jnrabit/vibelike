@@ -74,14 +74,18 @@ CLASSIFY_SCHEMA = {
 
 
 class TaskClassifier:
-    """Klassifiziert User-Tasks in einen der TASK_TYPES.
+    """Klassifiziert User-Tasks in einen der TASK_TYPES + Vault-Typ.
 
     Nutzt das Reasoning-Modell (kleines, schnelles Klassifikator-Setup).
     """
 
-    def __init__(self, qwen):
-        """qwen: QwenCoder-Instanz (am besten das analyzer_qwen = Reasoning-Modell)."""
+    def __init__(self, qwen, vault_router=None):
+        """
+        qwen: QwenCoder-Instanz (am besten das analyzer_qwen = Reasoning-Modell).
+        vault_router: Optional VaultRouter für Vault-Typ Klassifikation.
+        """
         self.qwen = qwen
+        self.vault_router = vault_router
 
     def classify(self, task: str, project_files: list[str] | None = None) -> dict:
         """Klassifiziert task in einen TASK_TYPES-Key.
@@ -129,17 +133,62 @@ WICHTIG:
 - Kein Text vor oder nach dem JSON
 - confidence ist 0.0 bis 1.0 (wie sicher bist du dir)"""
 
-        raw = self.qwen.generate(prompt, temperature=0.1, stream=False, fmt=CLASSIFY_SCHEMA)
-        parsed = self._parse_json_response(raw)
+        # Versuche zuerst mit Schema-basierter Klassifikation
+        raw = None
+        try:
+            raw = self.qwen.generate(prompt, temperature=0.1, stream=False, fmt=CLASSIFY_SCHEMA)
+        except Exception as e:
+            # Fallback: ohne Schema
+            import warnings
+            warnings.warn(f"Schema-basierte Klassifikation fehlgeschlagen: {e}", ImportWarning)
+        
+        # Fallback auf einfaches Generate wenn Schema-Request fehlschlägt oder HTTP-Fehler
+        if not raw or "[ERR]" in raw or "404" in raw or "500" in raw:
+            try:
+                raw = self.qwen.generate(prompt, temperature=0.1, stream=False)
+            except Exception as e:
+                import warnings
+                warnings.warn(f"Alle Klassifikations-Versuche fehlgeschlagen: {e}", ImportWarning)
+                raw = None
+        
+        parsed = self._parse_json_response(raw) if raw else None
 
         # Fallback bei Parse-Fehler
         if not parsed or parsed.get("type") not in TASK_TYPES:
-            return {
-                "type": "IMPLEMENTATION",  # konservativer Default
-                "confidence": 0.3,
-                "reasoning": f"Klassifikator-Parse fehlgeschlagen, Default. Raw: {raw[:200]}",
+            # Heuristik-Fallback: Schlüsselwörter erkennen
+            task_lower = task.lower()
+            heuristic_type = "IMPLEMENTATION"  # konservativer Default
+            
+            if any(word in task_lower for word in ["erkläre", "erklär", "was ist", "wie", "warum", "was macht"]):
+                heuristic_type = "EXPLAIN"
+            elif any(word in task_lower for word in ["analysiere", "schau", "untersuche", "prüfe"]):
+                heuristic_type = "ANALYSIS"
+            elif any(word in task_lower for word in ["fix", "bug", "fehler", "error"]):
+                heuristic_type = "BUG_FIX"
+            elif any(word in task_lower for word in ["refaktor", "umstruktur", "reorganis"]):
+                heuristic_type = "REFACTOR"
+            
+            parsed = {
+                "type": heuristic_type,
+                "confidence": 0.5,
+                "reasoning": f"LLM-Klassifikation fehlgeschlagen → Heuristik: '{heuristic_type}'. Raw: {(raw or 'null')[:80]}",
                 "raw": raw,
             }
+
+        # Vault-Router: Bestimme zusätzlich Vault-Typ
+        vault_decision = None
+        if self.vault_router:
+            vault_decision = self.vault_router.route(task, parsed.get("type"))
+            parsed["vault_type"] = vault_decision.vault_type
+            parsed["vault_confidence"] = vault_decision.confidence
+            parsed["vault_reasoning"] = vault_decision.reasoning
+            parsed["vault_mode"] = vault_decision.suggested_mode
+        else:
+            # Fallback wenn kein vault_router gesetzt
+            parsed["vault_type"] = "hybrid"
+            parsed["vault_confidence"] = 0.5
+            parsed["vault_reasoning"] = "vault_router nicht initialisiert"
+            parsed["vault_mode"] = "balanced"
 
         return parsed
 

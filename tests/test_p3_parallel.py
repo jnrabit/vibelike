@@ -3,9 +3,8 @@ from pathlib import Path
 import sys
 import asyncio
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agent_loop import ToolRegistry, AgentLoop
+from vibelike.agent_loop import ToolRegistry, AgentLoop
 
 
 @pytest.mark.asyncio

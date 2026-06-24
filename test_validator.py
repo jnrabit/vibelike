@@ -1,5 +1,5 @@
 import pytest
-from validator import RegexPatternEngine, ExtendedReport
+from vibelike.validator import RegexPatternEngine, ExtendedReport
 
 def test_env_var_cred_detection():
     """Tests the detection of environment variable credentials."""

@@ -19,10 +19,9 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from terminal import CodeRetriever, QwenCoder, ANALYSIS_MODEL
-from framework.quelibrium.core.vault import Vault
+from vibelike.terminal import CodeRetriever, QwenCoder, ANALYSIS_MODEL
+from vibelike.framework.quelibrium.core.vault import Vault
 
 COLLECT = Path("/home/jnrabit/collect/data")
 COLLECT_VAULT = COLLECT / "monolith_archive.monolith"

@@ -11,12 +11,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent
-sys.path.insert(0, str(ROOT))
 
 import asyncio
-from agent_loop import AgentLoop
-from agent_backends import get_registry
-from terminal import CodeRetriever, QwenCoder, build_system_prompt, KNOWLEDGE_ANSWER_MODEL
+from vibelike.agent_loop import AgentLoop
+from vibelike.agent_backends import get_registry
+from vibelike.terminal import CodeRetriever, QwenCoder, build_system_prompt, KNOWLEDGE_ANSWER_MODEL
 
 
 async def run_agent_query(query: str, agent: AgentLoop) -> str:

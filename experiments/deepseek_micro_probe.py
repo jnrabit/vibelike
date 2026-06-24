@@ -11,8 +11,7 @@ import re
 import sys
 
 os.environ.setdefault("VIBELIKE_QWEN_MODEL", "deepseek-coder:6.7b-instruct")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from workflow_agent import WorkflowAgent  # noqa: E402
+from vibelike.workflow_agent import WorkflowAgent  # noqa: E402
 
 region = '''_BEST_PRACTICE_PATTERNS = [
     (r"^\\s*except\\s*:", "high", "bare_except", "bare except: — fängt alle Exceptions ab"),

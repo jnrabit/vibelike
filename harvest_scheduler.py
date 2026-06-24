@@ -10,17 +10,9 @@ import logging
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, ROOT)
 
-try:
-    from reqqueue.manager import RequestQueue
-except ImportError:
-    from vibelike.reqqueue.manager import RequestQueue
-
-try:
-    from models import Request
-except ImportError:
-    from vibelike.models import Request
+from vibelike.reqqueue.manager import RequestQueue
+from vibelike.models import Request
 
 logger = logging.getLogger(__name__)
 

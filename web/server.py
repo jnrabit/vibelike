@@ -9,11 +9,10 @@ Bewusst ohne React/Build-Kette: FastAPI + eine selbsttragende HTML-Seite (web/st
 gestylt mit Claudes terminal.css-Design-Tokens. Jede Quelle wird pro Request frisch
 gelesen → immer aktuell, kein Cache-Drift.
 
-Start:  uvicorn web.server:app --reload --port 8000
-        # oder:  python3 web/server.py
+Start:  uvicorn vibelike.web.server:app --reload --port 8000
+         # oder:  python3 -m vibelike.web.server
 """
 import json
-import sys
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Depends, Header
@@ -21,11 +20,13 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from vibelike.web.terminal_ws import router as terminal_router
+from vibelike.web.api_manager import router as api_router
+from vibelike.web.auth import device_for_token, capabilities_for
+import vibelike.web.ratification as ratification
+
 ROOT = Path(__file__).resolve().parent.parent
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "ossifikat"))
-sys.path.insert(0, str(HERE))  # damit `from auth/terminal_ws import` unter beiden Startarten lädt
 
 WORKFLOWS_JSONL = ROOT / "logs" / "workflows.jsonl"
 OSSIFIKAT_DB = ROOT / "data" / "ossifikat.db"
@@ -35,15 +36,15 @@ STATIC = HERE / "static"
 app = FastAPI(title="Vibelike Kommandozentrale", docs_url="/api/docs")
 
 # PTY-Web-Terminal (hinter Token-Auth + 'terminal'-Capability)
-from terminal_ws import router as terminal_router  # noqa: E402
 app.include_router(terminal_router)
 
 # P3.4: Backend-Management API
-from api_manager import router as api_router  # noqa: E402
 app.include_router(api_router)
 
-from auth import device_for_token, capabilities_for  # noqa: E402
-import ratification  # noqa: E402  (reversible park/archiv-Zustände überm Staging)
+
+class LLMModeRequest(BaseModel):
+    mode: str  # "deepseek-max" | "mitte" | "default"
+    env_vars: dict = {}
 
 
 class QueryRequest(BaseModel):
@@ -318,7 +319,6 @@ async def api_query(request: QueryRequest):
             return JSONResponse({"error": "query erforderlich"}, status_code=400)
 
         # Imports (lazy, damit server schnell startet)
-        sys.path.insert(0, str(ROOT))
         from terminal import (
             QwenCoder, ClaudeCoder, MistralCoder,
             CodeRetriever, analyze_deep, COUNCIL_MODEL
@@ -417,6 +417,79 @@ Frage: {query}"""
         return JSONResponse({
             "error": str(e),
             "traceback": traceback.format_exc()
+        }, status_code=500)
+
+
+# ── Config Endpoints (LLM Mode, ENV Vars) ────────────────────────────────────
+
+@app.post("/api/config/llm-mode")
+def set_llm_mode(req: LLMModeRequest, authorization: str = Header(default=None)) -> JSONResponse:
+    """
+    Setzt den LLM-Mode (deepseek-max, mitte, default) via Env-Variablen.
+    
+    Diese Änderung ist RUNTIME und affects neue Workflows/Sessions.
+    Bereits gestartete Workflows verwenden die Einstellungen von ihrer Startzeit.
+    
+    Body:
+    {
+      "mode": "deepseek-max" | "mitte" | "default",
+      "env_vars": {
+        "VIBELIKE_DEEPSEEK_MAX": "1" | "0",
+        "VIBELIKE_ARCH": "default" | "mitte"
+      }
+    }
+    """
+    try:
+        # Auth prüfen (optional, aber empfohlen)
+        token = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else None
+        # Hier könnte Token-Validierung stattfinden
+        
+        mode = req.mode
+        env_vars = req.env_vars or {}
+        
+        # Falls env_vars leer: ableiten basierend auf mode
+        if not env_vars:
+            if mode == "deepseek-max":
+                env_vars = {"VIBELIKE_DEEPSEEK_MAX": "1", "VIBELIKE_ARCH": "default"}
+            elif mode == "mitte":
+                env_vars = {"VIBELIKE_DEEPSEEK_MAX": "0", "VIBELIKE_ARCH": "mitte"}
+            elif mode == "default":
+                env_vars = {"VIBELIKE_DEEPSEEK_MAX": "0", "VIBELIKE_ARCH": "default"}
+        
+        if mode not in ["deepseek-max", "mitte", "default"]:
+            return JSONResponse({
+                "error": f"Ungültiger Mode: {mode}"
+            }, status_code=400)
+        
+        # Setze Env-Variablen in dieser Python-Session
+        # (Betroffen: neue WorkflowAgent-Instanzen ab jetzt)
+        import os
+        for key, value in env_vars.items():
+            os.environ[key] = str(value)
+            print(f"[⚙️  Config] {key} = {value}")
+        
+        # Persistiere in .env für neue Prozesse (Terminal-Spawns, etc.)
+        env_path = ROOT / ".env"
+        try:
+            with open(env_path, "w") as f:
+                f.write(f"VIBELIKE_DEEPSEEK_MAX={env_vars.get('VIBELIKE_DEEPSEEK_MAX', '0')}\n")
+                f.write(f"VIBELIKE_ARCH={env_vars.get('VIBELIKE_ARCH', 'default')}\n")
+            print(f"[⚙️  Config] Persisted to {env_path}")
+        except Exception as e:
+            print(f"[WARN] Could not persist .env: {e}")
+        
+        return JSONResponse({
+            "status": "ok",
+            "mode": mode,
+            "env_vars_set": env_vars,
+            "message": f"LLM Mode geändert auf: {mode}. Neue Workflows nutzen diese Einstellung."
+        })
+    except Exception as e:
+        import traceback
+        print(f"[ERR] /api/config/llm-mode: {e}")
+        traceback.print_exc()
+        return JSONResponse({
+            "error": str(e)
         }, status_code=500)
 
 

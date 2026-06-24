@@ -21,10 +21,9 @@ import urllib.parse
 import urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, ROOT)
 
-from framework.quelibrium.core.vault import Vault
-from framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE
+from vibelike.framework.quelibrium.core.vault import Vault
+from vibelike.framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE
 
 # User-Agent für HTTP-Requests (erforderlich für Wikipedia)
 USER_AGENT = (

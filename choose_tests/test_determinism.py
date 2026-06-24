@@ -1,4 +1,4 @@
-from choose import Predicate, PredicateBundle, Verdict, choose
+from vibelike.choose import Predicate, PredicateBundle, Verdict, choose
 
 
 def _is_even(x):

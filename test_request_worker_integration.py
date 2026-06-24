@@ -6,14 +6,8 @@ import time
 from pathlib import Path
 from datetime import datetime
 
-try:
-    from reqqueue.manager import RequestQueue
-    from reqqueue.worker import RequestWorker
-    from models.request import Request
-except ImportError:
-    from vibelike.reqqueue.manager import RequestQueue
-    from vibelike.reqqueue.worker import RequestWorker
-    from vibelike.models.request import Request
+from vibelike.reqqueue.manager import RequestQueue
+
 
 def test_full_request_worker_pipeline():
     """Test the complete RequestWorker pipeline: enqueue → process → verify."""

@@ -31,7 +31,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from auth import device_for_token, capabilities_for
+from vibelike.web.auth import device_for_token, capabilities_for
 
 ROOT = Path(__file__).resolve().parent.parent
 AUDIT_LOG = ROOT / "logs" / "web_terminal_audit.jsonl"

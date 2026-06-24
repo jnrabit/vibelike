@@ -7,10 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-try:
-    from reqqueue.manager import QueueStatus
-except ImportError:
-    from vibelike.reqqueue.manager import QueueStatus
+from vibelike.reqqueue.manager import QueueStatus
 
 
 @dataclass

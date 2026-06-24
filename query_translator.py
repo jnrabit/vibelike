@@ -14,7 +14,7 @@ Design:
 Migriert aus quelibrium/quelibrium_terminal.py:translate_query().
 
 Nutzung:
-    from query_translator import QueryTranslator
+    from vibelike.query_translator import QueryTranslator
     t = QueryTranslator()
     result = t.translate("Wie funktioniert TLS Handshake?")
     print(result["translated"])   # 'How does TLS handshake work?'

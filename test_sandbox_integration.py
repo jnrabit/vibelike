@@ -6,12 +6,8 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-try:
-    from sandbox.manager import SandboxManager
-    from tools.cache import ToolCache
-except ImportError:
-    from vibelike.sandbox.manager import SandboxManager
-    from vibelike.tools.cache import ToolCache
+from vibelike.sandbox.manager import SandboxManager
+
 
 def test_sandbox_creation():
     """Test creating and using a sandbox with echo-tool."""

@@ -4,7 +4,7 @@ Run with `python -m tests.examples.demo_iteration` from the repo root.
 """
 from __future__ import annotations
 
-from choose import (
+from vibelike.choose import (
     Decided,
     Predicate,
     PredicateBundle,

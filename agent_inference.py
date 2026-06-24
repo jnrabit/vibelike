@@ -228,7 +228,7 @@ class ActionDecider:
         # ActionDecider nutzt IMMER nur lokal qwen für schnelle Action-Entscheidungen
         # Cloud-Models (claude, gemini) sind zu langsam für Step-by-Step Loop
         self.local_coder = ModelCoder(model="qwen2.5-coder:1.5b")  # Force lokal
-        from agent_backends import get_registry
+        from vibelike.agent_backends import get_registry
         self.registry = get_registry()
 
     def _get_best_backend_for_actions(self):

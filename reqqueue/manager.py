@@ -3,21 +3,19 @@
 import json
 import sqlite3
 import uuid
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 try:
-    from models import Request
-    from config import QUEUE_DB
+    from vibelike.models.request import Request
+    from vibelike.config import QUEUE_DB
 except ImportError:
-    try:
-        from vibelike.models import Request
-        from vibelike.config import QUEUE_DB
-    except ImportError:
-        Request = None
-        QUEUE_DB = Path("/vibelike/logs/queue.db")
+    warnings.warn("Could not import Request model or QUEUE_DB from config", ImportWarning)
+    Request = None
+    QUEUE_DB = Path("/vibelike/logs/queue.db")
 
 
 @dataclass

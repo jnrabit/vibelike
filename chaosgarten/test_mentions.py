@@ -1,5 +1,5 @@
 import pytest
-from chaosgarten.mentions import extract_mentions, MentionIndex
+from vibelike.chaosgarten.mentions import extract_mentions, MentionIndex
 
 
 # --- Block A: extract_mentions() ---

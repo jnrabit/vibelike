@@ -11,11 +11,10 @@ import builtins
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 builtins.input = lambda *a, **k: "ja"
 
-from workflow_agent import WorkflowAgent
+from vibelike.workflow_agent import WorkflowAgent
 
 TASK = (
     "Baue die NEUE Datei chaosgarten/reactions.py: eine backend-agnostische "

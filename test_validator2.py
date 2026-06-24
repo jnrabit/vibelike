@@ -1,4 +1,4 @@
-from validator2 import StaticValidatorV2
+from vibelike.validator2 import StaticValidatorV2
 
 
 def _check_line(code: str) -> bool:

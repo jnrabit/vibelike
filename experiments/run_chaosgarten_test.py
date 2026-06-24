@@ -13,11 +13,10 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 builtins.input = lambda *a, **k: "ja"
 
-from workflow_agent import WorkflowAgent
+from vibelike.workflow_agent import WorkflowAgent
 
 TASK = (
     "Baue ein NEUES, eigenständiges Python-Modul im neuen Ordner chaosgarten/: "

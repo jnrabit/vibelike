@@ -35,7 +35,7 @@ def test_end_to_end_pipeline():
     """Test complete pipeline: code changes → 3 layers → unified report."""
     print_section("PART 1: END-TO-END PIPELINE TEST")
 
-    from validator2 import StaticValidatorV2
+    from vibelike.validator2 import StaticValidatorV2
     from pathlib import Path
 
     # Simulate code changes with various issues
@@ -134,7 +134,7 @@ def test_interface_compatibility():
     print_section("PART 2: INTERFACE COMPATIBILITY TESTS")
 
     import inspect
-    from validator2 import StaticValidatorV2
+    from vibelike.validator2 import StaticValidatorV2
     from ossifikat_audit_bridge import OssifikatAuditBridge
 
     # Test 2.1: validate_full() signature
@@ -170,7 +170,7 @@ def test_interface_compatibility():
 
     # Test 2.4: Report compatibility
     print_subsection("2.4: Report Format Compatibility")
-    from validator2 import Finding, ExtendedReport
+    from vibelike.validator2 import Finding, ExtendedReport
     report = ExtendedReport()
     f = Finding(severity="high", check="test:check", location="file:10", message="test message")
     report.add(f)
@@ -200,7 +200,7 @@ def test_interface_compatibility():
     # Should work with ossifikat_db
     r2 = v.validate_full([], "plan", ossifikat_db="/fake/path.db")
     # Both should return ExtendedReport
-    from validator2 import ExtendedReport
+    from vibelike.validator2 import ExtendedReport
     assert isinstance(r1, ExtendedReport), "validate_full should return ExtendedReport"
     assert isinstance(r2, ExtendedReport), "validate_full should return ExtendedReport"
     print("  ✅ ossifikat_db parameter is truly optional")
@@ -216,7 +216,7 @@ def test_throughput_performance():
     """Test speed, throughput, and performance characteristics."""
     print_section("PART 3: THROUGHPUT & PERFORMANCE TESTS")
 
-    from validator2 import StaticValidatorV2
+    from vibelike.validator2 import StaticValidatorV2
     from pathlib import Path
 
     # Test 3.1: Single file validation speed

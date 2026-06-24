@@ -39,12 +39,11 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
 
 import numpy as np  # noqa: E402
 
-from framework.quelibrium.core.vault import Vault  # noqa: E402
-from framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE  # noqa: E402
+from vibelike.framework.quelibrium.core.vault import Vault  # noqa: E402
+from vibelike.framework.quelibrium.core.paths import CODE_VAULT_FILE, CODE_CACHE_FILE  # noqa: E402
 
 
 DEFAULT_INPUT = Path.home() / "MASTER_VAULT" / "documents" / "Projekt_Wissen"

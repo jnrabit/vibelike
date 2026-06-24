@@ -7,7 +7,7 @@ Alle Signale nebeneinander (nicht hierarchisch).
 """
 
 from typing import List, Dict, Optional
-from shared_atom import get_shared_atom
+from vibelike.shared_atom import get_shared_atom
 
 
 class P3ModelDecision:
@@ -126,7 +126,7 @@ def decide_p3_models(
 
 if __name__ == "__main__":
     # Test
-    from shared_atom import SharedAtom
+    from vibelike.shared_atom import SharedAtom
 
     atom = SharedAtom()
 
