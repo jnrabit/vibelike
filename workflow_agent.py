@@ -800,6 +800,14 @@ Schließe mit:
                 context={}
             )
             print(f"[🎯 IDIOM] {phase}/{task_type} → {idiom.id} (score={score:.2f})")
+            # Wahl protokollieren (für Idiom↔Ossifikat-Feedback-Schleife) — passiert
+            # IMMER, auch in format-locked Phasen die keinen Steering-Block injizieren.
+            if self.current_workflow is not None:
+                self.current_workflow.setdefault("idioms", {})[phase] = {
+                    "id": idiom.id,
+                    "score": round(score, 3),
+                    "task_type": task_type,
+                }
             return (idiom, score)
         except Exception as e:
             print(f"[WARN] Idiom routing failed: {e} → using hardcoded framing")
@@ -969,6 +977,12 @@ VOLLER CODE relevanter Dateien:
         code_overview = briefing.get("code_overview", "")
         authoritative = self._authoritative_file_list()
 
+        # Idiom-Wahl protokollieren (log-only: Strategie-Prompt ist Anti-Drift-getunt
+        # mit fester 7-Punkt-Struktur — ein Steering-Block würde damit konkurrieren).
+        self._select_idiom("planning_strategie",
+                            (self.current_workflow or {}).get("task_type", "IMPLEMENTATION"),
+                            briefing['task'])
+
         feedback_history: list[str] = []
         previous_strategy = ""
         max_iterations = 3
@@ -1107,6 +1121,12 @@ Wenn deine Strategie das nicht direkt adressiert: STOP, du driftest.
         code_overview = briefing.get("code_overview", "")
         focused_files = briefing.get("focused_files", "")
         authoritative = self._authoritative_file_list()
+
+        # Idiom-Wahl protokollieren (log-only: Detailplan hat feste 1./2./3.-Struktur,
+        # planning_detailplan-Idioms beschreiben interne Strategie, kein Output-Format).
+        self._select_idiom("planning_detailplan",
+                            (self.current_workflow or {}).get("task_type", "IMPLEMENTATION"),
+                            f"{briefing['task']} {strategy.get('strategy', '')[:200]}")
 
         feedback_history: list[str] = []
         previous_plan = ""
@@ -1335,6 +1355,12 @@ Generiere kompletten, lauffähigen Code."""
 
         existing_context = self._build_existing_files_context(plan.get("plan", ""))
 
+        # Idiom-Wahl protokollieren (log-only: execution ist format-locked auf
+        # ## Datei:-Output, ein response_format-Steering-Block würde den Parser brechen).
+        self._select_idiom("execution",
+                            (self.current_workflow or {}).get("task_type", "IMPLEMENTATION"),
+                            briefing['task'])
+
         # Variabler Teil (Task/Plan/Kontext); der stabile Instruktions-Block geht
         # als gecachter Präfix → Prompt-Caching über Codegen-Retries (Stufe B).
         execution_prompt = f"""ORIGINALAUFGABE:
@@ -1530,6 +1556,9 @@ PLAN:
         if task_type == "REFACTOR":
             print("[🔒 REFACTOR — Tests müssen UNVERÄNDERT grün bleiben (Verhaltens-Invarianz)]")
 
+        # Idiom-Wahl protokollieren (log-only: verify führt deterministisch Tests aus).
+        self._select_idiom("verify", task_type, "run tests and verify")
+
         print("[🧪 Führe Tests aus...]")
 
         # Laufe run_tests.py
@@ -1660,6 +1689,11 @@ Sei knapp, kein Fließtext."""
         if not files_changed:
             print("\n⚠️ Keine Files geändert, nichts zu committen.\n")
             return {"phase": "COMMIT", "committed": False, "steps": []}
+
+        # Idiom-Wahl protokollieren (log-only: Commit-Logik ist deterministisch per-step).
+        self._select_idiom("commit",
+                            (self.current_workflow or {}).get("task_type", "IMPLEMENTATION"),
+                            "per-step git commits")
 
         # Detail-Plan aus aktuellem Workflow lesen
         detail = (self.current_workflow or {}).get("phases", {}).get("planning_detailed", {})
@@ -2876,6 +2910,12 @@ Was NICHT zählt:
         code_overview = briefing.get("code_overview", "")
         focused_files = briefing.get("focused_files", "")
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+        # Idiom-Wahl protokollieren (log-only: Report ist deterministische Markdown-
+        # Assemblierung; Format-Idiome greifen erst mit echter Format-Wahl-Logik).
+        _tt = (classification or {}).get("type") or \
+              (self.current_workflow or {}).get("task_type", "ANALYSIS")
+        self._select_idiom("analysis_report", _tt, task)
 
         # Erkenntnisse-Section aus Analyse extrahieren (PFLICHT-Section vom Briefing-Prompt)
         main_analysis, synthesis = self._split_analysis_synthesis(analysis)
