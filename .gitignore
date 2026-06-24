@@ -1,16 +1,61 @@
-# Laufzeit-/generierte Zustände (regenerierbar, churnen)
+# ==================== GENERATED & RUNTIME ====================
 data/ossifikat.db
 data/bridge_rationales.jsonl
 data/decompose_cache.json
 data/translation_cache.json
 data/ratification_overlay.json
+data/chaos_tokens.db
+data/agent_log.jsonl
+data/code_embedding_cache.pkl
+data/code_resonance_field.pkl
+data/code_archive.monolith
+data/code_archive.monolith.bak-*
+logs/triplets.jsonl
+logs/workflows.jsonl
+logs/queue.db
+logs/execution.db
+logs/web_terminal_audit.jsonl
+logs/results/
+logs/analysis-*.md
+
+# ==================== PYTHON ====================
 __pycache__/
 *.pyc
-.directory
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.Python
+venv/
+env/
+ENV/
 
-# Geräte-Geheimnisse & Audit — NIE committen
-data/chaos_tokens.db
-logs/web_terminal_audit.jsonl
-# Live-Geräteliste (churnt bei mint/revoke) — Laufzeit-Config
-web/capabilities.toml
+# ==================== IDE & OS ====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.directory
 .aider*
+.env
+.env.local
+.env.startup
+
+# ==================== SECRETS & AUDIT ====================
+# Never commit secrets, API keys, or audit logs
+web/capabilities.toml
+~/.vibeweb.env
+
+# ==================== TEMPORARY ARTEFACTS ====================
+# These belong in a separate branch or should be deleted
+attic/
+experiments/
+choose_tests/
+chaosgarten/
+sandbox/
+*.bak
+*.tmp
