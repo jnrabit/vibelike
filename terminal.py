@@ -887,7 +887,8 @@ class ClaudeCoder:
             print(f"[WARN] Claude-Init fehlgeschlagen: {e}")
 
     def generate(self, prompt: str, system: str = None, temperature: float = 0.2,
-                 stream: bool = False, fmt=None, cache_prefix: str = None) -> str:
+                 stream: bool = False, fmt=None, cache_prefix: str = None,
+                 raise_on_quota: bool = False) -> str:
         """Generiere via Claude-API. stream=True schreibt Tokens live nach stdout;
         Rückgabe ist in beiden Fällen der volle Antworttext. Fehler → '[ERR] ...'.
 
@@ -895,6 +896,9 @@ class ClaudeCoder:
         cache_prefix: stabiler Präfix → gecachter system-Block (cache_control ephemeral).
         Über mehrere Calls mit identischem Präfix (z.B. Codegen-Retries) wird der Block
         nur einmal berechnet → cache_read statt Neuberechnung.
+        raise_on_quota: wenn True, werden Quota/Overload/Timeout-Fehler als typisierte
+        ModelError-Exception GEWORFEN statt in '[ERR] ...' verschluckt — so kann ein
+        FallbackCoder auf lokal umschalten. Default False → altes Verhalten (kompatibel).
         """
         if not self.usable:
             return "[ERR] ClaudeCoder nicht initialisiert (Key/Paket fehlt)"
@@ -927,6 +931,11 @@ class ClaudeCoder:
             print()  # Newline nach dem Stream
             return "".join(chunks)
         except Exception as e:
+            if raise_on_quota:
+                from model_fallback import classify_model_exception
+                typed = classify_model_exception(e)
+                if typed is not None:
+                    raise typed from e
             return f"[ERR] {str(e)}"
 
 

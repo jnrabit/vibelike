@@ -156,9 +156,15 @@ class WorkflowAgent:
             if settings.codegen_backend == "claude":
                 claude = ClaudeCoder()
                 if claude.usable:
-                    self.qwen = claude
+                    # Local-First-Fallback: Claude codet; bei Quota/Overload übernimmt
+                    # lokales deepseek automatisch (statt [ERR]-Müll in den Workflow).
+                    from model_fallback import FallbackCoder
+                    local_backup = QwenCoder(model=settings.coder_model,
+                                             num_predict=8192, keep_alive="30m")
+                    self.qwen = FallbackCoder(primary=claude, fallback=local_backup,
+                                              name="codegen")
                     self.code_review_enabled = False  # weak-reviewt-strong = Noise
-                    print("[🚀 DEFAULT MODE: Claude codet direkt]")
+                    print("[🚀 DEFAULT MODE: Claude codet direkt (lokaler Fallback scharf)]")
                 else:
                     print("[WARN] Claude-Backend nicht verfügbar → Fallback auf deepseek")
                     self.qwen = QwenCoder()
