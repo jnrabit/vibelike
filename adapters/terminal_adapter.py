@@ -42,8 +42,10 @@ class TerminalAdapter:
         Returns:
             Triple ID if stored successfully
         """
+        if not self.store:
+            return None
         from vibelike.crypto import stable_hash_sha256
-        
+
         # Create triple: query_hash retrieved_answer response_hash (using stable SHA256)
         subject = f"query_{stable_hash_sha256(query, hex_length=8)}"
         object_val = f"response_{stable_hash_sha256(response, hex_length=8)}"

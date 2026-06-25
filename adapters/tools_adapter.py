@@ -35,6 +35,8 @@ class ToolsAdapter:
         Returns:
             Triple ID if stored successfully
         """
+        if not self.store:
+            return None
         if not tool or not tool.get("id"):
             return None
 

@@ -81,11 +81,9 @@ def test_harvest_adapter_store_document():
         # Should return some result if store exists
         assert result is not None or result is None  # Both OK
     else:
-        # If ossifikat not available, just ensure no error
+        # If ossifikat not available, korrekte API nutzen + graceful None erwarten
         result = adapter.store_document(
-            title="Test",
-            content="Test",
-            urls=[],
+            doc={"id": "test", "title": "Test", "content": "Test", "urls": []},
             source="test"
         )
         assert result is None
