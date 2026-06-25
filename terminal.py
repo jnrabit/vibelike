@@ -1841,9 +1841,9 @@ async def main():
                     synth_coder = ClaudeCoder(model=SYNTH_MODEL)
                 response = run_council(query, sys_full, coder, council_coder, synth_coder)
             else:
-                # ===== STANDARD MODE: Deepseek mit Vault-Context =====
-                # Schnelle Query mit Deepseek + Vault-Kontext (60s Timeout)
-                print(f"[GEN] Deepseek mit Vault-Context (60s Timeout)...\n" + "-" * 60)
+                # ===== STANDARD MODE: Generalist mit Vault-Context =====
+                # Schnelle Query mit dem Wissens-Generalisten + Vault-Kontext (60s Timeout)
+                print(f"[GEN] {coder.model} mit Vault-Context (60s Timeout)...\n" + "-" * 60)
                 try:
                     response = coder.generate(query, system=sys_full, stream=True)
                 except requests.exceptions.Timeout:

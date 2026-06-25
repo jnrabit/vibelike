@@ -127,10 +127,12 @@ class VibelikeSettings(BaseSettings):
         description="Mistral synthesis model"
     )
     
-    # Knowledge answer model (Q&A over vaults)
+    # Knowledge answer model (Q&A over vaults) — GENERALIST, nicht der Coder!
+    # Wissensfragen (Mathe/Physik/Fakten) brauchen Synthese, kein Code-Modell.
+    # deepseek-coder ignoriert den Vault-Kontext + gibt Generik-Antworten.
     knowledge_answer_model: str = Field(
-        default="",  # Falls back to coder_model if empty
-        description="Model for knowledge Q&A"
+        default="qwen3:8b",
+        description="Generalist-Model für Wissens-Q&A über die Vaults (NICHT der Coder)"
     )
     
     # ─────────────────────────────────────────────────────────────────
@@ -286,9 +288,10 @@ class VibelikeSettings(BaseSettings):
     @field_validator('knowledge_answer_model', mode='before')
     @classmethod
     def fallback_knowledge_answer_model(cls, v, info):
-        """Fallback to coder_model if knowledge_answer_model is empty."""
+        """Leeres Feld → Generalist (qwen3:8b), NICHT der Coder. Ein Code-Modell
+        beantwortet Wissensfragen schlecht (ignoriert Vault-Kontext)."""
         if not v:
-            return info.data.get('coder_model', 'deepseek-coder:6.7b-instruct')
+            return "qwen3:8b"
         return v
     
     def model_post_init(self, __context):
