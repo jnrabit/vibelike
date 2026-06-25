@@ -107,12 +107,22 @@ def review_triples(retriever):
         print("[WARN] Ossifikat TerminalAdapter nicht verfügbar")
         return
 
+    # Die ossifikat-CLI bietet 'review' (interaktives Bestätigen der Staging-Tripel)
+    # als click-Command — frühere Version importierte fälschlich 'review_staging'
+    # (existiert nicht) → irreführendes "nicht installiert". Korrekt: CLI aufrufen.
+    import subprocess
+    from config import settings
+    db = str(settings.ossifikat_db)
     try:
-        from ossifikat.cli import review_staging
-        print("[REVIEW] Öffne ossifikat Staging-Review...")
-        review_staging()
-    except ImportError:
-        print("[WARN] ossifikat nicht installiert: pip install ossifikat")
+        print(f"[REVIEW] Öffne ossifikat Staging-Review (db={db})...")
+        subprocess.run(["ossifikat", "review", "--db", db], check=False)
+    except FileNotFoundError:
+        # Fallback: click-Command im selben Prozess aufrufen
+        try:
+            from ossifikat.cli import review
+            review(["--db", db], standalone_mode=False)
+        except Exception as e:
+            print(f"[WARN] ossifikat-CLI nicht gefunden ({e}). Installieren: pip install -e ossifikat/")
     except Exception as e:
         print(f"[ERR] Review fehlgeschlagen: {e}")
 
