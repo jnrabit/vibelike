@@ -16,7 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # volle History → regression_guard --range gegen Base
+          fetch-depth: 0       # volle History → regression_guard --range gegen Base
+          submodules: recursive # ossifikat-Submodule auschecken (Code braucht es)
 
       - uses: actions/setup-python@v5
         with:
