@@ -60,3 +60,4 @@ chaosgarten/
 sandbox/
 *.bak
 *.tmp
+cache/
