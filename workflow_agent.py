@@ -2804,54 +2804,17 @@ ANWEISUNG:
         🔴: top-level Symbol-Verlust (Klasse/Funktion/Konstante) ohne explizite
             Plan-Erwähnung mit Entfernungs-Verb.
         🟡: ≥50% Zeilen-Reduktion bei existierender Datei ≥20 Zeilen.
+
+        Delegiert an regression_guard (single source of truth — dieselbe Logik
+        läuft auch als standalone CLI/Pre-Commit-Hook über beliebige git-Diffs).
         """
-        issues = []
-        plan_lower = (plan_text or "").lower()
-        removal_verbs = ("remove", "entfern", "löschen", "delete", "wegwerfen")
-
-        for change in planned_changes:
-            if not change.get("exists"):
-                continue
-            path = Path(change["path"])
-            try:
-                old_content = path.read_text()
-            except OSError:
-                continue
-            new_content = change["content"]
-            old_n = len(old_content.splitlines())
-            new_n = len(new_content.splitlines())
-
-            if path.suffix == ".py":
-                old_syms = self._top_level_symbols(old_content)
-                new_syms = self._top_level_symbols(new_content)
-                if old_syms is not None and new_syms is not None:
-                    lost = old_syms - new_syms
-                    unauthorized = {
-                        s for s in lost
-                        if not (s.lower() in plan_lower
-                                and any(v in plan_lower for v in removal_verbs))
-                    }
-                    if unauthorized:
-                        issues.append({
-                            "file": str(path),
-                            "kind": "symbol_loss",
-                            "detail": f"{len(unauthorized)} top-level Symbol(e) verschwunden: "
-                                      f"{sorted(unauthorized)[:6]}",
-                        })
-
-            if old_n >= 20 and new_n < old_n * 0.5:
-                issues.append({
-                    "file": str(path),
-                    "kind": "size_collapse",
-                    "detail": f"{old_n} → {new_n} Zeilen "
-                              f"({100*(1-new_n/old_n):.0f}% Reduktion)",
-                })
-
-        if not issues:
-            return {"verdict": "🟢", "issues": []}
-        if any(i["kind"] == "symbol_loss" for i in issues):
-            return {"verdict": "🔴", "issues": issues}
-        return {"verdict": "🟡", "issues": issues}
+        from regression_guard import check_paths
+        changes = [
+            {"path": str(c["path"]), "content": c.get("content", ""),
+             "exists": c.get("exists", False)}
+            for c in planned_changes
+        ]
+        return check_paths(changes, plan_text)
 
     def _show_diff(self, planned_changes: list, full: bool = False) -> None:
         """Zeigt Diff oder Preview pro geplanter Datei."""
