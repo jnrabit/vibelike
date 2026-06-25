@@ -48,12 +48,12 @@ def test_get_dependencies(tool_registry: ToolRegistry, echo_tool: Tool):
     # Should be empty or contain dependencies
     assert len(deps) >= 0
 
-def test_discover_echo_tool(tool_registry: ToolRegistry):
+def test_discover_echo_tool(tool_registry: ToolRegistry, echo_tool: Tool):
     """Test that a manually registered tool is found."""
     tools = tool_registry.list_tools()
     assert "echo" in tools
 
-def test_resolve_tool(tool_registry: ToolRegistry):
+def test_resolve_tool(tool_registry: ToolRegistry, echo_tool: Tool):
     """Test resolving a tool."""
     tool = tool_registry.resolve("echo")
     assert tool is not None

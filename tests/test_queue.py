@@ -1,4 +1,5 @@
 import pytest
+from datetime import timedelta
 from pathlib import Path
 import sys
 from vibelike.reqqueue.manager import RequestQueue
@@ -38,7 +39,7 @@ def test_complete_request(queue: RequestQueue):
 
     queue.complete(req_id, exit_code=0)
     retrieved = queue.get_request(req_id)
-    assert retrieved.status == "done"
+    assert retrieved.status == "completed"
     assert retrieved.exit_code == 0
 
 
@@ -48,7 +49,7 @@ def test_fail_request(queue: RequestQueue):
     req_id = queue.enqueue(req)
     queue.dequeue()  # Move to running
 
-    queue.fail(req_id, error_reason="Test error")
+    queue.fail(req_id, error="Test error")
     retrieved = queue.get_request(req_id)
     assert retrieved.status == "failed"
 
@@ -86,11 +87,11 @@ def test_list_requests(queue: RequestQueue):
     queue.dequeue()  # Move id1 to running
 
     # List pending
-    pending = queue.list_requests(status_filter="pending")
+    pending = queue.list_requests(status="pending")
     assert any(r.req_id == id2 for r in pending)
 
     # List running
-    running = queue.list_requests(status_filter="running")
+    running = queue.list_requests(status="running")
     assert any(r.req_id == id1 for r in running)
 
 
@@ -99,7 +100,8 @@ def test_requeue_failed(queue: RequestQueue):
     req = Request(command="test")
     req_id = queue.enqueue(req)
     queue.dequeue()  # Move to running
-    queue.fail(req_id, error_reason="Retry test")
+    # next_attempt_delay=0 → sofort fällig (sonst greift der 5-min-Backoff)
+    queue.fail(req_id, error="Retry test", next_attempt_delay=timedelta(0))
 
     requeued_count = queue.requeue_failed()
     assert requeued_count >= 1

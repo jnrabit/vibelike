@@ -44,9 +44,13 @@ def tool_registry(tmp_path: Path):
     """Fixture for the ToolRegistry."""
     from vibelike.tools.registry import ToolRegistry
     from vibelike.tools.cache import ToolCache
-    # Use a temporary directory for the cache
-    cache = ToolCache(cache_dir=str(tmp_path))
-    return ToolRegistry(tools_dir=str(tmp_path), cache=cache)
+    # tools_dir und cache GETRENNT halten — sonst landet die Cache-DB (index.db) im
+    # tools_dir und wird vom Scan als Phantom-Tool aufgelesen.
+    tools_dir = tmp_path / "tools"
+    tools_dir.mkdir()
+    (tools_dir / "dummy-tool").mkdir()  # für test_tool_discovery (Verzeichnis-Scan)
+    cache = ToolCache(cache_dir=str(tmp_path / "cache"))
+    return ToolRegistry(tools_dir=tools_dir, cache=cache)
 
 
 @pytest.fixture
@@ -73,20 +77,14 @@ def terminal_adapter(temp_db_path: str):
 def echo_tool(tool_registry: "ToolRegistry"):
     """A simple 'echo' tool for testing, which is manually registered."""
     from vibelike.tools.models import Tool
-    
-    echo_tool_def = {
-        "name": "echo",
-        "description": "A simple echo tool.",
-        "executable": "/bin/echo",
-        "args": ["{{text}}"],
-        "triples": [
-            {
-                "subject": "tool:echo",
-                "predicate": "action:prints",
-                "object": "literal:{{text}}"
-            }
-        ]
-    }
-    tool = Tool.from_dict(echo_tool_def)
+
+    # Aktuelles Tool-Dataclass-Schema (name/path/binary/description), nicht das
+    # alte executable/args/triples-Schema (Tool.from_dict existiert nicht mehr).
+    tool = Tool(
+        name="echo",
+        path=Path("/bin/echo"),
+        binary="echo",
+        description="A simple echo tool.",
+    )
     tool_registry._tools[tool.name] = tool  # Direct registration for test purposes
     return tool

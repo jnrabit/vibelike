@@ -49,8 +49,10 @@ class ToolCache:
 
         self.cache_dir = Path(cache_dir)
         self.cache_db = self.cache_dir / "index.db"
-        self._init_db()
+        # Verzeichnis ZUERST anlegen — _init_db öffnet sqlite in cache_dir und
+        # scheitert sonst mit OperationalError, wenn cache_dir noch nicht existiert.
         self._init_cache_dir()
+        self._init_db()
 
     def _init_db(self) -> None:
         """Erstellt die SQLite-Tabellen, falls nicht vorhanden."""

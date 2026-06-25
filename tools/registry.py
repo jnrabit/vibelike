@@ -29,7 +29,9 @@ class ToolRegistry:
             cache: Optional: ToolCache-Instanz
         """
         self.config_path = Path(config_path)
-        self.tools_dir = tools_dir or TOOLS_DIR
+        # tools_dir konsistent zu config_path in Path wrappen (Aufrufer/Tests
+        # übergeben teils str) — _scan_tools_dir ruft .exists()/.iterdir().
+        self.tools_dir = Path(tools_dir) if tools_dir is not None else TOOLS_DIR
         self.cache = cache or ToolCache()
         self._tools: dict[str, Tool] = {}
         self._load_config()

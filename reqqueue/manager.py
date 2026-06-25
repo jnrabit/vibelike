@@ -29,6 +29,12 @@ class QueueStatus:
     stale: int = 0
     next_request: Optional[dict] = None
 
+    @property
+    def total(self) -> int:
+        """Gesamtzahl aller Requests über alle Status."""
+        return (self.pending + self.running + self.completed
+                + self.failed + self.timeout + self.stale)
+
 
 class RequestQueue:
     """Verwaltet eine SQLite-basierte Request-Queue für sequentielle Ausführung."""
@@ -213,7 +219,9 @@ class RequestQueue:
                     (req_id,)
                 )
                 self._update_health_check()
-                return Request.from_json(payload)
+                req = Request.from_json(payload)
+                req.status = "running"  # DB ist schon 'running' — Objekt nachziehen
+                return req
 
         return None
 
@@ -332,20 +340,49 @@ class RequestQueue:
             )
         self._update_health_check()
 
-    def requeue_failed(self) -> None:
+    def requeue_failed(self) -> int:
         """
         Setzt alle fehlgeschlagenen Requests mit next_attempt_at <= jetzt zurück auf "pending".
+
+        Returns Anzahl zurückgesetzter Requests.
         """
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
+            # next_attempt_at wird in fail() als Python-isoformat() (lokal, 'T'-Separator)
+            # geschrieben → gegen denselben Format vergleichen, NICHT sqlites
+            # CURRENT_TIMESTAMP (UTC, Leerzeichen) — sonst schlägt der String-Vergleich
+            # immer fehl und nichts wird je requeued.
+            cur = conn.execute(
                 """
                 UPDATE request_queue
                 SET status = 'pending'
                 WHERE status = 'failed'
-                AND next_attempt_at <= CURRENT_TIMESTAMP
-                """
+                AND next_attempt_at <= ?
+                """,
+                (datetime.now().isoformat(),),
             )
+            count = cur.rowcount
         self._update_health_check()
+        return count
+
+    def requeue_stale(self, stale_after_minutes: int = 10) -> int:
+        """Setzt 'running'-Requests, die zu lange laufen, zurück auf 'pending'.
+
+        Reklamiert hängende Requests (z. B. nach Worker-Crash). Returns Anzahl
+        zurückgesetzter Requests. stale_after_minutes=0 → alle laufenden sofort.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                """
+                UPDATE request_queue
+                SET status = 'pending'
+                WHERE status = 'running'
+                AND started_at <= datetime('now', ?)
+                """,
+                (f"-{stale_after_minutes} minutes",),
+            )
+            count = cur.rowcount
+        self._update_health_check()
+        return count
 
     def get_status(self) -> QueueStatus:
         """
@@ -409,11 +446,17 @@ class RequestQueue:
         """
         with sqlite3.connect(self.db_path) as conn:
             row = conn.execute(
-                "SELECT payload FROM request_queue WHERE req_id = ?",
+                "SELECT payload, status, exit_code FROM request_queue WHERE req_id = ?",
                 (req_id,)
             ).fetchone()
             if row:
-                return Request.from_json(row[0])
+                req = Request.from_json(row[0])
+                # status/exit_code-Spalten sind autoritativ (complete/fail/timeout
+                # aktualisieren nur sie, nicht das payload-JSON) → überlagern.
+                req.status = row[1]
+                if row[2] is not None:
+                    req.exit_code = row[2]
+                return req
         return None
 
     def list_requests(
