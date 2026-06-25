@@ -199,6 +199,18 @@ class WorkflowAgent:
             print(f"[WARN] Phase-Idiom Router initialization failed: {e}")
             self.idiom_router = None
 
+        # Idiom↔Ossifikat-Feedback (③): schreibt bewährte Idiome, liest Routing-Boni.
+        # Eigener Store auf der kanonischen Ossifikat-DB; optional (Fehler = No-Op).
+        self.idiom_feedback = None
+        self._idiom_boosts = None  # Lazy-Cache der Approval-Boni je Prozess
+        try:
+            from ossifikat.ossifikat.store import OssifikatStore
+            from idiom_feedback import IdiomFeedback
+            self.idiom_feedback = IdiomFeedback(OssifikatStore(str(settings.ossifikat_db)))
+            print("[🔁 Idiom-Feedback-Schleife aktiv]")
+        except Exception as e:
+            print(f"[WARN] Idiom-Feedback nicht verfügbar: {e}")
+
         self._coding_initialized = True
 
     def dispatch(self, task: str):
@@ -846,12 +858,20 @@ Schließe mit:
         if not self.idiom_router:
             return None
 
+        # ③ Feedback-Boni einmal je Prozess laden (empirisch bewährte Idiome bevorzugen).
+        if self._idiom_boosts is None:
+            self._idiom_boosts = (self.idiom_feedback.load_boosts()
+                                  if self.idiom_feedback else {})
+            if self._idiom_boosts:
+                print(f"[🔁 {len(self._idiom_boosts)} Idiom(e) mit Approval-Historie geladen]")
+
         try:
             idiom, score = self.idiom_router.route(
                 phase=phase,
                 task_type=task_type,
                 requirement=requirement or f"{phase} for {task_type}",
-                context={}
+                context={},
+                score_adjust=self._idiom_boosts,
             )
             print(f"[🎯 IDIOM] {phase}/{task_type} → {idiom.id} (score={score:.2f})")
             # Wahl protokollieren (für ③ Idiom↔Ossifikat-Feedback-Schleife) — passiert
@@ -866,6 +886,22 @@ Schließe mit:
         except Exception as e:
             print(f"[WARN] Idiom routing failed: {e} → using hardcoded framing")
             return None
+
+    def _record_idiom_feedback(self, success: bool) -> None:
+        """③ Schreib-Pfad: verbürge bei Erfolg die je Phase gewählten Idiome.
+
+        Schließt die Feedback-Schleife — das in current_workflow["idioms"]
+        protokollierte Substrat wird zu verbürgten Ossifikat-Fakten, die der nächste
+        Lauf via load_boosts() als Routing-Bonus liest. Nie werfend.
+        """
+        if not success or not self.idiom_feedback or not self.current_workflow:
+            return
+        try:
+            self.idiom_feedback.record_workflow(self.current_workflow.get("idioms", {}))
+            # Cache invalidieren, damit ein Folgelauf die neuen Boni sieht.
+            self._idiom_boosts = None
+        except Exception as e:
+            print(f"[WARN] Idiom-Feedback-Schreiben fehlgeschlagen: {e}")
 
     def _briefing_framing(self, task_type: str) -> dict[str, str]:
         """Wählt Rolle + Sektionsstruktur für den Briefing-Prompt.
@@ -3214,6 +3250,8 @@ Diese Hinweise sollten kritisch überprüft werden.
         if report.get("report_path"):
             print(f"   Report: {report['report_path']}")
         print()
+        # ③ Bei nicht-rotem Verdict die gewählten Idiome verbürgen
+        self._record_idiom_feedback(success=(v != "🔴"))
         return self.current_workflow
 
     def _check_healthpoint(self, phase_name: str, output: str) -> None:
@@ -3536,6 +3574,9 @@ Diese Hinweise sollten kritisch überprüft werden.
         verdict = self._compute_workflow_verdict()
         self.current_workflow["verdict"] = verdict
         self._print_workflow_verdict(verdict)
+
+        # ③ Erfolgreicher Lauf (Commit erreicht, Tests grün) → Idiome verbürgen
+        self._record_idiom_feedback(success=(verdict.get("verdict") != "🔴"))
 
         # Validator-Threads sauber beenden
         self._executor.shutdown(wait=False)

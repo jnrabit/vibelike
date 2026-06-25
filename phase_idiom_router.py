@@ -135,6 +135,7 @@ class PhaseIdiomRouter:
         task_type: Optional[str],
         requirement: str,
         context: Optional[Dict[str, Any]] = None,
+        score_adjust: Optional[Dict[str, float]] = None,
     ) -> Tuple[CodeIdiom, float]:
         """
         Route requirement to best idiom for (phase, task_type).
@@ -144,6 +145,10 @@ class PhaseIdiomRouter:
             task_type: Task type (e.g., "ANALYSIS") or None for task-agnostic
             requirement: Natural language requirement (e.g., "thorough analysis with synthesis")
             context: Optional context dict (for future refinement)
+            score_adjust: optionaler {idiom_id: delta}-Bonus auf die Cosine-Scores
+                (Idiom↔Ossifikat-Feedback: empirisch bewährte Idiome leicht bevorzugen).
+                Der Router bleibt semantisch — der Bonus ist klein und bricht nur
+                Gleichstände.
 
         Returns:
             (CodeIdiom, confidence_score) tuple
@@ -163,10 +168,12 @@ class PhaseIdiomRouter:
         # Step 2: Encode requirement
         req_embedding = self.model.encode(requirement, convert_to_numpy=True)
 
-        # Step 3: Compute cosine similarities
+        # Step 3: Compute cosine similarities (+ optionaler Feedback-Bonus)
+        adjust = score_adjust or {}
         scores = []
         for idiom in candidates:
             similarity = 1.0 - cosine(req_embedding, idiom.embedding)
+            similarity += adjust.get(idiom.id, 0.0)
             scores.append(similarity)
 
         # Step 4: Find best match
