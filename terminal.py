@@ -96,8 +96,10 @@ MISTRAL_COUNCIL_MODEL = settings.mistral_council_model
 MISTRAL_SYNTH_MODEL = settings.mistral_synth_model
 
 # Vault configuration
-KNOWLEDGE_VAULT_FILE = settings.knowledge_vault_file
-KNOWLEDGE_CACHE_FILE = settings.knowledge_cache_file
+# Zu str casten: die vendored Quelibrium-Engine (Vault.load) ruft .endswith() auf
+# dem Pfad → ein Path-Objekt (aus den Pydantic-settings) crasht dort. None bleibt None.
+KNOWLEDGE_VAULT_FILE = str(settings.knowledge_vault_file) if settings.knowledge_vault_file else None
+KNOWLEDGE_CACHE_FILE = str(settings.knowledge_cache_file) if settings.knowledge_cache_file else None
 DUAL_VAULT = settings.dual_vault
 QUERY_DECOMPOSE = settings.query_decompose
 KNOWLEDGE_ANSWER_MODEL = settings.knowledge_answer_model
