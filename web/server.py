@@ -13,6 +13,7 @@ Start:  uvicorn vibelike.web.server:app --reload --port 8000
          # oder:  python3 -m vibelike.web.server
 """
 import json
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Depends, Header
@@ -468,13 +469,30 @@ def set_llm_mode(req: LLMModeRequest, authorization: str = Header(default=None))
             os.environ[key] = str(value)
             print(f"[⚙️  Config] {key} = {value}")
         
-        # Persistiere in .env für neue Prozesse (Terminal-Spawns, etc.)
+        # Persistiere in .env für neue Prozesse (Terminal-Spawns, etc.).
+        # WICHTIG: bestehende .env-Zeilen ERHALTEN — nur die zwei Mode-Keys
+        # aktualisieren/anhängen. Früher überschrieb ein "w"-Write die ganze
+        # Datei (löschte API-Keys etc.).
         env_path = ROOT / ".env"
         try:
-            with open(env_path, "w") as f:
-                f.write(f"VIBELIKE_DEEPSEEK_MAX={env_vars.get('VIBELIKE_DEEPSEEK_MAX', '0')}\n")
-                f.write(f"VIBELIKE_ARCH={env_vars.get('VIBELIKE_ARCH', 'default')}\n")
-            print(f"[⚙️  Config] Persisted to {env_path}")
+            updates = {
+                "VIBELIKE_DEEPSEEK_MAX": env_vars.get("VIBELIKE_DEEPSEEK_MAX", "0"),
+                "VIBELIKE_ARCH": env_vars.get("VIBELIKE_ARCH", "default"),
+            }
+            existing = env_path.read_text().splitlines() if env_path.exists() else []
+            out_lines, seen = [], set()
+            for line in existing:
+                key = line.split("=", 1)[0].strip() if "=" in line else None
+                if key in updates:
+                    out_lines.append(f"{key}={updates[key]}")
+                    seen.add(key)
+                else:
+                    out_lines.append(line)
+            for key, val in updates.items():
+                if key not in seen:
+                    out_lines.append(f"{key}={val}")
+            env_path.write_text("\n".join(out_lines) + "\n")
+            print(f"[⚙️  Config] Persisted to {env_path} (übrige Zeilen erhalten)")
         except Exception as e:
             print(f"[WARN] Could not persist .env: {e}")
         
@@ -491,6 +509,37 @@ def set_llm_mode(req: LLMModeRequest, authorization: str = Header(default=None))
         return JSONResponse({
             "error": str(e)
         }, status_code=500)
+
+
+@app.get("/api/config/llm-mode")
+def get_llm_mode() -> JSONResponse:
+    """Liefert den aktuell persistierten LLM-Mode (für die UI-Anzeige).
+
+    Quelle der Wahrheit ist die .env (die neue Terminal-Spawns laden), mit
+    Fallback auf os.environ. So spiegelt das Modi-Panel den echten Zustand.
+    """
+    deepseek_max, arch = "0", "default"
+    env_path = ROOT / ".env"
+    try:
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                if line.startswith("VIBELIKE_DEEPSEEK_MAX="):
+                    deepseek_max = line.split("=", 1)[1].strip()
+                elif line.startswith("VIBELIKE_ARCH="):
+                    arch = line.split("=", 1)[1].strip()
+        else:
+            deepseek_max = os.environ.get("VIBELIKE_DEEPSEEK_MAX", "0")
+            arch = os.environ.get("VIBELIKE_ARCH", "default")
+    except Exception as e:
+        print(f"[WARN] get_llm_mode read failed: {e}")
+
+    if deepseek_max == "1":
+        mode = "deepseek-max"
+    elif arch == "mitte":
+        mode = "mitte"
+    else:
+        mode = "default"
+    return JSONResponse({"mode": mode, "deepseek_max": deepseek_max, "arch": arch})
 
 
 # ── Statische Seite ──────────────────────────────────────────────────────────

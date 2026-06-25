@@ -546,7 +546,7 @@ async function viewModels() {
       <!-- MODE 3: DEFAULT -->
       <label class="mode-card" style="cursor: pointer; border: 2px solid var(--tm-dim); border-radius: 6px; padding: 1rem; transition: all 0.2s;">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-          <input type="radio" name="llm-mode" value="default" checked style="width: 20px; height: 20px; cursor: pointer;">
+          <input type="radio" name="llm-mode" value="default" style="width: 20px; height: 20px; cursor: pointer;">
           <span style="font-weight: bold; color: var(--tm-text); font-size: 16px;">🚀 DEFAULT</span>
         </div>
         <div style="margin-left: 32px; font-size: 14px; color: var(--tm-faint);">
@@ -587,6 +587,24 @@ async function viewModels() {
       });
     });
   });
+
+  // Aktuell persistierten Modus laden + reflektieren (Fix: zeigte immer DEFAULT).
+  const applyModeHighlight = () => {
+    modesDiv.querySelectorAll('.mode-card').forEach(card => {
+      const r = card.querySelector('input[name="llm-mode"]');
+      card.style.borderColor = r.checked ? 'var(--tm-accent)' : 'var(--tm-dim)';
+      card.style.backgroundColor = r.checked ? 'rgba(95, 137, 167, 0.05)' : 'transparent';
+    });
+  };
+  fetch('/api/config/llm-mode')
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      const mode = (data && data.mode) || 'default';
+      const radio = modesDiv.querySelector(`input[name="llm-mode"][value="${mode}"]`);
+      if (radio) radio.checked = true;
+      applyModeHighlight();
+    })
+    .catch(() => applyModeHighlight());
 
   // Privacy-Level Radio-Buttons (behalten)
   const privacyDiv = el(`<div class="privacy-panel">
