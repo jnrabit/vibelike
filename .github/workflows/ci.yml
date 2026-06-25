@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+# Laufende Runs eines Branches abbrechen, wenn ein neuer Push kommt.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # volle History → regression_guard --range gegen Base
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: doctor (fast gate)
+        # Schneller deterministischer Smoke-Check VOR dem teuren Test-Lauf:
+        # Syntax + auflösbare config-Importe (fängt Refactor-Breakage sofort).
+        run: python doctor.py --fast
+
+      - name: Tests
+        run: pytest tests/
+
+      - name: Regression-Guard (report-only)
+        # Meldet destruktiven Symbol-Verlust im PR-Diff. Nicht-blockierend, weil CI
+        # keinen --no-verify-Escape für absichtliche Löschungen hat — der lokale
+        # Pre-Commit-Hook ist die erzwingende Schicht. Findings sind im Log sichtbar.
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=0 || true
+          python regression_guard.py --range "origin/${{ github.base_ref }}..HEAD" || true
