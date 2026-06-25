@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Code Knowledge Harvesting, Tool Documentation Collection, and Interactive CLI with Knowledge Graph Storage"
 readme = "START.md"
 requires-python = ">=3.9"
-license = "MIT"
+license = "CC-BY-NC-4.0"
 authors = [
     {name = "Jakob Notter", email = "jakobnotter89@googlemail.com"}
 ]

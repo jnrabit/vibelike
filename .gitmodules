@@ -1,0 +1,4 @@
+[submodule "ossifikat"]
+	path = ossifikat
+	url = https://github.com/jnrabit/ossifikat.git
+	branch = main
