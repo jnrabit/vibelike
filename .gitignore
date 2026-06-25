@@ -49,6 +49,7 @@ ENV/
 # Never commit secrets, API keys, or audit logs
 web/capabilities.toml
 ~/.vibeweb.env
+opencode.json
 
 # ==================== TEMPORARY ARTEFACTS ====================
 # These belong in a separate branch or should be deleted
