@@ -228,11 +228,27 @@ class AgentLoop:
 
     @property
     def analyzer_coder(self):
-        """Lazy-loaded Analyzer-Coder (für TaskClassifier + Reasoning)."""
+        """Lazy-loaded Analyzer-Coder (für TaskClassifier + Reasoning).
+
+        Backend-bewusst: ein claude-* Modell MUSS über die Anthropic-API laufen,
+        nicht über Ollama — sonst pingt QwenCoder Ollama nach 'claude-haiku…' →
+        HTTP 404 → Klassifikation scheitert → Heuristik rät (oft falsch).
+        Ohne Anthropic-Key: lokaler Fallback (local-first).
+        """
         if self._analyzer_coder is None:
             try:
-                from terminal import QwenCoder, ANALYSIS_MODEL
-                self._analyzer_coder = QwenCoder(model=ANALYSIS_MODEL)
+                from terminal import QwenCoder, ClaudeCoder, ANALYSIS_MODEL
+                from config import settings
+                if str(ANALYSIS_MODEL).lower().startswith("claude"):
+                    claude = ClaudeCoder(model=ANALYSIS_MODEL)
+                    if claude.usable:
+                        self._analyzer_coder = claude
+                    else:
+                        print("[INFO] analyzer_coder: claude nicht nutzbar (kein Key) "
+                              "→ lokales Modell zur Klassifikation")
+                        self._analyzer_coder = QwenCoder(model=settings.coder_model)
+                else:
+                    self._analyzer_coder = QwenCoder(model=ANALYSIS_MODEL)
             except Exception as e:
                 print(f"[WARN] analyzer_coder init failed: {e}, falling back to default")
                 from agent_inference import ModelCoder

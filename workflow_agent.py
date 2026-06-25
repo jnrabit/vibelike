@@ -173,9 +173,16 @@ class WorkflowAgent:
                 self.qwen = QwenCoder()
 
             # Reasoning-Modell für Briefing/Strategy/Plan (generalist > coder).
-            self.analyzer_qwen = QwenCoder(
-                model=settings.analysis_model, num_predict=2048, keep_alive="30m",
-            )
+            # analysis_model ist per Default claude-haiku (Cloud) → MUSS über
+            # ClaudeCoder laufen, nicht Ollama (sonst HTTP 404). Kein Key → lokal.
+            if str(settings.analysis_model).lower().startswith("claude"):
+                _ac = ClaudeCoder(model=settings.analysis_model, num_predict=2048)
+                self.analyzer_qwen = _ac if _ac.usable else QwenCoder(
+                    model=settings.coder_model, num_predict=2048, keep_alive="30m")
+            else:
+                self.analyzer_qwen = QwenCoder(
+                    model=settings.analysis_model, num_predict=2048, keep_alive="30m",
+                )
 
             # Background: kleines Modell für parallelen LLM-Critic.
             self.validator_qwen = QwenCoder(
