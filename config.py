@@ -310,7 +310,7 @@ class VibelikeSettings(BaseSettings):
         
         # Resolve knowledge vault paths
         # Priority: env var → fallback path (if exists)
-        knowledge_fallback = Path("/home/jnrabit/collect/data/monolith_archive_unified.json")
+        knowledge_fallback = Path("/home/jnrabit/collect/data/monolith_archive.monolith")
         cache_fallback = Path("/home/jnrabit/collect/data/monolith_embedding_cache.pkl")
         
         if self.knowledge_vault_file is None:
