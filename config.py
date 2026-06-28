@@ -310,8 +310,11 @@ class VibelikeSettings(BaseSettings):
         
         # Resolve knowledge vault paths
         # Priority: env var → fallback path (if exists)
-        knowledge_fallback = Path("/home/jnrabit/collect/data/monolith_archive_combined.monolith")
-        cache_fallback = Path("/home/jnrabit/collect/data/monolith_embedding_cache_combined.pkl")
+        # monolith_archive.monolith hält jetzt die kombinierte 258k-Version
+        # (188k Basis + 70k ARXIV); die _combined-Dateien wurden auf die kanonischen
+        # Namen befördert (alte 188k-Basis als *.pre258k gesichert).
+        knowledge_fallback = Path("/home/jnrabit/collect/data/monolith_archive.monolith")
+        cache_fallback = Path("/home/jnrabit/collect/data/monolith_embedding_cache.pkl")
         
         if self.knowledge_vault_file is None:
             env_vault = os.environ.get("VIBELIKE_KNOWLEDGE_VAULT")
